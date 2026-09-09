@@ -237,7 +237,7 @@ export class Runtime {
       throw new Error(`failed to start ${name}: ${message}`)
     }
     if (this.state.agents.get(agentId)?.status === "starting") this.emit({ type: "agent.status", data: { status: "ready" } }, agentId)
-    if (params.prompt) await this.promptAgent(agentId, params.prompt, { from: params.parentId ?? "user" })
+    if (params.prompt) await this.promptAgent(agentId, params.prompt, { from: params.parentId ?? "user", expectResult: !!params.parentId })
     return info
   }
 
@@ -295,11 +295,17 @@ export class Runtime {
     }
   }
 
-  async promptAgent(agentId: string, text: string, opts: { from?: string; delivery?: Delivery } = {}): Promise<void> {
+  /**
+   * Send input to an agent. `expectResult` (default: the sender dispatched work — i.e. it is
+   * the orchestrator or the agent's parent) makes the agent's next turn result flow back to
+   * the sender as a `result` bus message.
+   */
+  async promptAgent(agentId: string, text: string, opts: { from?: string; delivery?: Delivery; expectResult?: boolean } = {}): Promise<void> {
     const rt = this.agents.get(agentId)
     if (!rt?.session || rt.closing) throw new Error(`agent ${agentId} is not running`)
     const fromAgent = opts.from ? this.agents.get(opts.from) : undefined
-    if (fromAgent) rt.resultTo.add(fromAgent.info.agentId)
+    const dispatcher = !!fromAgent && (fromAgent.info.isOrchestrator || rt.info.parentId === fromAgent.info.agentId)
+    if (fromAgent && (opts.expectResult ?? dispatcher)) rt.resultTo.add(fromAgent.info.agentId)
     const input = { text, from: fromAgent?.info.name ?? opts.from }
     const delivery = opts.delivery ?? "queue"
     if (delivery === "interrupt" && rt.busy) {
@@ -418,13 +424,15 @@ export class Runtime {
     }
     const text = this.formatForAgent([msg])
     const from = msg.from
+    // requests expect an answer; results/replies never trigger another result
+    const expectResult = msg.kind === "request" ? true : msg.kind === "result" || msg.kind === "reply" ? false : undefined
     if (rt.busy) {
       if (delivery === "interrupt") {
-        void this.promptAgent(rt.info.agentId, text, { from, delivery: "interrupt" }).then(() => this.markDelivered(msg.messageId, rt, "interrupt"))
+        void this.promptAgent(rt.info.agentId, text, { from, delivery: "interrupt", expectResult }).then(() => this.markDelivered(msg.messageId, rt, "interrupt"))
         return
       }
       if (delivery === "steer" && rt.caps.steer) {
-        void this.promptAgent(rt.info.agentId, text, { from, delivery: "steer" }).then(() => this.markDelivered(msg.messageId, rt, "steer"))
+        void this.promptAgent(rt.info.agentId, text, { from, delivery: "steer", expectResult }).then(() => this.markDelivered(msg.messageId, rt, "steer"))
         return
       }
       rt.inbox.push(msg)
@@ -434,7 +442,7 @@ export class Runtime {
       rt.inbox.push(msg)
       return
     }
-    void this.promptAgent(rt.info.agentId, text, { from }).then(() => this.markDelivered(msg.messageId, rt, "prompt"))
+    void this.promptAgent(rt.info.agentId, text, { from, expectResult }).then(() => this.markDelivered(msg.messageId, rt, "prompt"))
   }
 
   private allowAutoDelivery(rt: AgentRuntime): boolean {
@@ -456,8 +464,9 @@ export class Runtime {
     if (rt.busy || rt.closing || !rt.session || rt.inbox.length === 0 || rt.waiters.size > 0) return
     if (!this.allowAutoDelivery(rt)) return
     const msgs = rt.inbox.splice(0)
-    const from = msgs.length === 1 ? (msgs[0] as InboxMessage).from : undefined
-    void this.promptAgent(rt.info.agentId, this.formatForAgent(msgs), { from }).then(() => {
+    const only = msgs.length === 1 ? (msgs[0] as InboxMessage) : undefined
+    const expectResult = only ? (only.kind === "request" ? true : only.kind === "result" || only.kind === "reply" ? false : undefined) : false
+    void this.promptAgent(rt.info.agentId, this.formatForAgent(msgs), { from: only?.from, expectResult }).then(() => {
       for (const m of msgs) this.markDelivered(m.messageId, rt, "prompt")
     })
   }

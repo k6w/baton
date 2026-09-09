@@ -27,6 +27,7 @@ export type FeedItem =
       status: ToolStatus
       summary?: string
       parentId?: string
+      input?: unknown
       diffs: { path: string; lines: DiffHunkLine[]; added: number; removed: number }[]
       output?: string
       exitCode?: number | null
@@ -206,6 +207,7 @@ export class RunState {
           title: e.data.title,
           status: e.data.status,
           parentId: e.data.parentToolCallId,
+          input: e.data.rawInput,
           diffs: [],
           ts: e.ts,
         })

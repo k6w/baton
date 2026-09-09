@@ -67,12 +67,12 @@ describe("daemon", () => {
     const listed = await mcp.callTool({ name: "list_agents", arguments: {} })
     expect(JSON.stringify(listed.content)).toContain("beta")
 
-    await mcp.callTool({ name: "send_message", arguments: { to: "beta", body: "pong — tailwind landed" } })
+    await mcp.callTool({ name: "send_message", arguments: { to: "beta", body: "pong — tailwind landed", kind: "request" } })
     await until(() => rt.state.bus.some((m) => m.from === a.info.agentId && m.to === b.info.agentId && m.body.includes("tailwind")))
     // beta is idle → message delivered as a new turn
     await until(() => rt.state.feed(b.info.agentId).items.some((i) => i.kind === "user" && i.text.includes("Message from alpha")))
     await until(() => rt.state.bus.some((m) => m.delivered))
-    // beta's turn result goes back to alpha (it was dispatched by alpha)
+    // beta's turn result goes back to alpha (it was a request)
     await until(() => rt.state.bus.some((m) => m.kind === "result" && m.from === b.info.agentId))
     await mcp.close()
   })

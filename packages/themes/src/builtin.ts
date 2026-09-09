@@ -1,0 +1,254 @@
+/**
+ * Built-in themes. Each is described by a compact palette and expanded into the full token
+ * set by `paletteTheme`, so every theme gets consistent diff/state/bus/agent colors.
+ */
+import type { ThemeFile, Token } from "./schema.ts"
+
+export interface Palette {
+  name: string
+  appearance: "dark" | "light"
+  bg: string
+  panel?: string
+  element: string
+  overlay?: string
+  border: string
+  borderActive: string
+  borderSubtle?: string
+  text: string
+  muted: string
+  subtle?: string
+  primary: string
+  secondary: string
+  accent: string
+  red: string
+  green: string
+  yellow: string
+  blue: string
+  cyan: string
+  magenta: string
+  orange: string
+  diffAddBg?: string
+  diffDelBg?: string
+  selection?: string
+  /** Override any token directly. */
+  extra?: Partial<Record<Token, string>>
+}
+
+function mix(a: string, b: string, t: number): string {
+  const pa = hexToRgb(a)
+  const pb = hexToRgb(b)
+  const c = pa.map((v, i) => Math.round(v + ((pb[i] as number) - v) * t))
+  return `#${c.map((v) => v.toString(16).padStart(2, "0")).join("")}`
+}
+
+function hexToRgb(h: string): [number, number, number] {
+  const s = h.replace("#", "")
+  const full = s.length === 3 ? s.split("").map((c) => c + c).join("") : s.slice(0, 6)
+  return [Number.parseInt(full.slice(0, 2), 16), Number.parseInt(full.slice(2, 4), 16), Number.parseInt(full.slice(4, 6), 16)]
+}
+
+export function paletteTheme(p: Palette): ThemeFile {
+  const dark = p.appearance === "dark"
+  const addBg = p.diffAddBg ?? mix(p.bg, p.green, dark ? 0.32 : 0.22)
+  const delBg = p.diffDelBg ?? mix(p.bg, p.red, dark ? 0.32 : 0.2)
+  const theme: Record<Token, string> = {
+    primary: p.primary,
+    secondary: p.secondary,
+    accent: p.accent,
+    error: p.red,
+    warning: p.yellow,
+    success: p.green,
+    info: p.blue,
+    text: p.text,
+    textMuted: p.muted,
+    textSubtle: p.subtle ?? mix(p.muted, p.bg, 0.35),
+    background: p.bg,
+    backgroundPanel: p.panel ?? p.bg,
+    backgroundElement: p.element,
+    backgroundOverlay: p.overlay ?? p.element,
+    border: p.border,
+    borderActive: p.borderActive,
+    borderSubtle: p.borderSubtle ?? mix(p.border, p.bg, 0.45),
+    selection: p.selection ?? mix(p.bg, p.blue, 0.3),
+    diffAdded: dark ? mix(p.text, p.green, 0.15) : mix(p.text, p.green, 0.6),
+    diffRemoved: dark ? mix(p.text, p.red, 0.15) : mix(p.text, p.red, 0.6),
+    diffContext: p.muted,
+    diffAddedBg: addBg,
+    diffRemovedBg: delBg,
+    diffLineNumber: p.muted,
+    diffAddedLineNumberBg: addBg,
+    diffRemovedLineNumberBg: delBg,
+    stateIdle: p.muted,
+    stateBusy: p.orange,
+    stateWaiting: p.yellow,
+    stateError: p.red,
+    stateDone: p.green,
+    spinner: p.orange,
+    statusBar: p.panel ?? p.bg,
+    statusText: p.muted,
+    busTime: p.muted,
+    busFrom: p.orange,
+    busTo: p.orange,
+    busBody: p.text,
+    mention: p.cyan,
+    toolName: p.text,
+    toolArgs: p.muted,
+    thought: p.subtle ?? p.muted,
+    agentClaude: p.orange,
+    agentCodex: p.text,
+    agentOpencode: p.yellow,
+    agentGemini: p.blue,
+    agentCursor: p.magenta,
+    agentCopilot: p.cyan,
+    agentAmp: p.red,
+    agentGoose: p.green,
+    agentQwen: p.magenta,
+    agentKiro: p.secondary,
+    agentDroid: p.cyan,
+    agentCline: p.blue,
+    agentDefault: p.accent,
+    ...p.extra,
+  }
+  return { name: p.name, theme }
+}
+
+const BATON_DARK: Palette = {
+  name: "baton",
+  appearance: "dark",
+  bg: "#161a24",
+  panel: "#161a24",
+  element: "#1f2431",
+  overlay: "#232938",
+  border: "#3b4256",
+  borderActive: "#c9d1e3",
+  borderSubtle: "#2a3040",
+  text: "#dde2ee",
+  muted: "#8a92a8",
+  subtle: "#5d6479",
+  primary: "#d97757",
+  secondary: "#b4a5f5",
+  accent: "#7fb4ff",
+  red: "#f07a7a",
+  green: "#7fd88f",
+  yellow: "#f2c66d",
+  blue: "#7fb4ff",
+  cyan: "#7fd8e8",
+  magenta: "#c4a5f5",
+  orange: "#e8835c",
+  diffAddBg: "#1f5a2a",
+  diffDelBg: "#6b2027",
+  selection: "#2c3a5c",
+  extra: {
+    diffAdded: "#e6f6e6",
+    diffRemoved: "#fbe4e4",
+    agentClaude: "#d97757",
+    agentCodex: "#e8ebf2",
+    agentCursor: "#b4a5f5",
+    agentOpencode: "#f5c26b",
+    agentGemini: "#7fb4ff",
+    busFrom: "#7fd8c4",
+    busTo: "#f08a6c",
+    spinner: "#e8835c",
+    stateBusy: "#e8835c",
+  },
+}
+
+const BATON_LIGHT: Palette = {
+  name: "baton-light",
+  appearance: "light",
+  bg: "#fbfaf7",
+  panel: "#f4f2ed",
+  element: "#ece9e2",
+  border: "#cfcabf",
+  borderActive: "#3a3833",
+  text: "#24221e",
+  muted: "#6f6a60",
+  primary: "#c2552e",
+  secondary: "#6b55c9",
+  accent: "#2f6fd6",
+  red: "#c33b3b",
+  green: "#2f8a3e",
+  yellow: "#a87405",
+  blue: "#2f6fd6",
+  cyan: "#127f8f",
+  magenta: "#8a4fc9",
+  orange: "#c2552e",
+  diffAddBg: "#d6f0d6",
+  diffDelBg: "#f6d6d6",
+  extra: { agentClaude: "#c2552e", agentCodex: "#24221e" },
+}
+
+const P: Palette[] = [
+  BATON_DARK,
+  BATON_LIGHT,
+  // Catppuccin — https://catppuccin.com/palette
+  { name: "catppuccin-mocha", appearance: "dark", bg: "#1e1e2e", panel: "#181825", element: "#313244", border: "#45475a", borderActive: "#b4befe", text: "#cdd6f4", muted: "#a6adc8", subtle: "#6c7086", primary: "#cba6f7", secondary: "#89b4fa", accent: "#f5c2e7", red: "#f38ba8", green: "#a6e3a1", yellow: "#f9e2af", blue: "#89b4fa", cyan: "#89dceb", magenta: "#cba6f7", orange: "#fab387" },
+  { name: "catppuccin-macchiato", appearance: "dark", bg: "#24273a", panel: "#1e2030", element: "#363a4f", border: "#494d64", borderActive: "#b7bdf8", text: "#cad3f5", muted: "#a5adcb", subtle: "#6e738d", primary: "#c6a0f6", secondary: "#8aadf4", accent: "#f5bde6", red: "#ed8796", green: "#a6da95", yellow: "#eed49f", blue: "#8aadf4", cyan: "#91d7e3", magenta: "#c6a0f6", orange: "#f5a97f" },
+  { name: "catppuccin-frappe", appearance: "dark", bg: "#303446", panel: "#292c3c", element: "#414559", border: "#51576d", borderActive: "#babbf1", text: "#c6d0f5", muted: "#a5adce", subtle: "#737994", primary: "#ca9ee6", secondary: "#8caaee", accent: "#f4b8e4", red: "#e78284", green: "#a6d189", yellow: "#e5c890", blue: "#8caaee", cyan: "#99d1db", magenta: "#ca9ee6", orange: "#ef9f76" },
+  { name: "catppuccin-latte", appearance: "light", bg: "#eff1f5", panel: "#e6e9ef", element: "#ccd0da", border: "#bcc0cc", borderActive: "#7287fd", text: "#4c4f69", muted: "#6c6f85", subtle: "#9ca0b0", primary: "#8839ef", secondary: "#1e66f5", accent: "#ea76cb", red: "#d20f39", green: "#40a02b", yellow: "#df8e1d", blue: "#1e66f5", cyan: "#04a5e5", magenta: "#8839ef", orange: "#fe640b" },
+  // Tokyo Night — https://github.com/folke/tokyonight.nvim
+  { name: "tokyonight", appearance: "dark", bg: "#1a1b26", panel: "#16161e", element: "#292e42", border: "#3b4261", borderActive: "#7aa2f7", text: "#c0caf5", muted: "#a9b1d6", subtle: "#565f89", primary: "#7aa2f7", secondary: "#bb9af7", accent: "#7dcfff", red: "#f7768e", green: "#9ece6a", yellow: "#e0af68", blue: "#7aa2f7", cyan: "#7dcfff", magenta: "#bb9af7", orange: "#ff9e64" },
+  { name: "tokyonight-storm", appearance: "dark", bg: "#24283b", panel: "#1f2335", element: "#292e42", border: "#3b4261", borderActive: "#7aa2f7", text: "#c0caf5", muted: "#a9b1d6", subtle: "#565f89", primary: "#7aa2f7", secondary: "#bb9af7", accent: "#7dcfff", red: "#f7768e", green: "#9ece6a", yellow: "#e0af68", blue: "#7aa2f7", cyan: "#7dcfff", magenta: "#bb9af7", orange: "#ff9e64" },
+  { name: "tokyonight-day", appearance: "light", bg: "#e1e2e7", panel: "#d0d5e3", element: "#c4c8da", border: "#a8aecb", borderActive: "#2e7de9", text: "#3760bf", muted: "#6172b0", subtle: "#848cb5", primary: "#2e7de9", secondary: "#9854f1", accent: "#007197", red: "#f52a65", green: "#587539", yellow: "#8c6c3e", blue: "#2e7de9", cyan: "#007197", magenta: "#9854f1", orange: "#b15c00" },
+  // Rosé Pine — https://rosepinetheme.com/palette
+  { name: "rose-pine", appearance: "dark", bg: "#191724", panel: "#1f1d2e", element: "#26233a", border: "#403d52", borderActive: "#c4a7e7", text: "#e0def4", muted: "#908caa", subtle: "#6e6a86", primary: "#ebbcba", secondary: "#c4a7e7", accent: "#9ccfd8", red: "#eb6f92", green: "#31748f", yellow: "#f6c177", blue: "#9ccfd8", cyan: "#9ccfd8", magenta: "#c4a7e7", orange: "#ebbcba", diffAddBg: "#1f3a42", diffDelBg: "#4a2433" },
+  { name: "rose-pine-moon", appearance: "dark", bg: "#232136", panel: "#2a273f", element: "#393552", border: "#44415a", borderActive: "#c4a7e7", text: "#e0def4", muted: "#908caa", subtle: "#6e6a86", primary: "#ea9a97", secondary: "#c4a7e7", accent: "#9ccfd8", red: "#eb6f92", green: "#3e8fb0", yellow: "#f6c177", blue: "#9ccfd8", cyan: "#9ccfd8", magenta: "#c4a7e7", orange: "#ea9a97", diffAddBg: "#24414f", diffDelBg: "#4d2a3c" },
+  { name: "rose-pine-dawn", appearance: "light", bg: "#faf4ed", panel: "#fffaf3", element: "#f2e9e1", border: "#dfdad9", borderActive: "#907aa9", text: "#575279", muted: "#797593", subtle: "#9893a5", primary: "#d7827e", secondary: "#907aa9", accent: "#56949f", red: "#b4637a", green: "#286983", yellow: "#ea9d34", blue: "#56949f", cyan: "#56949f", magenta: "#907aa9", orange: "#d7827e" },
+  // Gruvbox — https://github.com/morhetz/gruvbox
+  { name: "gruvbox", appearance: "dark", bg: "#282828", panel: "#1d2021", element: "#3c3836", border: "#504945", borderActive: "#d5c4a1", text: "#ebdbb2", muted: "#a89984", subtle: "#7c6f64", primary: "#fe8019", secondary: "#83a598", accent: "#8ec07c", red: "#fb4934", green: "#b8bb26", yellow: "#fabd2f", blue: "#83a598", cyan: "#8ec07c", magenta: "#d3869b", orange: "#fe8019" },
+  { name: "gruvbox-light", appearance: "light", bg: "#fbf1c7", panel: "#f2e5bc", element: "#ebdbb2", border: "#d5c4a1", borderActive: "#504945", text: "#3c3836", muted: "#7c6f64", subtle: "#a89984", primary: "#af3a03", secondary: "#076678", accent: "#427b58", red: "#9d0006", green: "#79740e", yellow: "#b57614", blue: "#076678", cyan: "#427b58", magenta: "#8f3f71", orange: "#af3a03" },
+  // Nord — https://www.nordtheme.com/docs/colors-and-palettes
+  { name: "nord", appearance: "dark", bg: "#2e3440", panel: "#2b303b", element: "#3b4252", border: "#4c566a", borderActive: "#88c0d0", text: "#eceff4", muted: "#d8dee9", subtle: "#7b88a1", primary: "#88c0d0", secondary: "#81a1c1", accent: "#8fbcbb", red: "#bf616a", green: "#a3be8c", yellow: "#ebcb8b", blue: "#81a1c1", cyan: "#88c0d0", magenta: "#b48ead", orange: "#d08770" },
+  // Dracula — https://draculatheme.com/contribute
+  { name: "dracula", appearance: "dark", bg: "#282a36", panel: "#21222c", element: "#44475a", border: "#6272a4", borderActive: "#bd93f9", text: "#f8f8f2", muted: "#bfbfbf", subtle: "#6272a4", primary: "#bd93f9", secondary: "#ff79c6", accent: "#8be9fd", red: "#ff5555", green: "#50fa7b", yellow: "#f1fa8c", blue: "#8be9fd", cyan: "#8be9fd", magenta: "#ff79c6", orange: "#ffb86c" },
+  // Kanagawa — https://github.com/rebelot/kanagawa.nvim
+  { name: "kanagawa", appearance: "dark", bg: "#1f1f28", panel: "#16161d", element: "#2a2a37", border: "#54546d", borderActive: "#7e9cd8", text: "#dcd7ba", muted: "#c8c093", subtle: "#727169", primary: "#7e9cd8", secondary: "#957fb8", accent: "#7fb4ca", red: "#e46876", green: "#98bb6c", yellow: "#e6c384", blue: "#7e9cd8", cyan: "#7aa89f", magenta: "#957fb8", orange: "#ffa066" },
+  { name: "kanagawa-dragon", appearance: "dark", bg: "#181616", panel: "#12120f", element: "#282727", border: "#625e5a", borderActive: "#8ba4b0", text: "#c5c9c5", muted: "#a6a69c", subtle: "#737c73", primary: "#8ba4b0", secondary: "#8992a7", accent: "#8ea4a2", red: "#c4746e", green: "#87a987", yellow: "#c4b28a", blue: "#8ba4b0", cyan: "#8ea4a2", magenta: "#a292a3", orange: "#b6927b" },
+  { name: "kanagawa-lotus", appearance: "light", bg: "#f2ecbc", panel: "#e7dba0", element: "#e4d794", border: "#c9cbd1", borderActive: "#4d699b", text: "#545464", muted: "#716e61", subtle: "#8a8980", primary: "#4d699b", secondary: "#624c83", accent: "#597b75", red: "#c84053", green: "#6f894e", yellow: "#77713f", blue: "#4d699b", cyan: "#597b75", magenta: "#624c83", orange: "#cc6d00" },
+  // Everforest — https://github.com/sainnhe/everforest
+  { name: "everforest", appearance: "dark", bg: "#2d353b", panel: "#272e33", element: "#343f44", border: "#4f585e", borderActive: "#a7c080", text: "#d3c6aa", muted: "#9da9a0", subtle: "#7a8478", primary: "#a7c080", secondary: "#7fbbb3", accent: "#83c092", red: "#e67e80", green: "#a7c080", yellow: "#dbbc7f", blue: "#7fbbb3", cyan: "#83c092", magenta: "#d699b6", orange: "#e69875", diffAddBg: "#425047", diffDelBg: "#543a48" },
+  // One Dark / Light — https://github.com/atom/atom/tree/master/packages/one-dark-syntax
+  { name: "one-dark", appearance: "dark", bg: "#282c34", panel: "#21252b", element: "#2c313c", border: "#3e4451", borderActive: "#61afef", text: "#abb2bf", muted: "#828997", subtle: "#5c6370", primary: "#61afef", secondary: "#c678dd", accent: "#56b6c2", red: "#e06c75", green: "#98c379", yellow: "#e5c07b", blue: "#61afef", cyan: "#56b6c2", magenta: "#c678dd", orange: "#d19a66" },
+  { name: "one-light", appearance: "light", bg: "#fafafa", panel: "#f0f0f1", element: "#e5e5e6", border: "#d4d4d6", borderActive: "#4078f2", text: "#383a42", muted: "#696c77", subtle: "#a0a1a7", primary: "#4078f2", secondary: "#a626a4", accent: "#0184bc", red: "#e45649", green: "#50a14f", yellow: "#c18401", blue: "#4078f2", cyan: "#0184bc", magenta: "#a626a4", orange: "#986801" },
+  // Solarized — https://ethanschoonover.com/solarized/
+  { name: "solarized-dark", appearance: "dark", bg: "#002b36", panel: "#00252f", element: "#073642", border: "#2a4f58", borderActive: "#93a1a1", text: "#93a1a1", muted: "#839496", subtle: "#586e75", primary: "#268bd2", secondary: "#6c71c4", accent: "#2aa198", red: "#dc322f", green: "#859900", yellow: "#b58900", blue: "#268bd2", cyan: "#2aa198", magenta: "#d33682", orange: "#cb4b16" },
+  { name: "solarized-light", appearance: "light", bg: "#fdf6e3", panel: "#f5efdc", element: "#eee8d5", border: "#d3cbb7", borderActive: "#586e75", text: "#586e75", muted: "#657b83", subtle: "#93a1a1", primary: "#268bd2", secondary: "#6c71c4", accent: "#2aa198", red: "#dc322f", green: "#859900", yellow: "#b58900", blue: "#268bd2", cyan: "#2aa198", magenta: "#d33682", orange: "#cb4b16" },
+  // GitHub — https://primer.style/foundations/color
+  { name: "github-dark", appearance: "dark", bg: "#0d1117", panel: "#010409", element: "#161b22", border: "#30363d", borderActive: "#2f81f7", text: "#e6edf3", muted: "#7d8590", subtle: "#6e7681", primary: "#2f81f7", secondary: "#a371f7", accent: "#3fb950", red: "#f85149", green: "#3fb950", yellow: "#d29922", blue: "#2f81f7", cyan: "#39c5cf", magenta: "#a371f7", orange: "#db6d28", diffAddBg: "#12361f", diffDelBg: "#4c1a1d" },
+  { name: "github-light", appearance: "light", bg: "#ffffff", panel: "#f6f8fa", element: "#eaeef2", border: "#d0d7de", borderActive: "#0969da", text: "#1f2328", muted: "#656d76", subtle: "#8c959f", primary: "#0969da", secondary: "#8250df", accent: "#1a7f37", red: "#cf222e", green: "#1a7f37", yellow: "#9a6700", blue: "#0969da", cyan: "#1b7c83", magenta: "#8250df", orange: "#bc4c00", diffAddBg: "#dafbe1", diffDelBg: "#ffebe9" },
+  // Accessibility / minimal
+  { name: "high-contrast", appearance: "dark", bg: "#000000", element: "#1a1a1a", border: "#9a9a9a", borderActive: "#ffffff", text: "#ffffff", muted: "#d0d0d0", subtle: "#a0a0a0", primary: "#ffd700", secondary: "#00e5ff", accent: "#ff6ec7", red: "#ff4d4d", green: "#4dff4d", yellow: "#ffff4d", blue: "#4da6ff", cyan: "#4dffff", magenta: "#ff4dff", orange: "#ffa64d", diffAddBg: "#004d00", diffDelBg: "#660000", extra: { diffAdded: "#ffffff", diffRemoved: "#ffffff" } },
+  { name: "mono", appearance: "dark", bg: "#111111", element: "#1c1c1c", border: "#4a4a4a", borderActive: "#e0e0e0", text: "#e0e0e0", muted: "#9a9a9a", subtle: "#6a6a6a", primary: "#ffffff", secondary: "#c0c0c0", accent: "#ffffff", red: "#d0d0d0", green: "#d0d0d0", yellow: "#d0d0d0", blue: "#d0d0d0", cyan: "#d0d0d0", magenta: "#d0d0d0", orange: "#ffffff", diffAddBg: "#2e2e2e", diffDelBg: "#1a1a1a" },
+]
+
+export const BUILTIN_PALETTES: Palette[] = P
+export const BUILTIN_THEMES: Record<string, ThemeFile & { appearance: "dark" | "light" }> = Object.fromEntries(
+  P.map((p) => [p.name, { ...paletteTheme(p), appearance: p.appearance }]),
+)
+
+/** Light/dark pairs used when `ui.appearance = "auto"` and the terminal background disagrees. */
+export const COUNTERPARTS: Record<string, string> = {
+  baton: "baton-light",
+  "baton-light": "baton",
+  "catppuccin-mocha": "catppuccin-latte",
+  "catppuccin-macchiato": "catppuccin-latte",
+  "catppuccin-frappe": "catppuccin-latte",
+  "catppuccin-latte": "catppuccin-mocha",
+  tokyonight: "tokyonight-day",
+  "tokyonight-storm": "tokyonight-day",
+  "tokyonight-day": "tokyonight",
+  "rose-pine": "rose-pine-dawn",
+  "rose-pine-moon": "rose-pine-dawn",
+  "rose-pine-dawn": "rose-pine",
+  gruvbox: "gruvbox-light",
+  "gruvbox-light": "gruvbox",
+  kanagawa: "kanagawa-lotus",
+  "kanagawa-dragon": "kanagawa-lotus",
+  "kanagawa-lotus": "kanagawa",
+  "one-dark": "one-light",
+  "one-light": "one-dark",
+  "solarized-dark": "solarized-light",
+  "solarized-light": "solarized-dark",
+  "github-dark": "github-light",
+  "github-light": "github-dark",
+}

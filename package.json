@@ -1,0 +1,24 @@
+{
+  "name": "batonsh-monorepo",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "packages/adapters/*"
+  ],
+  "scripts": {
+    "dev": "bun run packages/cli/src/main.ts",
+    "test": "bun test",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@types/bun": "1.4.2",
+    "typescript": "5.9.3",
+    "@opentui/solid": "0.6.0",
+    "@opentui/core": "0.6.0",
+    "solid-js": "1.9.12"
+  }
+}

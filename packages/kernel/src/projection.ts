@@ -1,0 +1,393 @@
+/**
+ * Projections: fold BEP events into the live run state (agents, bus, tasks, approvals,
+ * totals) and per-agent activity feeds. The daemon and every client run the same reducer,
+ * so a client that replays the event log sees exactly what the daemon sees.
+ */
+import type {
+  AgentView,
+  BatonEvent,
+  BusMessageView,
+  DiffHunkLine,
+  PendingApproval,
+  Snapshot,
+  TaskView,
+  ToolKind,
+  ToolStatus,
+} from "@batonsh/protocol"
+
+export type FeedItem =
+  | { kind: "message"; id: string; role: "assistant" | "thought"; text: string; done: boolean; ts: number }
+  | { kind: "user"; id: string; text: string; from?: string; ts: number }
+  | {
+      kind: "tool"
+      id: string
+      toolKind: ToolKind
+      name: string
+      title: string
+      status: ToolStatus
+      summary?: string
+      parentId?: string
+      diffs: { path: string; lines: DiffHunkLine[]; added: number; removed: number }[]
+      output?: string
+      exitCode?: number | null
+      ts: number
+    }
+  | { kind: "bus"; id: string; from: string; to: string; body: string; direction: "in" | "out"; ts: number }
+  | { kind: "permission"; id: string; title: string; resolved?: string; ts: number }
+  | { kind: "error"; id: string; text: string; ts: number }
+  | { kind: "note"; id: string; text: string; ts: number }
+
+export interface AgentFeed {
+  items: FeedItem[]
+  index: Map<string, FeedItem>
+}
+
+const MAX_FEED = 400
+const MAX_BUS = 1000
+
+export class RunState {
+  runId = ""
+  projectRoot = ""
+  projectName = ""
+  branch: string | undefined
+  mode = "orchestrator"
+  orchestratorId: string | undefined
+  agents = new Map<string, AgentView>()
+  feeds = new Map<string, AgentFeed>()
+  tasks = new Map<string, TaskView>()
+  approvals = new Map<string, PendingApproval>()
+  bus: BusMessageView[] = []
+  lastSeq = 0
+  totals = { toolCalls: 0, messages: 0, added: 0, removed: 0, costUsd: 0, input: 0, output: 0 }
+  /** Bumped on every applied event; per-agent versions let UIs re-render selectively. */
+  version = 0
+  agentVersions = new Map<string, number>()
+  busVersion = 0
+  /** Recent activity timestamps for sparklines. */
+  activity: number[] = []
+
+  static fromSnapshot(s: Snapshot): RunState {
+    const r = new RunState()
+    r.runId = s.runId
+    r.projectRoot = s.projectRoot
+    r.projectName = s.projectName
+    r.branch = s.branch
+    r.mode = s.mode
+    r.orchestratorId = s.orchestratorId
+    for (const a of s.agents) r.agents.set(a.agentId, { ...a })
+    for (const t of s.tasks) r.tasks.set(t.taskId, { ...t })
+    for (const p of s.approvals) r.approvals.set(p.requestId, { ...p })
+    r.bus = [...s.bus]
+    r.totals = { ...s.totals }
+    r.lastSeq = s.lastSeq
+    return r
+  }
+
+  feed(agentId: string): AgentFeed {
+    let f = this.feeds.get(agentId)
+    if (!f) {
+      f = { items: [], index: new Map() }
+      this.feeds.set(agentId, f)
+    }
+    return f
+  }
+
+  private push(agentId: string, item: FeedItem) {
+    const f = this.feed(agentId)
+    f.items.push(item)
+    f.index.set(item.id, item)
+    if (f.items.length > MAX_FEED) {
+      const removed = f.items.splice(0, f.items.length - MAX_FEED)
+      for (const r of removed) f.index.delete(r.id)
+    }
+  }
+
+  private bump(agentId?: string) {
+    this.version++
+    if (agentId) this.agentVersions.set(agentId, (this.agentVersions.get(agentId) ?? 0) + 1)
+  }
+
+  apply(e: BatonEvent): void {
+    if (e.seq <= this.lastSeq && this.lastSeq !== 0) return
+    this.lastSeq = e.seq
+    if (!this.runId) this.runId = e.runId
+    const aid = e.agentId
+    const agent = aid ? this.agents.get(aid) : undefined
+
+    switch (e.type) {
+      case "run.started":
+        this.projectRoot = e.data.cwd
+        this.mode = e.data.mode
+        break
+      case "orch.mode":
+        this.mode = e.data.mode
+        break
+      case "agent.spawned": {
+        const d = e.data
+        this.agents.set(d.agentId, {
+          ...d,
+          status: "starting",
+          startedAt: e.ts,
+          usage: { input: 0, cachedInput: 0, output: 0, reasoning: 0, costUsd: 0 },
+          toolCalls: 0,
+          diff: { added: 0, removed: 0 },
+        })
+        if (d.isOrchestrator) this.orchestratorId = d.agentId
+        this.bump(d.agentId)
+        return
+      }
+      case "agent.updated":
+        if (agent) Object.assign(agent, stripUndefined(e.data))
+        break
+      case "agent.session":
+        if (agent) agent.sessionId = e.data.sessionId
+        break
+      case "agent.status":
+        if (agent) {
+          agent.status = e.data.status
+          agent.statusDetail = e.data.detail
+          if (e.data.status !== "busy" && e.data.status !== "awaiting_approval") agent.turnStartedAt = undefined
+        }
+        break
+      case "agent.exited":
+        if (agent) {
+          agent.status = "exited"
+          agent.statusDetail = e.data.reason
+          agent.turnStartedAt = undefined
+        }
+        for (const [k, p] of this.approvals) if (p.agentId === aid) this.approvals.delete(k)
+        break
+      case "turn.started":
+        if (agent) {
+          agent.turnStartedAt = e.ts
+          agent.status = "busy"
+        }
+        if (aid && e.data.prompt) this.push(aid, { kind: "user", id: `u_${e.id}`, text: e.data.prompt, ts: e.ts })
+        break
+      case "turn.completed":
+      case "turn.interrupted":
+        if (agent) agent.turnStartedAt = undefined
+        if (aid) {
+          // close dangling streamed messages
+          for (const it of this.feed(aid).items) if (it.kind === "message" && !it.done) it.done = true
+          if (e.type === "turn.interrupted") this.push(aid, { kind: "note", id: `n_${e.id}`, text: "Interrupted", ts: e.ts })
+        }
+        break
+      case "message.delta": {
+        if (!aid) break
+        if (e.data.role === "user") break
+        const f = this.feed(aid)
+        const existing = f.index.get(e.data.messageId)
+        if (existing && existing.kind === "message") existing.text += e.data.text
+        else this.push(aid, { kind: "message", id: e.data.messageId, role: e.data.role, text: e.data.text, done: false, ts: e.ts })
+        if (agent) agent.lastActivity = "writing"
+        break
+      }
+      case "message.completed": {
+        if (!aid || e.data.role === "user") break
+        const f = this.feed(aid)
+        const existing = f.index.get(e.data.messageId)
+        if (existing && existing.kind === "message") {
+          existing.text = e.data.text
+          existing.done = true
+        } else this.push(aid, { kind: "message", id: e.data.messageId, role: e.data.role, text: e.data.text, done: true, ts: e.ts })
+        if (e.data.role === "assistant") this.totals.messages++
+        break
+      }
+      case "tool.call": {
+        if (!aid) break
+        const f = this.feed(aid)
+        if (f.index.has(e.data.toolCallId)) break
+        this.push(aid, {
+          kind: "tool",
+          id: e.data.toolCallId,
+          toolKind: e.data.kind,
+          name: e.data.name,
+          title: e.data.title,
+          status: e.data.status,
+          parentId: e.data.parentToolCallId,
+          diffs: [],
+          ts: e.ts,
+        })
+        this.totals.toolCalls++
+        if (agent) {
+          agent.toolCalls++
+          agent.lastActivity = e.data.title
+        }
+        this.activity.push(e.ts)
+        if (this.activity.length > 600) this.activity.splice(0, this.activity.length - 600)
+        break
+      }
+      case "tool.update": {
+        if (!aid) break
+        const it = this.feed(aid).index.get(e.data.toolCallId)
+        if (!it || it.kind !== "tool") break
+        if (e.data.status) it.status = e.data.status
+        if (e.data.title) it.title = e.data.title
+        if (e.data.summary) it.summary = e.data.summary
+        for (const c of e.data.content ?? []) {
+          if (c.type === "diff") {
+            const lines = c.lines ?? []
+            const added = c.added ?? lines.filter((l) => l.kind === "add").length
+            const removed = c.removed ?? lines.filter((l) => l.kind === "del").length
+            const prev = it.diffs.findIndex((d) => d.path === c.path)
+            if (prev >= 0) {
+              const old = it.diffs[prev]!
+              this.totals.added -= old.added
+              this.totals.removed -= old.removed
+              if (agent) {
+                agent.diff.added -= old.added
+                agent.diff.removed -= old.removed
+              }
+              it.diffs.splice(prev, 1)
+            }
+            it.diffs.push({ path: c.path, lines, added, removed })
+            this.totals.added += added
+            this.totals.removed += removed
+            if (agent) {
+              agent.diff.added += added
+              agent.diff.removed += removed
+            }
+          } else if (c.type === "terminal") {
+            it.output = c.output
+            if (c.exitCode !== undefined) it.exitCode = c.exitCode
+          } else if (c.type === "text" && !it.summary) {
+            it.output = (it.output ?? "") + c.text
+          }
+        }
+        break
+      }
+      case "plan.updated":
+        if (agent) {
+          const total = e.data.entries.length
+          const done = e.data.entries.filter((x) => x.status === "completed").length
+          agent.progress = total ? done / total : undefined
+        }
+        break
+      case "usage.updated":
+        if (agent) {
+          const u = agent.usage
+          const before = { ...u }
+          if (e.data.mode === "delta") {
+            u.input += e.data.input
+            u.cachedInput += e.data.cachedInput
+            u.output += e.data.output
+            u.reasoning += e.data.reasoning
+            u.costUsd += e.data.costUsd ?? 0
+          } else {
+            u.input = e.data.input
+            u.cachedInput = e.data.cachedInput
+            u.output = e.data.output
+            u.reasoning = e.data.reasoning
+            if (e.data.costUsd !== undefined) u.costUsd = e.data.costUsd
+          }
+          this.totals.input += u.input - before.input
+          this.totals.output += u.output - before.output
+          this.totals.costUsd += u.costUsd - before.costUsd
+        }
+        break
+      case "permission.requested":
+        if (aid) {
+          this.approvals.set(e.data.requestId, {
+            agentId: aid,
+            requestId: e.data.requestId,
+            title: e.data.title,
+            kind: e.data.kind,
+            detail: e.data.detail,
+            options: e.data.options,
+            ts: e.ts,
+          })
+          this.push(aid, { kind: "permission", id: e.data.requestId, title: e.data.title, ts: e.ts })
+        }
+        break
+      case "permission.resolved": {
+        this.approvals.delete(e.data.requestId)
+        if (aid) {
+          const it = this.feed(aid).index.get(e.data.requestId)
+          if (it && it.kind === "permission") it.resolved = `${e.data.kind ?? "cancelled"} (${e.data.by})`
+        }
+        break
+      }
+      case "bus.message": {
+        const d = e.data
+        this.bus.push({ messageId: d.messageId, ts: e.ts, from: d.from, to: d.to, kind: d.kind, body: d.body, delivery: d.delivery })
+        if (this.bus.length > MAX_BUS) this.bus.splice(0, this.bus.length - MAX_BUS)
+        this.busVersion++
+        if (d.kind !== "heartbeat" && d.kind !== "progress") {
+          if (this.agents.has(d.from)) this.push(d.from, { kind: "bus", id: `bo_${d.messageId}`, from: d.from, to: d.to, body: d.body, direction: "out", ts: e.ts })
+          if (this.agents.has(d.to)) this.push(d.to, { kind: "bus", id: `bi_${d.messageId}`, from: d.from, to: d.to, body: d.body, direction: "in", ts: e.ts })
+          if (d.from !== d.to && this.agents.has(d.from)) this.bump(d.from)
+          if (this.agents.has(d.to)) this.bump(d.to)
+        }
+        this.bump()
+        return
+      }
+      case "bus.delivered": {
+        const m = this.bus.findLast((b) => b.messageId === e.data.messageId)
+        if (m) m.delivered = true
+        this.busVersion++
+        break
+      }
+      case "task.created":
+        this.tasks.set(e.data.taskId, { taskId: e.data.taskId, title: e.data.title, state: "submitted", owner: e.data.owner, deps: e.data.deps })
+        break
+      case "task.state": {
+        const t = this.tasks.get(e.data.taskId)
+        if (t) {
+          t.state = e.data.state
+          if (e.data.owner) t.owner = e.data.owner
+        }
+        break
+      }
+      case "error":
+        if (aid) this.push(aid, { kind: "error", id: `e_${e.id}`, text: e.data.message, ts: e.ts })
+        break
+      case "orch.note":
+        if (aid) this.push(aid, { kind: "note", id: `n_${e.id}`, text: e.data.text, ts: e.ts })
+        break
+      default:
+        break
+    }
+    this.bump(aid)
+  }
+
+  snapshot(): Snapshot {
+    return {
+      runId: this.runId,
+      projectRoot: this.projectRoot,
+      projectName: this.projectName,
+      branch: this.branch,
+      mode: this.mode,
+      orchestratorId: this.orchestratorId,
+      agents: [...this.agents.values()],
+      tasks: [...this.tasks.values()],
+      approvals: [...this.approvals.values()],
+      bus: this.bus.slice(-200),
+      totals: { ...this.totals },
+      lastSeq: this.lastSeq,
+    }
+  }
+
+  running(): AgentView[] {
+    return [...this.agents.values()].filter((a) => a.status === "busy" || a.status === "awaiting_approval")
+  }
+
+  /** Workers in spawn order (everything but the orchestrator). */
+  workers(): AgentView[] {
+    return [...this.agents.values()].filter((a) => !a.isOrchestrator && a.status !== "exited")
+  }
+
+  findAgent(ref: string): AgentView | undefined {
+    if (this.agents.has(ref)) return this.agents.get(ref)
+    const lower = ref.toLowerCase()
+    for (const a of this.agents.values()) if (a.name.toLowerCase() === lower && a.status !== "exited") return a
+    for (const a of this.agents.values()) if (a.name.toLowerCase() === lower) return a
+    return undefined
+  }
+}
+
+function stripUndefined<T extends Record<string, unknown>>(o: T): Partial<T> {
+  const out: Partial<T> = {}
+  for (const [k, v] of Object.entries(o)) if (v !== undefined) (out as Record<string, unknown>)[k] = v
+  return out
+}

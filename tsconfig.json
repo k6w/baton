@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "lib": ["ESNext"],
+    "types": ["bun"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "skipLibCheck": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "jsx": "preserve",
+    "jsxImportSource": "@opentui/solid",
+    "resolveJsonModule": true
+  },
+  "include": ["packages/**/*.ts", "packages/**/*.tsx"],
+  "exclude": ["**/node_modules", "**/generated/**"]
+}

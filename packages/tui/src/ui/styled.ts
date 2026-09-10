@@ -28,15 +28,17 @@ function chunk(text: string, s: Partial<Seg> = {}): TextChunk {
 }
 
 /** Lines → StyledText, every row padded to `width` (with the row background, if any). */
-export function toStyled(lines: readonly Line[], width: number): StyledText {
+export function toStyled(lines: readonly Line[], width: number, height?: number): StyledText {
   const chunks: TextChunk[] = []
-  lines.forEach((l, i) => {
+  // Pad to `height` rows too, for the same reason as the width padding below.
+  const all = height !== undefined && lines.length < height ? [...lines, ...Array.from({ length: height - lines.length }, () => ({ segs: [] }) as Line)] : lines
+  all.forEach((l, i) => {
     for (const s of l.segs) if (s.text) chunks.push(chunk(s.text, s))
     // Pad every row to the full width: text nodes only repaint cells they cover, so a
     // shorter line would otherwise leave the previous frame's characters behind.
     const pad = width - lineWidth(l)
     if (pad > 0) chunks.push(chunk(" ".repeat(pad), { bg: l.bg }))
-    if (i < lines.length - 1) chunks.push(chunk("\n"))
+    if (i < all.length - 1) chunks.push(chunk("\n"))
   })
   return new StyledText(chunks)
 }

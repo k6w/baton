@@ -24,7 +24,11 @@ export function BusPane(props: { width: number; height: number; focused?: boolea
       const m = /^([a-z]+)-(\d+)$/.exec(w.name)
       return { ...w, name: m ? `${m[1]![0]}${m[2]}` : w.name }
     }
-    const msgs = ui.run.bus.slice(-(height - 1))
+    // keep only the latest heartbeat per sender: liveness without flooding the log
+    const latestBeat = new Map<string, string>()
+    for (const m of ui.run.bus) if (m.kind === "heartbeat") latestBeat.set(m.from, m.messageId)
+    const shown = ui.run.bus.filter((m) => m.kind !== "heartbeat" || latestBeat.get(m.from) === m.messageId)
+    const msgs = shown.slice(-(height - 1))
     return msgs.map((m) => busLine(m, { theme: t, width, who: short, clock: ui.config.ui.timestamp_format, now: ui.now() }))
   })
   const footer = createMemo<Line[]>(() => {
@@ -39,7 +43,7 @@ export function BusPane(props: { width: number; height: number; focused?: boolea
       {
         segs: [
           { text: "● ", fg: ui.run.running().length ? t.success : t.textMuted },
-          { text: `${ui.run.bus.length} msgs · ${peers.size} peers`, fg: t.textMuted },
+          { text: `${ui.run.busChatCount} msgs · ${peers.size} peers`, fg: t.textMuted },
         ],
       },
     ]
@@ -55,7 +59,7 @@ export function BusPane(props: { width: number; height: number; focused?: boolea
       right={[{ text: "a2a", fg: ui.theme().textMuted }]}
     >
       <box flexGrow={1} overflow="hidden">
-        <text wrapMode="none">{toStyled(lines(), inner().width)}</text>
+        <text wrapMode="none">{toStyled(lines(), inner().width, Math.max(0, inner().height - 1))}</text>
       </box>
       <box height={1}>
         <text wrapMode="none">{toStyled(footer(), inner().width)}</text>

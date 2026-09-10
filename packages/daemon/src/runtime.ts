@@ -241,9 +241,13 @@ export class Runtime {
     return info
   }
 
+  /** Requests the runtime already resolved — adapters echo their own `permission.resolved`. */
+  private resolvedRequests = new Set<string>()
+
   private onAgentEvent(rt: AgentRuntime, ev: AgentEvent) {
     if (this.closed) return
     const agentId = rt.info.agentId
+    if (ev.type === "permission.resolved" && this.resolvedRequests.has(ev.data.requestId)) return
     let stored: BatonEvent
     try {
       stored = this.emit(ev, agentId)
@@ -286,6 +290,9 @@ export class Runtime {
       case "usage.updated":
         this.checkBudget(rt)
         break
+      case "error":
+        if (/not logged in|authenticat|unauthori[sz]ed|\b401\b|invalid api key|please run \/login/i.test(stored.data.message)) this.authHint(rt)
+        break
       case "agent.exited":
         rt.closing = true
         rt.busy = false
@@ -300,6 +307,20 @@ export class Runtime {
    * the orchestrator or the agent's parent) makes the agent's next turn result flow back to
    * the sender as a `result` bus message.
    */
+  private authHinted = new Set<string>()
+
+  /** One actionable note per adapter when it fails on authentication. */
+  private authHint(rt: AgentRuntime) {
+    if (this.authHinted.has(rt.info.adapter)) return
+    this.authHinted.add(rt.info.adapter)
+    void this.registry.detect(rt.info.adapter).then((d) => {
+      const hint = d?.authHint ?? `log in to ${rt.info.adapter} in a terminal`
+      const others = ["codex", "claude", "opencode", "gemini", "cursor"].filter((a) => a !== rt.info.adapter)
+      const switchHint = rt.info.isOrchestrator ? ` — or use another orchestrator: set [orchestrator] agent = "${others[0]}" in .baton/config.toml, or start with --orchestrator ${others[0]}` : ""
+      this.emit({ type: "orch.note", data: { level: "warn", text: `${rt.info.adapter} is not authenticated: ${hint}${switchHint}` } }, rt.info.agentId)
+    })
+  }
+
   async promptAgent(agentId: string, text: string, opts: { from?: string; delivery?: Delivery; expectResult?: boolean } = {}): Promise<void> {
     const rt = this.agents.get(agentId)
     if (!rt?.session || rt.closing) throw new Error(`agent ${agentId} is not running`)
@@ -554,6 +575,8 @@ export class Runtime {
     if (opt && (opt.kind === "allow_always" || opt.kind === "reject_always")) {
       this.policy.remember({ agentId, agentName: rt.info.name, adapter: rt.info.adapter, title: pending.title, kind: pending.kind, detail: pending.detail }, opt.kind)
     }
+    this.resolvedRequests.add(requestId)
+    if (this.resolvedRequests.size > 5000) this.resolvedRequests.delete(this.resolvedRequests.values().next().value as string)
     this.emit({ type: "permission.resolved", data: { requestId, optionId, kind: opt?.kind ?? null, by } }, agentId)
     try {
       await rt.session.respondPermission(requestId, optionId)

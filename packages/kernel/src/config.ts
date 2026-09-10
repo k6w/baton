@@ -263,11 +263,30 @@ export function loadConfig(opts: { projectRoot?: string; overrides?: Record<stri
   const provenance: Record<string, string> = {}
   for (const layer of layers) mergeInto(merged, layer.data, layer.name, provenance)
 
-  const parsed = BatonConfig.safeParse(merged)
-  if (parsed.success) return { config: parsed.data, provenance, layers, errors }
-  for (const issue of parsed.error.issues) errors.push(`config ${issue.path.join(".")}: ${issue.message}`)
-  // Fall back layer by layer so one bad key doesn't kill the app.
+  // One bad key must not take the whole config down: drop each invalid leaf (reporting
+  // where it came from) and re-validate, so every other setting still applies.
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const parsed = BatonConfig.safeParse(merged)
+    if (parsed.success) return { config: parsed.data, provenance, layers, errors }
+    for (const issue of parsed.error.issues) {
+      const key = issue.path.join(".")
+      const from = provenance[key] ?? Object.entries(provenance).find(([k]) => k.startsWith(`${key}.`))?.[1]
+      errors.push(`config ${key || "(root)"}${from ? ` (from ${from})` : ""}: ${issue.message} — ignored`)
+      if (issue.path.length === 0) return { config: BatonConfig.parse({}), provenance: {}, layers, errors }
+      deletePath(merged, issue.path.map(String))
+      for (const k of Object.keys(provenance)) if (k === key || k.startsWith(`${key}.`)) delete provenance[k]
+    }
+  }
   return { config: BatonConfig.parse({}), provenance: {}, layers, errors }
+}
+
+function deletePath(obj: Record<string, unknown>, path: string[]): void {
+  let cur: unknown = obj
+  for (let i = 0; i < path.length - 1; i++) {
+    if (typeof cur !== "object" || cur === null) return
+    cur = (cur as Record<string, unknown>)[path[i] as string]
+  }
+  if (typeof cur === "object" && cur !== null) delete (cur as Record<string, unknown>)[path[path.length - 1] as string]
 }
 
 export function configJsonSchema(): unknown {

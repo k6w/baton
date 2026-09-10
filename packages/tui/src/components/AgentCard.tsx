@@ -101,7 +101,7 @@ export function AgentCard(props: { agentId: string; width: number; height: numbe
       }}
     >
       <box flexGrow={1} overflow="hidden">
-        <text wrapMode="none">{toStyled(body(), inner().width)}</text>
+        <text wrapMode="none">{toStyled(body(), inner().width, Math.max(0, inner().height - 1))}</text>
       </box>
       <box height={1}>
         <text wrapMode="none">{toStyled(status(), inner().width)}</text>

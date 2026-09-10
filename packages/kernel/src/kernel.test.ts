@@ -83,6 +83,21 @@ describe("config", () => {
     expect(c.provenance["ui.layout"]).toBe("env")
   })
 
+  test("an invalid key is dropped, everything else still applies", () => {
+    const proj = mkdtempSync(join(tmpdir(), "baton-proj-"))
+    mkdirSync(join(proj, ".baton"))
+    writeFileSync(join(proj, ".baton", "config.toml"), `[orchestrator]\nagent = "codex"\n[defaults]\napproval = "sometimes"\n[ui]\nfps = 999\ntheme = "nord"\n`)
+    process.env.BATON_CONFIG_DIR = mkdtempSync(join(tmpdir(), "baton-cfg-"))
+    const c = loadConfig({ projectRoot: proj, env: {} })
+    delete process.env.BATON_CONFIG_DIR
+    expect(c.config.orchestrator.agent).toBe("codex")
+    expect(c.config.ui.theme).toBe("nord")
+    expect(c.config.defaults.approval).toBe("ask")
+    expect(c.config.ui.fps).toBe(30)
+    expect(c.errors.length).toBe(2)
+    expect(c.errors.join("\n")).toContain("defaults.approval (from project)")
+  })
+
   test("envLayer parses nested keys", () => {
     expect(envLayer({ BATON_BUDGET__RUN_USD: "5" })).toEqual({ budget: { run_usd: 5 } })
   })

@@ -247,10 +247,15 @@ export function renderItem(it: FeedItem, ctx: RenderCtx, out: Line[]): void {
       const text = it.text.trim()
       if (!text) return
       const lines = wrap(text, w - 2)
-      const shown = ctx.compact ? lines.slice(-4) : lines
+      const cut = ctx.compact && lines.length > 4
+      const shown = cut ? lines.slice(-4) : lines
       shown.forEach((l, i) =>
         out.push({
-          segs: [{ text: i === 0 && shown.length === lines.length ? (claude ? "● " : "• ") : "  ", fg: claude ? t.text : t.textMuted }, { text: l, fg: t.text }],
+          segs: [
+            { text: i === 0 ? (claude ? "● " : "• ") : "  ", fg: claude ? t.text : t.textMuted },
+            ...(i === 0 && cut ? [{ text: "… ", fg: t.textMuted }] : []),
+            { text: l, fg: t.text },
+          ],
         }),
       )
       return
@@ -274,6 +279,8 @@ export function renderItem(it: FeedItem, ctx: RenderCtx, out: Line[]): void {
       return
     }
     case "permission": {
+      // requests the policy engine handled on its own are noise in the feed
+      if (it.resolved?.endsWith("(policy)")) return
       if (it.resolved) {
         const ok = it.resolved.startsWith("allow")
         out.push({ segs: [{ text: ok ? "✓ " : "✗ ", fg: ok ? t.success : t.error }, { text: clip(`${it.title} — ${it.resolved}`, w - 2), fg: t.textMuted }] })

@@ -159,8 +159,8 @@ function statusColor(t: ResolvedTheme, status: string): string {
 }
 
 function batonToolTitle(item: Extract<FeedItem, { kind: "tool" }>): { name: string; args: string; extra: string[] } | undefined {
-  const n = item.name.replace(/^mcp__baton__/, "").replace(/^baton[_ -]+/, "")
-  const isBaton = item.name.startsWith("mcp__baton__") || /^baton\b/.test(item.name) || /^baton - /.test(item.title)
+  const n = item.name.replace(/^mcp__baton__/, "").replace(/^baton[._ -]+/, "")
+  const isBaton = /^(mcp__baton__|baton[._ -])/.test(item.name) || /^baton[ .]/.test(item.title)
   if (!isBaton) return undefined
   const input = (item.input ?? {}) as Record<string, unknown>
   const tool = /send_message|spawn_agent|wait_for_results|list_agents|read_inbox|report_progress|interrupt_agent|kill_agent|set_label/.exec(

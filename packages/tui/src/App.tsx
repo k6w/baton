@@ -69,15 +69,29 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
 
   // ───────────────────────────── layout ─────────────────────────────
 
-  const workers = createMemo(() => {
-    ui.version()
-    return ui.run.workers()
-  })
+  // Only changes when the set of workers changes — keeps cells (and the cards keyed on them) stable.
+  const workers = createMemo(
+    () => {
+      ui.version()
+      return ui.run.workers()
+    },
+    [],
+    { equals: (a, b) => a.length === b.length && a.every((x, i) => x.agentId === b[i]?.agentId) },
+  )
 
+  const cellCache = new Map<string, Cell>()
+  const busCell: Cell = { kind: "bus" }
   const cells = createMemo<Cell[]>(() => {
     const ws = workers()
-    const out: Cell[] = ws.map((w) => ({ kind: "agent", agentId: w.agentId }))
-    if (ui.prefs.show_bus && ws.length > 0 && ui.prefs.layout !== "swarm") out.push({ kind: "bus" })
+    const out: Cell[] = ws.map((w) => {
+      let c = cellCache.get(w.agentId)
+      if (!c) {
+        c = { kind: "agent", agentId: w.agentId }
+        cellCache.set(w.agentId, c)
+      }
+      return c
+    })
+    if (ui.prefs.show_bus && ws.length > 0 && ui.prefs.layout !== "swarm") out.push(busCell)
     return out
   })
 

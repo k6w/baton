@@ -14,7 +14,8 @@
     "@batonsh/daemon": "workspace:*",
     "@batonsh/sdk": "workspace:*",
     "@batonsh/tui": "workspace:*",
-    "@batonsh/themes": "workspace:*"
+    "@batonsh/themes": "workspace:*",
+    "smol-toml": "1.9.1"
   },
   "bin": {
     "baton": "src/main.ts"

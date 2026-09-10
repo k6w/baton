@@ -9,8 +9,13 @@ import { toStyled } from "../ui/styled.ts"
 
 export function AgentCard(props: { agentId: string; width: number; height: number; focused: boolean; onSelect?: () => void; onZoom?: () => void }) {
   const ui = useUi()
-  const agent = createMemo(() => {
+  // re-evaluated every tick (cheap) but only *changes* when this agent's events change
+  const ver = createMemo(() => {
     ui.version()
+    return ui.run.agentVersions.get(props.agentId) ?? 0
+  })
+  const agent = createMemo(() => {
+    ver()
     const a = ui.run.agents.get(props.agentId)
     return a ? { ...a } : undefined
   })
@@ -24,11 +29,10 @@ export function AgentCard(props: { agentId: string; width: number; height: numbe
   let cacheKey = ""
   let cached: Line[] = []
   const body = createMemo(() => {
-    ui.version()
     const a = agent()
     const l = look()
     if (!a || !l) return []
-    const v = ui.run.agentVersions.get(props.agentId) ?? 0
+    const v = ver()
     const { width, height } = inner()
     const key = `${v}|${width}|${height}|${ui.theme().name}|${ui.prefs.render_style}|${ui.prefs.show_thoughts}|${ui.prefs.density}`
     if (key === cacheKey) return cached

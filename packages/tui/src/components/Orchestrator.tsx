@@ -37,10 +37,14 @@ export function Orchestrator(props: OrchestratorProps) {
     return a && a.status !== "exited" ? { ...a } : undefined
   })
 
-  const workers = createMemo(() => {
-    ui.version()
-    return ui.run.workers()
-  })
+  const workers = createMemo(
+    () => {
+      ui.version()
+      return ui.run.workers().map((w) => ({ ...w }))
+    },
+    [],
+    { equals: (a, b) => a.length === b.length && a.every((x, i) => x.agentId === b[i]?.agentId && x.status === b[i]?.status && x.toolCalls === b[i]?.toolCalls) },
+  )
 
   const headerRight = (): Seg[] => {
     const t = ui.theme()
@@ -84,8 +88,13 @@ export function Orchestrator(props: OrchestratorProps) {
   }
 
   /** Lead thread + agent↔agent chatter, ordered by time. */
-  const thread = createMemo(() => {
+  const threadKey = createMemo(() => {
     ui.version()
+    const id = ui.run.orchestratorId
+    return `${id}|${id ? (ui.run.agentVersions.get(id) ?? 0) : 0}|${ui.run.busVersion}`
+  })
+  const thread = createMemo(() => {
+    threadKey()
     const id = ui.run.orchestratorId
     const items: FeedItem[] = id ? [...ui.run.feed(id).items] : []
     for (const m of ui.run.bus.slice(-300)) {

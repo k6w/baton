@@ -17,6 +17,12 @@ export interface PolicyRequest {
   detail?: string
 }
 
+/** Baton's own coordination tools (spawn_agent, send_message, …) never need a human. */
+// Anchored + kind-restricted so a shell command that merely *mentions* baton can't slip through.
+const BUILTIN_RULES: PolicyRule[] = [
+  { kinds: ["other", "delegate", "think", "fetch"], match: "^(mcp__baton__\\w+|baton[._]\\w+|baton: Allow the baton MCP server to run tool \"\\w+\")", action: "allow" },
+]
+
 const PRESETS: Record<"strict" | "balanced" | "yolo", PolicyRule[]> = {
   strict: [{ kinds: ["read", "search", "think"], action: "allow" }],
   balanced: [
@@ -49,7 +55,7 @@ export class PolicyEngine {
   decide(r: PolicyRequest): Decision {
     const mem = this.remembered.get(this.key(r))
     if (mem) return mem
-    for (const rule of [...this.rules, ...PRESETS[this.preset]]) {
+    for (const rule of [...this.rules, ...BUILTIN_RULES, ...PRESETS[this.preset]]) {
       if (rule.kinds?.length && !rule.kinds.includes(r.kind ?? "other")) continue
       if (rule.agents?.length && !rule.agents.includes(r.agentName) && !rule.agents.includes(r.adapter)) continue
       if (rule.match) {

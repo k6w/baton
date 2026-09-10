@@ -54,7 +54,7 @@ export function StatusBar(props: { width: number }) {
       total: { text: String(workers.length), fg: t.text },
       noun: { text: noun, fg: t.statusText },
       calls: { text: formatCount(run.totals.toolCalls), fg: t.text },
-      msgs: { text: formatCount(run.bus.filter((m) => m.kind !== "heartbeat").length), fg: t.text },
+      msgs: { text: formatCount(run.busChatCount), fg: t.text },
       cost: run.totals.costUsd > 0 ? { text: formatCost(run.totals.costUsd), fg: t.statusText } : undefined,
       tokens: { text: formatTokens(run.totals.input + run.totals.output), fg: t.statusText },
       added: run.totals.added ? { text: `+${formatCount(run.totals.added)}`, fg: t.success } : undefined,

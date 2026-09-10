@@ -61,6 +61,9 @@
     "packages/cli": {
       "name": "batonsh",
       "version": "0.1.0",
+      "bin": {
+        "baton": "src/main.ts",
+      },
       "dependencies": {
         "@batonsh/daemon": "workspace:*",
         "@batonsh/kernel": "workspace:*",
@@ -68,6 +71,7 @@
         "@batonsh/sdk": "workspace:*",
         "@batonsh/themes": "workspace:*",
         "@batonsh/tui": "workspace:*",
+        "smol-toml": "1.9.1",
       },
     },
     "packages/daemon": {

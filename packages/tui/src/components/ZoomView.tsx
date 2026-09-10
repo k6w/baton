@@ -9,15 +9,18 @@ import { segs, toStyled } from "../ui/styled.ts"
 
 export function ZoomView(props: { agentId: string; width: number; height: number }) {
   const ui = useUi()
-  const agent = createMemo(() => {
+  const ver = createMemo(() => {
     ui.version()
+    return ui.run.agentVersions.get(props.agentId) ?? 0
+  })
+  const agent = createMemo(() => {
+    ver()
     const a = ui.run.agents.get(props.agentId)
     return a ? { ...a } : undefined
   })
   const look = createMemo(() => (agent() ? agentLook(ui, agent()!) : undefined))
   const inner = () => innerSize(props.width, props.height, ui.prefs.border)
   const lines = createMemo(() => {
-    ui.version()
     const a = agent()
     const l = look()
     if (!a || !l) return []

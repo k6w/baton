@@ -70,10 +70,26 @@ export async function detectAgents(): Promise<DetectedAgent[]> {
 }
 
 export function chooseDefaults(agents: DetectedAgent[]): { orchestrator: string; worker: string } {
-  const ok = (id: string) => agents.find((a) => a.id === id && a.installed && a.auth !== "missing")
-  const any = (id: string) => agents.find((a) => a.id === id && a.installed)
-  const orchestrator = ORCH_PREF.find(ok) ?? ORCH_PREF.find(any) ?? "mock"
-  const worker = WORKER_PREF.find((id) => ok(id) && id !== orchestrator) ?? WORKER_PREF.find(ok) ?? orchestrator
+  // tiers: confirmed logged in → auth unknown → installed at all
+  const tier = (id: string) => {
+    const a = agents.find((x) => x.id === id && x.installed)
+    if (!a) return 0
+    return a.auth === "ok" ? 3 : a.auth === "unknown" ? 2 : 1
+  }
+  const best = (pref: string[], exclude?: string) => {
+    let pick: string | undefined
+    let score = 0
+    for (const id of pref) {
+      const t = tier(id)
+      if (id !== exclude && t > score) {
+        pick = id
+        score = t
+      }
+    }
+    return pick
+  }
+  const orchestrator = best(ORCH_PREF) ?? "mock"
+  const worker = best(WORKER_PREF, orchestrator) ?? orchestrator
   return { orchestrator, worker }
 }
 

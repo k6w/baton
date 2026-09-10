@@ -8,7 +8,15 @@ export function formatTokens(n: number): string {
 }
 
 export function formatCount(n: number): string {
-  return Math.round(n).toLocaleString("en-US")
+  // hand-rolled: toLocaleString is surprisingly expensive on a 30fps render path
+  const v = Math.round(n)
+  const s = String(Math.abs(v))
+  let out = ""
+  for (let i = 0; i < s.length; i++) {
+    if (i > 0 && (s.length - i) % 3 === 0) out += ","
+    out += s[i]
+  }
+  return v < 0 ? `-${out}` : out
 }
 
 export function formatDuration(ms: number): string {

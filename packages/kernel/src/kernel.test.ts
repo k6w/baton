@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { diffLines, parseUnifiedDiff } from "@batonsh/protocol"
-import { EventStore, RunState, envLayer, loadConfig, template } from "./index.ts"
+import { EventStore, RunState, envLayer, formatCount, loadConfig, template } from "./index.ts"
 
 describe("EventStore", () => {
   test("append validates, assigns seq and replays in order", () => {
@@ -102,6 +102,9 @@ describe("protocol utils", () => {
       { kind: "del", text: "teh", oldLine: 14 },
       { kind: "add", text: "the", newLine: 14 },
     ])
+  })
+  test("formatCount", () => {
+    expect([0, 7, 999, 1000, 43231, 1234567, -7174].map(formatCount)).toEqual(["0", "7", "999", "1,000", "43,231", "1,234,567", "-7,174"])
   })
   test("template", () => {
     expect(template("{a}/{b} x{missing}", { a: 1, b: "2" })).toBe("1/2 x")

@@ -64,6 +64,8 @@ export class RunState {
   version = 0
   agentVersions = new Map<string, number>()
   busVersion = 0
+  /** Bus messages excluding heartbeats/progress (status bar "msgs"). */
+  busChatCount = 0
   /** Recent activity timestamps for sparklines. */
   activity: number[] = []
 
@@ -316,6 +318,7 @@ export class RunState {
         if (this.bus.length > MAX_BUS) this.bus.splice(0, this.bus.length - MAX_BUS)
         this.busVersion++
         if (d.kind !== "heartbeat" && d.kind !== "progress") {
+          this.busChatCount++
           if (this.agents.has(d.from)) this.push(d.from, { kind: "bus", id: `bo_${d.messageId}`, from: d.from, to: d.to, body: d.body, direction: "out", ts: e.ts })
           if (this.agents.has(d.to)) this.push(d.to, { kind: "bus", id: `bi_${d.messageId}`, from: d.from, to: d.to, body: d.body, direction: "in", ts: e.ts })
           if (d.from !== d.to && this.agents.has(d.from)) this.bump(d.from)

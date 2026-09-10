@@ -69,7 +69,7 @@ export const UiConfig = z.object({
   spinner: z.string().default("star"),
   verbs: z.array(z.string()).optional(),
   animations: z.boolean().default(true),
-  fps: z.number().int().min(5).max(120).default(60),
+  fps: z.number().int().min(5).max(120).default(30),
   min_card_width: z.number().int().min(20).default(44),
   min_card_height: z.number().int().min(4).default(9),
   max_columns: z.number().int().min(1).default(4),

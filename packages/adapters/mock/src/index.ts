@@ -229,6 +229,10 @@ class MockSession implements AgentSession {
     try {
       if (/\bpong\b/i.test(input.text)) {
         await this.say("PONG")
+      } else if (this.cfg.name === "orchestrator" || this.cfg.options?.coordinatorOnly) {
+        // a mock lead only coordinates (the demo director does the dispatching)
+        const bus = /^\[baton\] (?:Result|Message) from ([^:\n]+):\n([^\n]*)/.exec(input.text)
+        await this.say(bus ? `${bus[1]} reports: ${bus[2]}` : "On it — splitting this up across the team.")
       } else {
         await this.workLoop(input)
       }
@@ -260,7 +264,12 @@ class MockSession implements AgentSession {
     })
     for (let i = 0; i < steps && !this.aborted; i++) {
       const steer = this.steered.shift()
-      if (steer) await this.say(`Got it${steer.from ? ` (${steer.from})` : ""} — ${steer.text.slice(0, 50)}.`)
+      if (steer) {
+        const bus = /^\[baton\] (?:Result|Message) from ([^:\n]+):\n([^\n]*)/.exec(steer.text)
+        const who = bus?.[1] ?? steer.from
+        const body = (bus?.[2] ?? steer.text).slice(0, 60)
+        await this.say(`Noted${who ? `, ${who}` : ""}: ${body}`)
+      }
       const r = this.rand()
       if (r < 0.3) await this.readStep()
       else if (r < 0.65) await this.editStep()

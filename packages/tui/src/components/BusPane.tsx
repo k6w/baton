@@ -9,8 +9,12 @@ import { toStyled } from "../ui/styled.ts"
 export function BusPane(props: { width: number; height: number; focused?: boolean }) {
   const ui = useUi()
   const inner = () => innerSize(props.width, props.height, ui.prefs.border)
-  const lines = createMemo<Line[]>(() => {
+  const busVer = createMemo(() => {
     ui.version()
+    return ui.run.busVersion
+  })
+  const lines = createMemo<Line[]>(() => {
+    busVer()
     const t = ui.theme()
     const { width, height } = inner()
     const who = whoFn(ui)
@@ -24,7 +28,7 @@ export function BusPane(props: { width: number; height: number; focused?: boolea
     return msgs.map((m) => busLine(m, { theme: t, width, who: short, clock: ui.config.ui.timestamp_format, now: ui.now() }))
   })
   const footer = createMemo<Line[]>(() => {
-    ui.version()
+    busVer()
     const t = ui.theme()
     const peers = new Set<string>()
     for (const m of ui.run.bus) {

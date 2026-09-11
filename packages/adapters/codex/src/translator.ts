@@ -7,18 +7,20 @@
  * mapping replayable from recorded fixtures.
  */
 import {
-  DEFAULT_PERMISSION_OPTIONS,
   type AgentEvent,
   type AgentStatus,
-  type PermissionOption,
-  type PermissionOptionKind,
-  type ToolContent,
-  type ToolKind,
+  DEFAULT_PERMISSION_OPTIONS,
   diffLines,
   diffStat,
+  type PermissionOption,
+  type PermissionOptionKind,
   parseUnifiedDiff,
+  type ToolContent,
+  type ToolKind,
 } from "@batonsh/protocol"
 import type { ReviewDecision } from "./generated/ReviewDecision.ts"
+import type { ServerNotification } from "./generated/ServerNotification.ts"
+import type { ServerRequest } from "./generated/ServerRequest.ts"
 import type { CommandExecutionApprovalDecision } from "./generated/v2/CommandExecutionApprovalDecision.ts"
 import type { CommandExecutionRequestApprovalParams } from "./generated/v2/CommandExecutionRequestApprovalParams.ts"
 import type { FileChangeApprovalDecision } from "./generated/v2/FileChangeApprovalDecision.ts"
@@ -28,8 +30,6 @@ import type { McpServerElicitationRequestParams } from "./generated/v2/McpServer
 import type { McpServerElicitationRequestResponse } from "./generated/v2/McpServerElicitationRequestResponse.ts"
 import type { PermissionsRequestApprovalParams } from "./generated/v2/PermissionsRequestApprovalParams.ts"
 import type { PermissionsRequestApprovalResponse } from "./generated/v2/PermissionsRequestApprovalResponse.ts"
-import type { ServerNotification } from "./generated/ServerNotification.ts"
-import type { ServerRequest } from "./generated/ServerRequest.ts"
 import type { ThreadItem } from "./generated/v2/ThreadItem.ts"
 import type { ToolRequestUserInputParams } from "./generated/v2/ToolRequestUserInputParams.ts"
 import type { ToolRequestUserInputResponse } from "./generated/v2/ToolRequestUserInputResponse.ts"

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { LIVE, contractSuite, startHarness, tempWorkspace } from "../../testkit/src/index.ts"
+import { contractSuite, LIVE, startHarness, tempWorkspace } from "../../testkit/src/index.ts"
 import codexDefault, { codexAdapter } from "./index.ts"
 
 describe("codex adapter", () => {

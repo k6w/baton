@@ -13,12 +13,11 @@
  *   baton theme …          list | set <name>
  *   baton daemon           run the daemon in the foreground (normally started automatically)
  */
-import { existsSync, mkdirSync, appendFileSync, readFileSync } from "node:fs"
-import { mkdtempSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { BatonConfig, configDir, configJsonSchema, findProjectRoot, getPath, loadConfig, projectPaths } from "@batonsh/kernel"
 import { runDaemonProcess, socketPathFor, startDaemon } from "@batonsh/daemon"
+import { BatonConfig, configDir, configJsonSchema, findProjectRoot, getPath, loadConfig, projectPaths } from "@batonsh/kernel"
 import { BatonClient, connect, discoverSocket } from "@batonsh/sdk"
 import { listThemes, loadTheme } from "@batonsh/themes"
 import { runHeadless } from "./headless.ts"
@@ -43,7 +42,12 @@ function parseArgs(argv: string[]): Args {
     if (a.startsWith("--")) {
       const [k, v] = a.slice(2).split("=", 2) as [string, string | undefined]
       if (v !== undefined) out.flags[k] = v
-      else if (argv[i + 1] && !argv[i + 1]!.startsWith("-") && ["root", "theme", "layout", "timeout", "approve", "workers", "speed", "orchestrator"].includes(k)) out.flags[k] = argv[++i] as string
+      else if (
+        argv[i + 1] &&
+        !argv[i + 1]!.startsWith("-") &&
+        ["root", "theme", "layout", "timeout", "approve", "workers", "speed", "orchestrator"].includes(k)
+      )
+        out.flags[k] = argv[++i] as string
       else out.flags[k] = true
     } else if (a.startsWith("-") && a.length > 1) {
       for (const ch of a.slice(1)) out.flags[{ y: "yes", h: "help", v: "version", j: "json" }[ch] ?? ch] = true
@@ -73,7 +77,10 @@ async function startTui(client: BatonClient, root: string, flags: Args["flags"])
   // The daemon's resolved config is authoritative (it may run with different overrides, e.g. demo);
   // UI-only flags from this invocation are layered on top.
   const local = loadConfig({ projectRoot: root, overrides: overridesFrom(flags) }).config
-  const remote = await client.call("config.get", {}).then((r) => BatonConfig.safeParse(r.config)).catch(() => undefined)
+  const remote = await client
+    .call("config.get", {})
+    .then((r) => BatonConfig.safeParse(r.config))
+    .catch(() => undefined)
   const config = remote?.success ? { ...remote.data, ui: { ...remote.data.ui, ...(flags.theme || flags.layout ? local.ui : {}) }, keys: local.keys } : local
   const live = await client.live()
   const { runTui } = await import("@batonsh/tui")
@@ -171,7 +178,8 @@ async function cmdDoctor() {
       console.log(`  ${c.dim(`○ ${a.id}`)}`)
       continue
     }
-    const auth = a.auth === "ok" ? c.green("logged in") : a.auth === "missing" ? c.red(`not logged in${a.authHint ? ` — ${a.authHint}` : ""}`) : c.yellow("auth unknown")
+    const auth =
+      a.auth === "ok" ? c.green("logged in") : a.auth === "missing" ? c.red(`not logged in${a.authHint ? ` — ${a.authHint}` : ""}`) : c.yellow("auth unknown")
     console.log(`  ${c.green("●")} ${a.id.padEnd(14)} ${c.dim(`v${a.version ?? "?"} · ${a.protocols.join(", ")}`)}  ${auth}`)
   }
   console.log(c.bold("\nConfig"))
@@ -196,7 +204,9 @@ async function cmdDoctor() {
 async function cmdAgents() {
   for (const a of await detectAgents()) {
     const status = a.installed ? c.green("●") : c.dim("○")
-    const detail = a.installed ? `${c.dim(`v${a.version ?? "?"}`)} ${a.auth === "ok" ? c.green("logged in") : a.auth === "missing" ? c.red("not logged in") : c.dim("auth ?")}` : c.dim("not installed")
+    const detail = a.installed
+      ? `${c.dim(`v${a.version ?? "?"}`)} ${a.auth === "ok" ? c.green("logged in") : a.auth === "missing" ? c.red("not logged in") : c.dim("auth ?")}`
+      : c.dim("not installed")
     console.log(`${status} ${a.id.padEnd(14)} ${a.displayName.padEnd(18)} ${detail}`)
   }
 }
@@ -209,7 +219,9 @@ async function cmdPs() {
   const snap = await cl.call("state.snapshot", {})
   console.log(`${c.bold("batond")} pid ${cl.daemonPid} · run ${snap.runId} · mode ${snap.mode}`)
   for (const a of snap.agents.filter((x) => x.status !== "exited")) {
-    console.log(`  ${a.status === "busy" ? c.yellow("●") : c.green("●")} ${a.name.padEnd(14)} ${c.dim(`${a.adapter}${a.model ? `/${a.model}` : ""}`)} ${a.status}${a.label ? c.dim(` · ${a.label}`) : ""}`)
+    console.log(
+      `  ${a.status === "busy" ? c.yellow("●") : c.green("●")} ${a.name.padEnd(14)} ${c.dim(`${a.adapter}${a.model ? `/${a.model}` : ""}`)} ${a.status}${a.label ? c.dim(` · ${a.label}`) : ""}`,
+    )
   }
   cl.close()
 }
@@ -259,7 +271,9 @@ async function cmdTheme(args: Args) {
   if (sub === "list") {
     for (const t of listThemes(dirs)) {
       const th = loadTheme(t.name, { appearance: t.appearance, dirs })
-      const sw = ["primary", "accent", "success", "warning", "error", "agentClaude"].map((k) => c.hex((th as unknown as Record<string, string>)[k]!)("■")).join("")
+      const sw = ["primary", "accent", "success", "warning", "error", "agentClaude"]
+        .map((k) => c.hex((th as unknown as Record<string, string>)[k]!)("■"))
+        .join("")
       console.log(`${sw}  ${t.name.padEnd(24)} ${c.dim(t.source === "builtin" ? (t.appearance ?? "") : `${t.source} ${t.path ?? ""}`)}`)
     }
   } else if (sub === "set") {

@@ -18,9 +18,7 @@ export interface AcpAuthStatus {
  * Declarative auth probe: auth is "ok" when any env var is set or any file exists,
  * otherwise "missing". A function can be supplied for anything smarter.
  */
-export type AcpAuthCheck =
-  | { env?: string[]; files?: string[]; hint?: string }
-  | (() => Promise<AcpAuthStatus> | AcpAuthStatus)
+export type AcpAuthCheck = { env?: string[]; files?: string[]; hint?: string } | (() => Promise<AcpAuthStatus> | AcpAuthStatus)
 
 export interface AcpPreset {
   id: string
@@ -69,9 +67,7 @@ export const ACP_PRESETS: AcpPreset[] = [
       hint: "run `gemini` once to log in (or set GEMINI_API_KEY)",
     },
     authHint: "run `gemini` once to log in (or set GEMINI_API_KEY)",
-    notes: [
-      "Registry (gemini-cli 0.63) uses `--acp`; releases before ~0.30 only accept `--experimental-acp` — override args for old installs.",
-    ],
+    notes: ["Registry (gemini-cli 0.63) uses `--acp`; releases before ~0.30 only accept `--experimental-acp` — override args for old installs."],
   },
   {
     id: "cursor",
@@ -140,7 +136,11 @@ export const ACP_PRESETS: AcpPreset[] = [
     binaries: ["claude-agent-acp", "claude-code-acp"],
     args: [],
     versionArgs: ["--version"],
-    authCheck: { env: ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"], files: ["~/.claude/.credentials.json", "~/.claude.json"], hint: "run `claude` and /login" },
+    authCheck: {
+      env: ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"],
+      files: ["~/.claude/.credentials.json", "~/.claude.json"],
+      hint: "run `claude` and /login",
+    },
     authHint: "run `claude` once and use /login",
     notes: ["npm `@agentclientprotocol/claude-agent-acp` (formerly `@zed-industries/claude-code-acp`); speaks ACP on stdio without arguments."],
   },

@@ -1,6 +1,6 @@
 /** Convert our pure `Line`s into OpenTUI StyledText (one text node per pane = fast). */
 import { RGBA, StyledText, TextAttributes, type TextChunk } from "@opentui/core"
-import { type Line, type Seg, lineWidth } from "../lines.ts"
+import { type Line, lineWidth, type Seg } from "../lines.ts"
 
 const cache = new Map<string, RGBA>()
 

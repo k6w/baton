@@ -8,8 +8,8 @@ import { defineAdapter, which } from "@batonsh/protocol"
 import { codexModels, detectCodex } from "./detect.ts"
 import { CodexSession } from "./session.ts"
 
-export { CodexTranslator } from "./translator.ts"
 export { approvalSettings, appServerArgs, mcpConfigArgs } from "./config.ts"
+export { CodexTranslator } from "./translator.ts"
 
 export const codexAdapter: AgentAdapter = defineAdapter({
   id: "codex",

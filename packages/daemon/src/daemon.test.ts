@@ -2,9 +2,9 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { BatonClient } from "@batonsh/sdk"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
-import { BatonClient } from "@batonsh/sdk"
 import { type Daemon, startDaemon } from "./daemon.ts"
 
 let daemon: Daemon

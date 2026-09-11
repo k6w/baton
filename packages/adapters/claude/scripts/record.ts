@@ -30,7 +30,7 @@ const scenarios: Record<string, { files: Record<string, string>; prompts: string
         "1. TodoWrite with three todos: 'read notes', 'fix typo', 'write hello'.",
         "2. Read notes.txt.",
         "3. Edit notes.txt to fix the typo 'teh' -> 'the' (Edit tool).",
-        "4. Write a new file hello.ts containing exactly two lines: `export const hello = \"hi\"` and `export const n = 1`.",
+        '4. Write a new file hello.ts containing exactly two lines: `export const hello = "hi"` and `export const n = 1`.',
         "5. Bash: run `wc -l notes.txt`.",
         "6. Use the Agent/Task tool (subagent_type general-purpose) with the prompt 'Read app.ts with the Read tool and reply with the function name only.'",
         "7. TodoWrite marking all three todos completed.",

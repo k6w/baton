@@ -36,7 +36,24 @@ export const REMOTE_COMMANDS: Record<string, string> = {
   deny: "/deny [all]",
 }
 
-const KNOWN_ADAPTERS = ["claude", "codex", "opencode", "gemini", "cursor", "copilot", "goose", "qwen", "kiro", "droid", "cline", "claude-acp", "codex-acp", "opencode-acp", "acp", "mock"]
+const KNOWN_ADAPTERS = [
+  "claude",
+  "codex",
+  "opencode",
+  "gemini",
+  "cursor",
+  "copilot",
+  "goose",
+  "qwen",
+  "kiro",
+  "droid",
+  "cline",
+  "claude-acp",
+  "codex-acp",
+  "opencode-acp",
+  "acp",
+  "mock",
+]
 
 let themeNames: string[] | undefined
 
@@ -54,10 +71,14 @@ export function completions(input: string, run: RunState, config: BatonConfig): 
   if (arg) {
     const [, c, q = ""] = arg
     let options: { v: string; d: string }[] = []
-    const agents = () => [...run.agents.values()].filter((a) => a.status !== "exited").map((a) => ({ v: a.name, d: `${a.adapter}${a.label ? ` · ${a.label}` : ""}` }))
+    const agents = () =>
+      [...run.agents.values()].filter((a) => a.status !== "exited").map((a) => ({ v: a.name, d: `${a.adapter}${a.label ? ` · ${a.label}` : ""}` }))
     switch (c) {
       case "spawn":
-        options = [...Object.keys(config.agents).map((k) => ({ v: k, d: `profile → ${config.agents[k]?.adapter}` })), ...KNOWN_ADAPTERS.map((v) => ({ v, d: "adapter" }))]
+        options = [
+          ...Object.keys(config.agents).map((k) => ({ v: k, d: `profile → ${config.agents[k]?.adapter}` })),
+          ...KNOWN_ADAPTERS.map((v) => ({ v, d: "adapter" })),
+        ]
         break
       case "kill":
       case "interrupt":
@@ -101,7 +122,9 @@ export function completions(input: string, run: RunState, config: BatonConfig): 
     const q = (m[2] ?? "").toLowerCase()
     const prefix = input.slice(0, input.length - (m[2]?.length ?? 0) - 1)
     const names = [
-      ...[...run.agents.values()].filter((a) => a.status !== "exited").map((a) => ({ v: a.name, d: `${a.adapter}${a.label ? ` · ${a.label}` : ""} · ${a.status}` })),
+      ...[...run.agents.values()]
+        .filter((a) => a.status !== "exited")
+        .map((a) => ({ v: a.name, d: `${a.adapter}${a.label ? ` · ${a.label}` : ""} · ${a.status}` })),
       { v: "all", d: "broadcast to every agent" },
       ...[...new Set([...run.agents.values()].map((a) => a.role).filter(Boolean))].map((r) => ({ v: `role:${r}`, d: "everyone with this role" })),
     ]

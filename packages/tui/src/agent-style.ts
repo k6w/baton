@@ -1,6 +1,7 @@
 /** Per-agent presentation: icon, brand color, native look. */
+
+import { type AgentIcon, glyph, type IconMode, iconFor, logoPath } from "@batonsh/icons"
 import type { AgentView } from "@batonsh/protocol"
-import { type AgentIcon, type IconMode, glyph, iconFor, logoPath } from "@batonsh/icons"
 import type { ResolvedTheme, Token } from "@batonsh/themes"
 import type { LookStyle } from "./lines.ts"
 import type { UiState } from "./state.ts"

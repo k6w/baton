@@ -5,12 +5,12 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { type Accessor, type Setter, createSignal } from "solid-js"
-import { createStore, type SetStoreFunction } from "solid-js/store"
+import { type BatonConfig, type RunState, stateDir, type UiConfig } from "@batonsh/kernel"
 import type { BatonEvent } from "@batonsh/protocol"
-import { type BatonConfig, type RunState, type UiConfig, stateDir } from "@batonsh/kernel"
 import type { BatonClient } from "@batonsh/sdk"
-import { type ResolvedTheme, SPINNERS, DEFAULT_VERBS } from "@batonsh/themes"
+import { DEFAULT_VERBS, type ResolvedTheme, SPINNERS } from "@batonsh/themes"
+import { type Accessor, createSignal, type Setter } from "solid-js"
+import { createStore, type SetStoreFunction } from "solid-js/store"
 import { Keymap } from "./keymap.ts"
 
 /** UI preferences that can change at runtime (persisted to the state dir, never to config files). */
@@ -19,7 +19,19 @@ export type Prefs = Pick<
   "theme" | "appearance" | "layout" | "icons" | "border" | "density" | "render_style" | "show_bus" | "show_thoughts" | "animations" | "spinner"
 >
 
-const PREF_KEYS: (keyof Prefs)[] = ["theme", "appearance", "layout", "icons", "border", "density", "render_style", "show_bus", "show_thoughts", "animations", "spinner"]
+const PREF_KEYS: (keyof Prefs)[] = [
+  "theme",
+  "appearance",
+  "layout",
+  "icons",
+  "border",
+  "density",
+  "render_style",
+  "show_bus",
+  "show_thoughts",
+  "animations",
+  "spinner",
+]
 
 function prefsPath(): string {
   return join(stateDir(), "ui.json")

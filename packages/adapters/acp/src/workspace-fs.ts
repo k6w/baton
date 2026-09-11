@@ -24,8 +24,7 @@ export class WorkspaceFs {
     let probe = abs
     while (!existsSync(probe) && dirname(probe) !== probe) probe = dirname(probe)
     const real = safeRealpath(probe)
-    if (!inside(this.realRoot, real) && !inside(this.root, real))
-      throw new Error(`path resolves outside the workspace (${this.root}): ${p}`)
+    if (!inside(this.realRoot, real) && !inside(this.root, real)) throw new Error(`path resolves outside the workspace (${this.root}): ${p}`)
     return abs
   }
 

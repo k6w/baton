@@ -32,7 +32,13 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
   }
 
   [Symbol.asyncIterator](): AsyncIterator<T> {
-    return { next: () => this.next(), return: async () => { this.close(); return { value: undefined as never, done: true } } }
+    return {
+      next: () => this.next(),
+      return: async () => {
+        this.close()
+        return { value: undefined as never, done: true }
+      },
+    }
   }
 }
 

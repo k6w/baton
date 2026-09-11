@@ -3,8 +3,8 @@ import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import type { AgentEvent } from "@batonsh/protocol"
 import { startHarness, tempWorkspace } from "../../testkit/src/index.ts"
-import { acpAdapter, acpAdapters, ACP_PRESETS, createAcpAdapter, fetchAcpRegistry, registryAgentToPreset, TerminalManager, WorkspaceFs } from "./index.ts"
 import type { AcpPreset } from "./index.ts"
+import { ACP_PRESETS, acpAdapter, acpAdapters, createAcpAdapter, fetchAcpRegistry, registryAgentToPreset, TerminalManager, WorkspaceFs } from "./index.ts"
 
 const MOCK = join(import.meta.dir, "fixtures", "mock-agent.ts")
 
@@ -85,7 +85,12 @@ describe("acp adapter — mock agent mapping", () => {
         { optionId: "always-1", name: "Always", kind: "allow_always" },
         { optionId: "reject-1", name: "Reject", kind: "reject_once" },
       ])
-      expect(h.ofType("permission.resolved")[0]?.data).toEqual({ requestId: perm?.data.requestId as string, optionId: "allow-1", kind: "allow_once", by: "user" })
+      expect(h.ofType("permission.resolved")[0]?.data).toEqual({
+        requestId: perm?.data.requestId as string,
+        optionId: "allow-1",
+        kind: "allow_once",
+        by: "user",
+      })
       expect(types).toContain("agent.status")
       expect(h.ofType("agent.status").some((e) => e.data.status === "awaiting_approval")).toBe(true)
       const editUpd = h.ofType("tool.update").filter((u) => u.data.toolCallId === "edit-1")
@@ -231,7 +236,9 @@ describe("acp adapter — mock agent mapping", () => {
       await h.session.prompt({ text: "info" })
       await h.waitTurn(10_000)
       const info = JSON.parse(assistantText(h.events).at(-1) as string)
-      expect(info.mcpServers).toEqual([{ type: "http", name: "baton", url: "http://127.0.0.1:4999/mcp", headers: [{ name: "Authorization", value: "Bearer t" }] }])
+      expect(info.mcpServers).toEqual([
+        { type: "http", name: "baton", url: "http://127.0.0.1:4999/mcp", headers: [{ name: "Authorization", value: "Bearer t" }] },
+      ])
       expect(info.model).toBe("mock/smart")
       await h.session.setModel?.("Mock Fast")
       await h.session.prompt({ text: "info" })
@@ -343,7 +350,8 @@ describe("acp adapter — detect / presets / registry", () => {
 
   test("presets cover the expected agents with unique ids", () => {
     const ids = ACP_PRESETS.map((p) => p.id)
-    for (const id of ["gemini", "cursor", "copilot", "kiro", "goose", "qwen", "droid", "opencode-acp", "claude-acp", "codex-acp", "cline"]) expect(ids).toContain(id)
+    for (const id of ["gemini", "cursor", "copilot", "kiro", "goose", "qwen", "droid", "opencode-acp", "claude-acp", "codex-acp", "cline"])
+      expect(ids).toContain(id)
     expect(new Set(ids).size).toBe(ids.length)
     expect(acpAdapters.map((a) => a.id)).toContain("acp")
     for (const a of acpAdapters) {
@@ -371,7 +379,9 @@ describe("acp adapter — detect / presets / registry", () => {
     }) as unknown as typeof fetch
     expect(await fetchAcpRegistry({ fetch: failing })).toEqual([])
     const ok = (async () =>
-      new Response(JSON.stringify({ version: "1.0.0", agents: [{ id: "kimi", name: "Kimi", distribution: { npx: { package: "kimi-cli@1.0.0", args: ["acp"] } } }] }))) as unknown as typeof fetch
+      new Response(
+        JSON.stringify({ version: "1.0.0", agents: [{ id: "kimi", name: "Kimi", distribution: { npx: { package: "kimi-cli@1.0.0", args: ["acp"] } } }] }),
+      )) as unknown as typeof fetch
     expect(await fetchAcpRegistry({ fetch: ok })).toMatchObject([{ id: "kimi", binaries: ["kimi-cli", "kimi"], args: ["acp"] }])
   })
 })

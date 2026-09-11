@@ -1,8 +1,8 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, extname, join } from "node:path"
 import { BUILTIN_THEMES, COUNTERPARTS, paletteTheme } from "./builtin.ts"
-import { type ColorValue, type ResolvedTheme, TOKENS, type ThemeFile, type Token } from "./schema.ts"
+import { type ColorValue, type ResolvedTheme, type ThemeFile, TOKENS, type Token } from "./schema.ts"
 
 export interface ThemeEntry {
   name: string
@@ -31,8 +31,22 @@ function normalizeHex(h: string): string {
 /** ANSI 0–255 → hex (xterm defaults). */
 export function ansiToHex(n: number): string {
   const base16 = [
-    "#000000", "#cd0000", "#00cd00", "#cdcd00", "#0000ee", "#cd00cd", "#00cdcd", "#e5e5e5",
-    "#7f7f7f", "#ff0000", "#00ff00", "#ffff00", "#5c5cff", "#ff00ff", "#00ffff", "#ffffff",
+    "#000000",
+    "#cd0000",
+    "#00cd00",
+    "#cdcd00",
+    "#0000ee",
+    "#cd00cd",
+    "#00cdcd",
+    "#e5e5e5",
+    "#7f7f7f",
+    "#ff0000",
+    "#00ff00",
+    "#ffff00",
+    "#5c5cff",
+    "#ff00ff",
+    "#00ffff",
+    "#ffffff",
   ]
   if (n < 16) return base16[n] as string
   if (n < 232) {
@@ -182,10 +196,7 @@ export function listThemes(dirs: ThemeDirs = {}): ThemeEntry[] {
  * Pick and resolve the theme to use. With appearance "auto", the terminal background
  * (if known) chooses between a theme and its light/dark counterpart.
  */
-export function loadTheme(
-  name: string,
-  opts: { appearance?: "auto" | "dark" | "light"; terminalBg?: string; dirs?: ThemeDirs } = {},
-): ResolvedTheme {
+export function loadTheme(name: string, opts: { appearance?: "auto" | "dark" | "light"; terminalBg?: string; dirs?: ThemeDirs } = {}): ResolvedTheme {
   const themes = listThemes(opts.dirs)
   let entry = themes.find((t) => t.name === name) ?? themes.find((t) => t.name === "baton")!
   let appearance: "dark" | "light" = entry.appearance ?? "dark"

@@ -3,9 +3,10 @@
  * to each other and the orchestrator can spawn/steer workers. Stateless Streamable HTTP;
  * the per-agent token in the URL path is the caller's identity.
  */
+
+import { formatCost, formatTokens } from "@batonsh/kernel"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"
-import { formatCost, formatTokens } from "@batonsh/kernel"
 import { z } from "zod"
 import type { AgentRuntime, Runtime } from "./runtime.ts"
 
@@ -97,7 +98,9 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime): McpServer {
         description: `Start a new coding agent. adapter: one of ${rt.registry
           .list()
           .map((a) => a.id)
-          .join(", ")} or a configured profile name (${Object.keys(rt.config.agents).join(", ") || "none"}). If \`task\` is given it starts working immediately and its result is reported back to you.`,
+          .join(
+            ", ",
+          )} or a configured profile name (${Object.keys(rt.config.agents).join(", ") || "none"}). If \`task\` is given it starts working immediately and its result is reported back to you.`,
         inputSchema: {
           adapter: z.string(),
           task: z.string().optional(),
@@ -143,7 +146,13 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime): McpServer {
               n.toLowerCase(),
             ),
           )
-          if (wanted.size === 0) return ok(rt.drainInbox(me).map((m) => `from ${m.fromName}:\n${m.body}`).join("\n\n") || "(nothing pending)")
+          if (wanted.size === 0)
+            return ok(
+              rt
+                .drainInbox(me)
+                .map((m) => `from ${m.fromName}:\n${m.body}`)
+                .join("\n\n") || "(nothing pending)",
+            )
           const seen = new Set<string>()
           const msgs = await rt.waitInbox(me, (a.timeout_s ?? 600) * 1000, (inbox) => {
             for (const m of inbox) if (m.kind === "result") seen.add(m.fromName.toLowerCase())
@@ -155,29 +164,23 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime): McpServer {
         }),
     )
 
-    server.registerTool(
-      "interrupt_agent",
-      { description: "Interrupt an agent's current turn.", inputSchema: { name: z.string() } },
-      (a) =>
-        guard(async () => {
-          const t = rt.findAgent(a.name)
-          if (!t) return fail(`no agent "${a.name}"`)
-          await rt.interrupt(t.info.agentId)
-          return ok(`interrupted ${t.info.name}`)
-        }),
+    server.registerTool("interrupt_agent", { description: "Interrupt an agent's current turn.", inputSchema: { name: z.string() } }, (a) =>
+      guard(async () => {
+        const t = rt.findAgent(a.name)
+        if (!t) return fail(`no agent "${a.name}"`)
+        await rt.interrupt(t.info.agentId)
+        return ok(`interrupted ${t.info.name}`)
+      }),
     )
 
-    server.registerTool(
-      "kill_agent",
-      { description: "Stop and remove an agent.", inputSchema: { name: z.string() } },
-      (a) =>
-        guard(async () => {
-          const t = rt.findAgent(a.name)
-          if (!t) return fail(`no agent "${a.name}"`)
-          if (t.info.isOrchestrator) return fail("cannot kill the orchestrator")
-          await rt.kill(t.info.agentId)
-          return ok(`killed ${t.info.name}`)
-        }),
+    server.registerTool("kill_agent", { description: "Stop and remove an agent.", inputSchema: { name: z.string() } }, (a) =>
+      guard(async () => {
+        const t = rt.findAgent(a.name)
+        if (!t) return fail(`no agent "${a.name}"`)
+        if (t.info.isOrchestrator) return fail("cannot kill the orchestrator")
+        await rt.kill(t.info.agentId)
+        return ok(`killed ${t.info.name}`)
+      }),
     )
 
     server.registerTool(

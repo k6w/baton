@@ -3,22 +3,23 @@
  * bus (inboxes + delivery), the approval policy and budgets. Transport layers (control
  * socket, MCP server) are thin wrappers around this class.
  */
+
+import { type BatonConfig, EventStore, gitInfo, projectName, RunState, resolveSecret } from "@batonsh/kernel"
 import {
+  type AdapterCapabilities,
   type AgentAdapter,
   type AgentEvent,
   type AgentInfo,
   type AgentSession,
-  type AdapterCapabilities,
   type BatonEvent,
   type BusKind,
   type Delivery,
+  deferred,
+  newId,
   type PermissionOption,
   type SpawnParams,
   type ToolKind,
-  deferred,
-  newId,
 } from "@batonsh/protocol"
-import { type BatonConfig, EventStore, RunState, gitInfo, projectName, resolveSecret } from "@batonsh/kernel"
 import { identityBlock, loadPlaybook } from "./playbooks.ts"
 import { PolicyEngine, pickOption } from "./policy.ts"
 import { AdapterRegistry } from "./registry.ts"
@@ -137,9 +138,16 @@ export class Runtime {
   async spawn(params: SpawnParams & { isOrchestrator?: boolean }): Promise<AgentInfo> {
     const { adapterId, profile } = this.resolveProfile(params.adapter)
     const adapter = this.registry.get(adapterId)
-    if (!adapter) throw new Error(`unknown adapter "${adapterId}". Known: ${this.registry.list().map((a) => a.id).join(", ")}`)
+    if (!adapter)
+      throw new Error(
+        `unknown adapter "${adapterId}". Known: ${this.registry
+          .list()
+          .map((a) => a.id)
+          .join(", ")}`,
+      )
     const live = [...this.agents.values()].filter((a) => !a.closing).length
-    if (!params.isOrchestrator && live >= this.config.budget.max_agents) throw new Error(`agent limit reached (${this.config.budget.max_agents}); raise budget.max_agents`)
+    if (!params.isOrchestrator && live >= this.config.budget.max_agents)
+      throw new Error(`agent limit reached (${this.config.budget.max_agents}); raise budget.max_agents`)
     if (params.parentId) {
       let depth = 0
       let p: string | undefined = params.parentId
@@ -203,7 +211,13 @@ export class Runtime {
     const providerId = profile?.provider
     const providerCfg = providerId ? this.config.providers[providerId] : undefined
     const provider = providerCfg
-      ? { id: providerId as string, kind: providerCfg.kind, baseUrl: providerCfg.base_url, apiKey: await resolveSecret(providerCfg.api_key), headers: providerCfg.headers }
+      ? {
+          id: providerId as string,
+          kind: providerCfg.kind,
+          baseUrl: providerCfg.base_url,
+          apiKey: await resolveSecret(providerCfg.api_key),
+          headers: providerCfg.headers,
+        }
       : undefined
 
     const ac = new AbortController()
@@ -316,7 +330,9 @@ export class Runtime {
     void this.registry.detect(rt.info.adapter).then((d) => {
       const hint = d?.authHint ?? `log in to ${rt.info.adapter} in a terminal`
       const others = ["codex", "claude", "opencode", "gemini", "cursor"].filter((a) => a !== rt.info.adapter)
-      const switchHint = rt.info.isOrchestrator ? ` — or use another orchestrator: set [orchestrator] agent = "${others[0]}" in .baton/config.toml, or start with --orchestrator ${others[0]}` : ""
+      const switchHint = rt.info.isOrchestrator
+        ? ` — or use another orchestrator: set [orchestrator] agent = "${others[0]}" in .baton/config.toml, or start with --orchestrator ${others[0]}`
+        : ""
       this.emit({ type: "orch.note", data: { level: "warn", text: `${rt.info.adapter} is not authenticated: ${hint}${switchHint}` } }, rt.info.agentId)
     })
   }
@@ -407,7 +423,11 @@ export class Runtime {
     if (recipients.length === 0) throw new Error(`no agent matches "${params.to}"`)
     if (this.config.bus.contact === "tree" && sender && !sender.info.isOrchestrator) {
       for (const r of recipients) {
-        const ok = r.info.isOrchestrator || r.info.parentId === sender.info.agentId || sender.info.parentId === r.info.agentId || r.info.parentId === sender.info.parentId
+        const ok =
+          r.info.isOrchestrator ||
+          r.info.parentId === sender.info.agentId ||
+          sender.info.parentId === r.info.agentId ||
+          r.info.parentId === sender.info.parentId
         if (!ok) throw new Error(`bus.contact = "tree": ${fromName} may not message ${r.info.name}`)
       }
     }
@@ -449,7 +469,9 @@ export class Runtime {
     const expectResult = msg.kind === "request" ? true : msg.kind === "result" || msg.kind === "reply" ? false : undefined
     if (rt.busy) {
       if (delivery === "interrupt") {
-        void this.promptAgent(rt.info.agentId, text, { from, delivery: "interrupt", expectResult }).then(() => this.markDelivered(msg.messageId, rt, "interrupt"))
+        void this.promptAgent(rt.info.agentId, text, { from, delivery: "interrupt", expectResult }).then(() =>
+          this.markDelivered(msg.messageId, rt, "interrupt"),
+        )
         return
       }
       if (delivery === "steer" && rt.caps.steer) {
@@ -551,14 +573,22 @@ export class Runtime {
 
   // ───────────────────────────── approvals ─────────────────────────────
 
-  private routePermission(rt: AgentRuntime, requestId: string, title: string, kind: ToolKind | undefined, detail: string | undefined, options: PermissionOption[]) {
+  private routePermission(
+    rt: AgentRuntime,
+    requestId: string,
+    title: string,
+    kind: ToolKind | undefined,
+    detail: string | undefined,
+    options: PermissionOption[],
+  ) {
     const req = { agentId: rt.info.agentId, agentName: rt.info.name, adapter: rt.info.adapter, title, kind, detail }
     const decision = this.policy.decide(req)
     if (decision === "ask") {
       const timeout = this.config.policy.timeout_s
       if (timeout > 0) {
         setTimeout(() => {
-          if (this.state.approvals.has(requestId)) void this.resolvePermission(rt.info.agentId, requestId, pickOption(options, "deny")?.optionId ?? null, "timeout")
+          if (this.state.approvals.has(requestId))
+            void this.resolvePermission(rt.info.agentId, requestId, pickOption(options, "deny")?.optionId ?? null, "timeout")
         }, timeout * 1000).unref?.()
       }
       return
@@ -573,7 +603,10 @@ export class Runtime {
     if (!rt?.session || !pending) return
     const opt = pending.options.find((o) => o.optionId === optionId)
     if (opt && (opt.kind === "allow_always" || opt.kind === "reject_always")) {
-      this.policy.remember({ agentId, agentName: rt.info.name, adapter: rt.info.adapter, title: pending.title, kind: pending.kind, detail: pending.detail }, opt.kind)
+      this.policy.remember(
+        { agentId, agentName: rt.info.name, adapter: rt.info.adapter, title: pending.title, kind: pending.kind, detail: pending.detail },
+        opt.kind,
+      )
     }
     this.resolvedRequests.add(requestId)
     if (this.resolvedRequests.size > 5000) this.resolvedRequests.delete(this.resolvedRequests.values().next().value as string)

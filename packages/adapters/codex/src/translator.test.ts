@@ -154,7 +154,16 @@ describe("raw passthrough", () => {
 })
 
 describe("permission mapping", () => {
-  const cmdParams = { kind: "command", threadId: "thr_1", turnId: "t1", itemId: "c1", startedAtMs: 0, environmentId: null, command: "/bin/zsh -lc 'rm -rf build'", cwd: "/w" }
+  const cmdParams = {
+    kind: "command",
+    threadId: "thr_1",
+    turnId: "t1",
+    itemId: "c1",
+    startedAtMs: 0,
+    environmentId: null,
+    command: "/bin/zsh -lc 'rm -rf build'",
+    cwd: "/w",
+  }
 
   test.each([
     ["allow_once", "accept"],
@@ -216,7 +225,17 @@ describe("permission mapping", () => {
       isBlocking: true,
       autoResolutionMs: null,
       questions: [
-        { id: "q1", header: "Mode", question: "Which?", isOther: false, isSecret: false, options: [{ label: "A", description: "" }, { label: "B", description: "" }] },
+        {
+          id: "q1",
+          header: "Mode",
+          question: "Which?",
+          isOther: false,
+          isSecret: false,
+          options: [
+            { label: "A", description: "" },
+            { label: "B", description: "" },
+          ],
+        },
       ],
     }
     const r = t.serverRequest(1, "item/tool/requestUserInput", params)
@@ -227,7 +246,15 @@ describe("permission mapping", () => {
 
   test("legacy v1 approvals map to ReviewDecision", () => {
     const { t } = make()
-    const r = t.serverRequest(1, "execCommandApproval", { conversationId: "c", callId: "x", approvalId: null, command: ["ls"], cwd: "/", reason: null, parsedCmd: [] })
+    const r = t.serverRequest(1, "execCommandApproval", {
+      conversationId: "c",
+      callId: "x",
+      approvalId: null,
+      command: ["ls"],
+      cwd: "/",
+      reason: null,
+      parsedCmd: [],
+    })
     expect(t.resolvePermission(r?.requestId ?? "", "allow_always")?.result).toEqual({ decision: "approved_for_session" })
   })
 
@@ -300,11 +327,30 @@ describe("notification mapping", () => {
 
   test("command output deltas accumulate into terminal content; failures summarize the exit code", () => {
     const { t, events } = make()
-    const item = { type: "commandExecution", id: "c1", pluginId: null, scriptPath: null, command: "/bin/bash -lc 'make test'", cwd: "/w", processId: null, source: "agent", status: "inProgress", commandActions: [{ type: "unknown", command: "make test" }], aggregatedOutput: null, exitCode: null, durationMs: null }
+    const item = {
+      type: "commandExecution",
+      id: "c1",
+      pluginId: null,
+      scriptPath: null,
+      command: "/bin/bash -lc 'make test'",
+      cwd: "/w",
+      processId: null,
+      source: "agent",
+      status: "inProgress",
+      commandActions: [{ type: "unknown", command: "make test" }],
+      aggregatedOutput: null,
+      exitCode: null,
+      durationMs: null,
+    }
     t.notification("item/started", { threadId: "thr_1", turnId: "t", item, startedAtMs: 0 })
     t.notification("item/commandExecution/outputDelta", { threadId: "thr_1", turnId: "t", itemId: "c1", delta: "a\n" })
     t.notification("item/commandExecution/outputDelta", { threadId: "thr_1", turnId: "t", itemId: "c1", delta: "b\n" })
-    t.notification("item/completed", { threadId: "thr_1", turnId: "t", item: { ...item, status: "failed", aggregatedOutput: "a\nb\n", exitCode: 2 }, completedAtMs: 0 })
+    t.notification("item/completed", {
+      threadId: "thr_1",
+      turnId: "t",
+      item: { ...item, status: "failed", aggregatedOutput: "a\nb\n", exitCode: 2 },
+      completedAtMs: 0,
+    })
     const ups = ofType(events, "tool.update")
     expect(ups[1]?.data.content?.[0]).toMatchObject({ type: "terminal", output: "a\nb\n" })
     expect(ups[2]?.data).toMatchObject({ status: "failed", summary: "exit 2" })
@@ -312,7 +358,21 @@ describe("notification mapping", () => {
 
   test("MCP tool calls carry server/tool names and text results", () => {
     const { t, events } = make()
-    const item = { type: "mcpToolCall", id: "m1", server: "baton", tool: "send", status: "inProgress", arguments: { to: "*" }, appContext: null, mcpAppUi: null, pluginId: null, readOnlyHint: null, result: null, error: null, durationMs: null }
+    const item = {
+      type: "mcpToolCall",
+      id: "m1",
+      server: "baton",
+      tool: "send",
+      status: "inProgress",
+      arguments: { to: "*" },
+      appContext: null,
+      mcpAppUi: null,
+      pluginId: null,
+      readOnlyHint: null,
+      result: null,
+      error: null,
+      durationMs: null,
+    }
     t.notification("item/started", { threadId: "thr_1", turnId: "t", item, startedAtMs: 0 })
     t.notification("item/completed", {
       threadId: "thr_1",
@@ -360,7 +420,17 @@ describe("notification mapping", () => {
   test("shell edits become a nested edit tool call", () => {
     const { t, events } = make()
     t.shellEdits("c1", [
-      { path: "/w/a.txt", lines: [{ kind: "del", text: "teh", oldLine: 1 }, { kind: "add", text: "the", newLine: 1 }], added: 1, removed: 1, created: false, deleted: false },
+      {
+        path: "/w/a.txt",
+        lines: [
+          { kind: "del", text: "teh", oldLine: 1 },
+          { kind: "add", text: "the", newLine: 1 },
+        ],
+        added: 1,
+        removed: 1,
+        created: false,
+        deleted: false,
+      },
     ])
     expect(ofType(events, "tool.call")[0]?.data).toMatchObject({ toolCallId: "c1:edit", parentToolCallId: "c1", kind: "edit", title: "Edit /w/a.txt" })
     expect(ofType(events, "tool.update")[0]?.data).toMatchObject({ status: "completed", summary: "Updated 2 lines (+1 -1)" })
@@ -385,7 +455,20 @@ describe("helpers", () => {
   })
 
   test("isReadOnlyCommand", () => {
-    const base = { type: "commandExecution", id: "c", pluginId: null, scriptPath: null, command: "", cwd: "/", processId: null, source: "agent", status: "completed", aggregatedOutput: null, exitCode: 0, durationMs: null } as const
+    const base = {
+      type: "commandExecution",
+      id: "c",
+      pluginId: null,
+      scriptPath: null,
+      command: "",
+      cwd: "/",
+      processId: null,
+      source: "agent",
+      status: "completed",
+      aggregatedOutput: null,
+      exitCode: 0,
+      durationMs: null,
+    } as const
     expect(isReadOnlyCommand({ ...base, commandActions: [{ type: "read", command: "cat a", name: "a", path: "/a" }] })).toBe(true)
     expect(isReadOnlyCommand({ ...base, commandActions: [{ type: "unknown", command: "sed -i" }] })).toBe(false)
     expect(isReadOnlyCommand({ ...base, commandActions: [] })).toBe(false)

@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { diffLines, parseUnifiedDiff } from "@batonsh/protocol"
-import { EventStore, RunState, envLayer, formatCount, loadConfig, template } from "./index.ts"
+import { EventStore, envLayer, formatCount, loadConfig, RunState, template } from "./index.ts"
 
 describe("EventStore", () => {
   test("append validates, assigns seq and replays in order", () => {
@@ -41,7 +41,11 @@ describe("RunState projection", () => {
     s.append(run, { type: "turn.started", data: { turnId: "t1", prompt: "fix it" } }, { agentId: "a" })
     s.append(run, { type: "tool.call", data: { toolCallId: "tc", kind: "edit", name: "Edit", title: "Update(a.ts)" } }, { agentId: "a" })
     const lines = diffLines("a\nteh\nc\n", "a\nthe\nc\n")
-    s.append(run, { type: "tool.update", data: { toolCallId: "tc", status: "completed", summary: "Updated 1 line", content: [{ type: "diff", path: "a.ts", lines }] } }, { agentId: "a" })
+    s.append(
+      run,
+      { type: "tool.update", data: { toolCallId: "tc", status: "completed", summary: "Updated 1 line", content: [{ type: "diff", path: "a.ts", lines }] } },
+      { agentId: "a" },
+    )
     s.append(run, { type: "usage.updated", data: { input: 100, output: 20, costUsd: 0.5 } }, { agentId: "a" })
     s.append(run, { type: "usage.updated", data: { input: 300, output: 50, costUsd: 0.75 } }, { agentId: "a" })
     s.append(run, { type: "permission.requested", data: { requestId: "r1", title: "Bash(rm -rf)", options: [] } }, { agentId: "a" })

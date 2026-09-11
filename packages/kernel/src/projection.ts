@@ -3,17 +3,7 @@
  * totals) and per-agent activity feeds. The daemon and every client run the same reducer,
  * so a client that replays the event log sees exactly what the daemon sees.
  */
-import type {
-  AgentView,
-  BatonEvent,
-  BusMessageView,
-  DiffHunkLine,
-  PendingApproval,
-  Snapshot,
-  TaskView,
-  ToolKind,
-  ToolStatus,
-} from "@batonsh/protocol"
+import type { AgentView, BatonEvent, BusMessageView, DiffHunkLine, PendingApproval, Snapshot, TaskView, ToolKind, ToolStatus } from "@batonsh/protocol"
 
 export type FeedItem =
   | { kind: "message"; id: string; role: "assistant" | "thought"; text: string; done: boolean; ts: number }
@@ -225,7 +215,7 @@ export class RunState {
       case "tool.update": {
         if (!aid) break
         const it = this.feed(aid).index.get(e.data.toolCallId)
-        if (!it || it.kind !== "tool") break
+        if (it?.kind !== "tool") break
         if (e.data.status) it.status = e.data.status
         if (e.data.title) it.title = e.data.title
         if (e.data.summary) it.summary = e.data.summary
@@ -319,7 +309,8 @@ export class RunState {
         this.busVersion++
         if (d.kind !== "heartbeat" && d.kind !== "progress") {
           this.busChatCount++
-          if (this.agents.has(d.from)) this.push(d.from, { kind: "bus", id: `bo_${d.messageId}`, from: d.from, to: d.to, body: d.body, direction: "out", ts: e.ts })
+          if (this.agents.has(d.from))
+            this.push(d.from, { kind: "bus", id: `bo_${d.messageId}`, from: d.from, to: d.to, body: d.body, direction: "out", ts: e.ts })
           if (this.agents.has(d.to)) this.push(d.to, { kind: "bus", id: `bi_${d.messageId}`, from: d.from, to: d.to, body: d.body, direction: "in", ts: e.ts })
           if (d.from !== d.to && this.agents.has(d.from)) this.bump(d.from)
           if (this.agents.has(d.to)) this.bump(d.to)

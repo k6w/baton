@@ -9,11 +9,11 @@ import { createAcpAdapter } from "./adapter.ts"
 import { ACP_PRESETS, GENERIC_ACP_PRESET } from "./presets.ts"
 
 export { createAcpAdapter } from "./adapter.ts"
-export { AcpSession } from "./session.ts"
 export type { AcpAuthCheck, AcpAuthStatus, AcpPreset } from "./presets.ts"
 export { ACP_PRESETS, GENERIC_ACP_PRESET, runAuthCheck } from "./presets.ts"
-export { ACP_REGISTRY_URL, fetchAcpRegistry, registryAgentToPreset } from "./registry.ts"
 export type { RegistryAgent } from "./registry.ts"
+export { ACP_REGISTRY_URL, fetchAcpRegistry, registryAgentToPreset } from "./registry.ts"
+export { AcpSession } from "./session.ts"
 export { TerminalManager } from "./terminal.ts"
 export { WorkspaceFs } from "./workspace-fs.ts"
 

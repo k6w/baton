@@ -94,7 +94,9 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   // autostart configured agents
   for (const [name, a] of Object.entries(config.agents)) {
     for (let i = 0; i < a.autostart; i++) {
-      runtime.spawn({ adapter: name, label: a.label }).catch((e) => runtime.emit({ type: "log", data: { level: "error", message: `autostart ${name}: ${e.message}` } }))
+      runtime
+        .spawn({ adapter: name, label: a.label })
+        .catch((e) => runtime.emit({ type: "log", data: { level: "error", message: `autostart ${name}: ${e.message}` } }))
     }
   }
   return daemon

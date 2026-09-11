@@ -1,15 +1,16 @@
 /** Modal overlays: command palette, theme picker, approvals inbox, help. */
+
+import { join } from "node:path"
+import { configDir, projectBatonDir } from "@batonsh/kernel"
+import { listThemes, loadTheme } from "@batonsh/themes"
 import type { InputRenderable } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
-import { For, type JSX, Show, createMemo, createSignal, onCleanup } from "solid-js"
-import { listThemes, loadTheme } from "@batonsh/themes"
-import { configDir, projectBatonDir } from "@batonsh/kernel"
+import { createMemo, createSignal, For, type JSX, onCleanup, Show } from "solid-js"
 import { agentLook } from "../agent-style.ts"
 import { useUi } from "../context.ts"
 import { keyString } from "../keymap.ts"
-import { type Seg, clip, width as sw, wrap } from "../lines.ts"
+import { clip, type Seg, width as sw, wrap } from "../lines.ts"
 import { segs } from "../ui/styled.ts"
-import { join } from "node:path"
 
 export interface PaletteItem {
   id: string
@@ -154,7 +155,10 @@ export function ThemePicker(props: { onClose: () => void; onPick: (name: string)
   const dirs = { global: join(configDir(), "themes"), project: ui.run.projectRoot ? join(projectBatonDir(ui.run.projectRoot), "themes") : undefined }
   const themes = listThemes(dirs)
   const original = ui.theme()
-  const startIdx = Math.max(0, themes.findIndex((t) => t.name === ui.prefs.theme))
+  const startIdx = Math.max(
+    0,
+    themes.findIndex((t) => t.name === ui.prefs.theme),
+  )
   const [sel, setSel] = createSignal(startIdx)
   const preview = (i: number) => {
     const t = themes[i]
@@ -289,13 +293,25 @@ export function HelpOverlay(props: { onClose: () => void }) {
     for (const [ctx, title] of groups) {
       out.push([{ text: title, fg: t.primary, bold: true }])
       for (const c of ui.keymap.commands.filter((x) => x.context === ctx && x.keys.length)) {
-        out.push([{ text: `  ${c.keys.join(", ").padEnd(22)}`, fg: t.text }, { text: c.title, fg: t.textMuted }])
+        out.push([
+          { text: `  ${c.keys.join(", ").padEnd(22)}`, fg: t.text },
+          { text: c.title, fg: t.textMuted },
+        ])
       }
     }
     out.push([{ text: "Input", fg: t.primary, bold: true }])
-    out.push([{ text: "  @name text".padEnd(24), fg: t.text }, { text: "talk to one agent directly (@all, @role:x)", fg: t.textMuted }])
-    out.push([{ text: "  !name".padEnd(24), fg: t.text }, { text: "interrupt an agent (!all)", fg: t.textMuted }])
-    out.push([{ text: "  /command".padEnd(24), fg: t.text }, { text: "/spawn /kill /mode /theme /layout … (tab completes)", fg: t.textMuted }])
+    out.push([
+      { text: "  @name text".padEnd(24), fg: t.text },
+      { text: "talk to one agent directly (@all, @role:x)", fg: t.textMuted },
+    ])
+    out.push([
+      { text: "  !name".padEnd(24), fg: t.text },
+      { text: "interrupt an agent (!all)", fg: t.textMuted },
+    ])
+    out.push([
+      { text: "  /command".padEnd(24), fg: t.text },
+      { text: "/spawn /kill /mode /theme /layout … (tab completes)", fg: t.textMuted },
+    ])
     const conflicts = ui.keymap.conflicts()
     if (conflicts.length) {
       out.push([{ text: "Conflicting bindings", fg: t.warning, bold: true }])

@@ -66,9 +66,7 @@ export class EventStore {
       );
       CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);
     `)
-    this.insert = this.db.prepare(
-      "INSERT INTO events (id, ts, run_id, agent_id, task_id, type, data, raw) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING seq",
-    )
+    this.insert = this.db.prepare("INSERT INTO events (id, ts, run_id, agent_id, task_id, type, data, raw) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING seq")
   }
 
   createRun(cwd: string, title?: string): string {

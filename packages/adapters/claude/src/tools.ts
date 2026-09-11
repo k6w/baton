@@ -124,9 +124,7 @@ const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`
 export function resultText(content: unknown): string {
   if (typeof content === "string") return content
   if (Array.isArray(content))
-    return content
-      .map((c) => (c && typeof c === "object" && (c as Input).type === "text" ? String((c as Input).text ?? "") : ""))
-      .join("")
+    return content.map((c) => (c && typeof c === "object" && (c as Input).type === "text" ? String((c as Input).text ?? "") : "")).join("")
   return ""
 }
 
@@ -148,7 +146,8 @@ export function patchToLines(patch: Patch[]): DiffHunkLine[] {
       const text = l.slice(1)
       if (sign === "+") out.push({ kind: "add", text, newLine: n++ })
       else if (sign === "-") out.push({ kind: "del", text, oldLine: o++ })
-      else if (sign === "\\") continue // "\ No newline at end of file"
+      else if (sign === "\\")
+        continue // "\ No newline at end of file"
       else out.push({ kind: "ctx", text, oldLine: o++, newLine: n++ })
     }
   }

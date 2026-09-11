@@ -3,8 +3,9 @@
  * Variables: {dot} {running} {total} {noun} {calls} {msgs} {cost} {tokens} {added} {removed}
  *            {repo} {branch} {mode} {approvals} {spark} {theme} {layout}
  */
-import { createMemo } from "solid-js"
+
 import { formatCost, formatCount, formatTokens } from "@batonsh/kernel"
+import { createMemo } from "solid-js"
 import { agentLook } from "../agent-style.ts"
 import { useUi } from "../context.ts"
 import { type Seg, width as sw } from "../lines.ts"
@@ -30,7 +31,7 @@ export function renderTemplate(fmt: string, vars: Record<string, Seg | undefined
     const m = /^\{(\w+)\}$/.exec(part)
     if (m) {
       const v = vars[m[1] as string]
-      if (v && v.text) out.push(v)
+      if (v?.text) out.push(v)
     } else out.push({ text: part, fg: fallback })
   }
   // collapse separators left dangling by empty variables ("·  ·")

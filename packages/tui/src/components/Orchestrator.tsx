@@ -3,16 +3,17 @@
  * an approvals banner, the spinner line and the main input (with @mention / slash-command
  * completion and history).
  */
-import type { InputRenderable } from "@opentui/core"
-import { For, Show, createMemo, createSignal } from "solid-js"
+
 import type { FeedItem } from "@batonsh/kernel"
 import { formatCost } from "@batonsh/kernel"
+import type { InputRenderable } from "@opentui/core"
+import { createMemo, createSignal, For, Show } from "solid-js"
 import { agentLook, whoFn } from "../agent-style.ts"
+import { type Completion, completions } from "../completion.ts"
 import { useUi } from "../context.ts"
-import { type Line, type Seg, clip, renderFeed, statusLine, wrap } from "../lines.ts"
+import { clip, type Line, renderFeed, type Seg, statusLine, wrap } from "../lines.ts"
 import { Frame, innerSize } from "../ui/Frame.tsx"
 import { segs, toStyled } from "../ui/styled.ts"
-import { completions, type Completion } from "../completion.ts"
 
 export interface OrchestratorProps {
   width: number
@@ -43,7 +44,9 @@ export function Orchestrator(props: OrchestratorProps) {
       return ui.run.workers().map((w) => ({ ...w }))
     },
     [],
-    { equals: (a, b) => a.length === b.length && a.every((x, i) => x.agentId === b[i]?.agentId && x.status === b[i]?.status && x.toolCalls === b[i]?.toolCalls) },
+    {
+      equals: (a, b) => a.length === b.length && a.every((x, i) => x.agentId === b[i]?.agentId && x.status === b[i]?.status && x.toolCalls === b[i]?.toolCalls),
+    },
   )
 
   const headerRight = (): Seg[] => {
@@ -71,7 +74,6 @@ export function Orchestrator(props: OrchestratorProps) {
     return completions(ui.input(), ui.run, ui.config)
   })
 
-
   const infoLines = (): Line[] => {
     const t = ui.theme()
     const ws = workers()
@@ -80,10 +82,24 @@ export function Orchestrator(props: OrchestratorProps) {
       const k = agentLook(ui, w).icon.id
       counts.set(k, (counts.get(k) ?? 0) + 1)
     }
-    const desc = ws.length === 0 ? "no subagents yet" : [...counts].map(([k, n]) => `${n} ${k}`).join(", ") + ` subagent${ws.length === 1 ? "" : "s"} ${ws.some((w) => w.status === "busy") ? "working" : "ready"}`
+    const desc =
+      ws.length === 0
+        ? "no subagents yet"
+        : [...counts].map(([k, n]) => `${n} ${k}`).join(", ") +
+          ` subagent${ws.length === 1 ? "" : "s"} ${ws.some((w) => w.status === "busy") ? "working" : "ready"}`
     return [
-      { segs: [{ text: "/agents", fg: t.text }, { text: ` · ${desc}`, fg: t.textMuted }] },
-      { segs: [{ text: "mode: ", fg: t.textMuted }, { text: ui.run.mode, fg: t.text }] },
+      {
+        segs: [
+          { text: "/agents", fg: t.text },
+          { text: ` · ${desc}`, fg: t.textMuted },
+        ],
+      },
+      {
+        segs: [
+          { text: "mode: ", fg: t.textMuted },
+          { text: ui.run.mode, fg: t.text },
+        ],
+      },
     ]
   }
 
@@ -108,7 +124,7 @@ export function Orchestrator(props: OrchestratorProps) {
 
   const body = createMemo(() => {
     const t = ui.theme()
-    const { width, height } = inner()
+    const { width } = inner()
     const o = orch()
     const look = o ? agentLook(ui, o).look : "claude"
     const lines: Line[] = [...infoLines()]
@@ -124,7 +140,10 @@ export function Orchestrator(props: OrchestratorProps) {
     lines.push(...feed)
     if (!o && thread().length === 0) {
       lines.push({ segs: [{ text: "" }] })
-      for (const l of wrap("Type a task for the orchestrator, @name to talk to an agent directly, or /spawn codex 3 to start agents. ctrl+p for everything else.", width))
+      for (const l of wrap(
+        "Type a task for the orchestrator, @name to talk to an agent directly, or /spawn codex 3 to start agents. ctrl+p for everything else.",
+        width,
+      ))
         lines.push({ segs: [{ text: l, fg: t.textMuted }] })
     }
     const rows = bodyRows()
@@ -255,12 +274,13 @@ export function Orchestrator(props: OrchestratorProps) {
       <box flexDirection="column" height={Math.min(6, suggestions().length)}>
         <For each={suggestions().slice(0, 6)}>
           {(s, i) => (
-            <text
-              wrapMode="none" >{segs(
+            <text wrapMode="none">
+              {segs(
                 { text: i() === selected() ? "› " : "  ", fg: ui.theme().primary },
                 { text: s.label, fg: i() === selected() ? ui.theme().text : ui.theme().textMuted, bold: i() === selected() },
                 { text: `  ${clip(s.detail, Math.max(0, inner().width - s.label.length - 6))}`, fg: ui.theme().textSubtle },
-              )}</text>
+              )}
+            </text>
           )}
         </For>
       </box>
@@ -288,10 +308,14 @@ export function Orchestrator(props: OrchestratorProps) {
       right={headerRight()}
     >
       <box height={bodyRows()} overflow="hidden">
-        <text height={bodyRows()} wrapMode="none">{toStyled(body(), inner().width)}</text>
+        <text height={bodyRows()} wrapMode="none">
+          {toStyled(body(), inner().width)}
+        </text>
       </box>
       <Show when={status().length > 0}>
-        <text height={status().length} wrapMode="none">{toStyled(status(), inner().width)}</text>
+        <text height={status().length} wrapMode="none">
+          {toStyled(status(), inner().width)}
+        </text>
       </Show>
       {suggestionBox()}
       {inputEl}

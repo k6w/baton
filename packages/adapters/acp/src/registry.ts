@@ -63,7 +63,9 @@ export function registryAgentToPreset(a: RegistryAgent, platform = currentPlatfo
     const name = packageBin(pkg.package)
     const via = d.npx ? "npm i -g" : "uv tool install"
     const bins = [...new Set([name, a.id])]
-    notes.push(`registry ${d.npx ? "npm" : "uv"} package ${pkg.package}; install with \`${via} ${pkg.package.replace(/@[^@/]+$/, "")}\` (binary name may differ — set command if detection fails)`)
+    notes.push(
+      `registry ${d.npx ? "npm" : "uv"} package ${pkg.package}; install with \`${via} ${pkg.package.replace(/@[^@/]+$/, "")}\` (binary name may differ — set command if detection fails)`,
+    )
     return { id: a.id, displayName: a.name ?? a.id, binaries: bins, args: pkg.args ?? [], env: pkg.env, notes }
   }
   return undefined

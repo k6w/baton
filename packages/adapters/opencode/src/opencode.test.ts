@@ -35,7 +35,10 @@ describe("opencode adapter contract", () => {
         expect(h2.session.resumeId()).toBe(sessionId)
         await h2.session.prompt({ text: "Reply with exactly the word RESUMED and nothing else." })
         await h2.waitTurn(120_000)
-        const text = h2.ofType("message.delta").map((e) => e.data.text).join("")
+        const text = h2
+          .ofType("message.delta")
+          .map((e) => e.data.text)
+          .join("")
         expect(text).toContain("RESUMED")
         expect(h2.ofType("usage.updated").some((u) => (u.data.costUsd ?? 0) > 0)).toBe(true)
       } finally {

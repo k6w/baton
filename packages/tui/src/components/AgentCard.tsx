@@ -1,9 +1,10 @@
 /** One agent in the grid: header (icon, name, label), live activity, status line. */
-import { createMemo } from "solid-js"
+
 import type { AgentView } from "@batonsh/protocol"
+import { createMemo } from "solid-js"
 import { agentLook, whoFn } from "../agent-style.ts"
 import { useUi } from "../context.ts"
-import { type Line, identityLines, renderFeed, statusLine } from "../lines.ts"
+import { identityLines, type Line, renderFeed, statusLine } from "../lines.ts"
 import { Frame, innerSize } from "../ui/Frame.tsx"
 import { toStyled } from "../ui/styled.ts"
 

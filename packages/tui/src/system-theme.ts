@@ -1,5 +1,5 @@
 /** "system" theme: derived from the terminal's own palette (OSC 4/10/11), like OpenCode's. */
-import { type ResolvedTheme, luminance, paletteTheme, resolveTheme } from "@batonsh/themes"
+import { luminance, paletteTheme, type ResolvedTheme, resolveTheme } from "@batonsh/themes"
 
 export function buildSystemTheme(colors: { palette: (string | null)[]; defaultForeground: string | null; defaultBackground: string | null }): ResolvedTheme {
   const p = (i: number, f: string) => colors.palette[i] ?? f
@@ -9,7 +9,13 @@ export function buildSystemTheme(colors: { palette: (string | null)[]; defaultFo
   const mix = (a: string, b: string, t: number) => {
     const h = (s: string) => [1, 3, 5].map((i) => Number.parseInt(s.slice(i, i + 2), 16))
     const [x, y] = [h(a), h(b)]
-    return `#${x.map((v, i) => Math.round(v + ((y[i] as number) - v) * t).toString(16).padStart(2, "0")).join("")}`
+    return `#${x
+      .map((v, i) =>
+        Math.round(v + ((y[i] as number) - v) * t)
+          .toString(16)
+          .padStart(2, "0"),
+      )
+      .join("")}`
   }
   const file = paletteTheme({
     name: "system",

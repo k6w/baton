@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { BUILTIN_THEMES, TOKENS, listThemes, loadTheme, parseBase16, resolveTheme } from "./index.ts"
+import { BUILTIN_THEMES, listThemes, loadTheme, parseBase16, resolveTheme, TOKENS } from "./index.ts"
 
 describe("themes", () => {
   test("every builtin resolves every token to a color", () => {
@@ -51,6 +51,6 @@ describe("themes", () => {
     const t = loadTheme("ocean", { dirs: { global: dir, opencode: false } })
     expect(t.background).toBe("#2b303b")
     expect(t.error).toBe("#bf616a")
-    expect(parseBase16("base00: \"ffffff\"", "l").appearance).toBe("light")
+    expect(parseBase16('base00: "ffffff"', "l").appearance).toBe("light")
   })
 })

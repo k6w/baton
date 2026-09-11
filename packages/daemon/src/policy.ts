@@ -20,7 +20,11 @@ export interface PolicyRequest {
 /** Baton's own coordination tools (spawn_agent, send_message, …) never need a human. */
 // Anchored + kind-restricted so a shell command that merely *mentions* baton can't slip through.
 const BUILTIN_RULES: PolicyRule[] = [
-  { kinds: ["other", "delegate", "think", "fetch"], match: "^(mcp__baton__\\w+|baton[._]\\w+|baton: Allow the baton MCP server to run tool \"\\w+\")", action: "allow" },
+  {
+    kinds: ["other", "delegate", "think", "fetch"],
+    match: '^(mcp__baton__\\w+|baton[._]\\w+|baton: Allow the baton MCP server to run tool "\\w+")',
+    action: "allow",
+  },
 ]
 
 const PRESETS: Record<"strict" | "balanced" | "yolo", PolicyRule[]> = {
@@ -28,7 +32,11 @@ const PRESETS: Record<"strict" | "balanced" | "yolo", PolicyRule[]> = {
   balanced: [
     { kinds: ["read", "search", "think", "switch_mode"], action: "allow" },
     // destructive / outward-facing commands always ask
-    { kinds: ["execute"], match: "\\b(rm\\s+-rf|git\\s+push|git\\s+reset\\s+--hard|sudo|curl[^|]*\\|\\s*(ba)?sh|npm\\s+publish|docker\\s+push|kubectl\\s+(apply|delete))\\b", action: "ask" },
+    {
+      kinds: ["execute"],
+      match: "\\b(rm\\s+-rf|git\\s+push|git\\s+reset\\s+--hard|sudo|curl[^|]*\\|\\s*(ba)?sh|npm\\s+publish|docker\\s+push|kubectl\\s+(apply|delete))\\b",
+      action: "ask",
+    },
     { kinds: ["edit"], action: "allow" },
   ],
   yolo: [{ action: "allow" }],

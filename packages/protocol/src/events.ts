@@ -94,16 +94,7 @@ export const Usage = z.object({
 })
 export type Usage = z.infer<typeof Usage>
 
-export const TaskState = z.enum([
-  "submitted",
-  "working",
-  "input_required",
-  "auth_required",
-  "completed",
-  "failed",
-  "canceled",
-  "rejected",
-])
+export const TaskState = z.enum(["submitted", "working", "input_required", "auth_required", "completed", "failed", "canceled", "rejected"])
 export type TaskState = z.infer<typeof TaskState>
 
 export const BusKind = z.enum(["chat", "request", "reply", "heartbeat", "progress", "result", "lease", "system"])
@@ -249,8 +240,8 @@ export const EventSchemas = {
   // orchestrator / misc
   "orch.mode": z.object({ mode: z.string() }),
   "orch.note": z.object({ text: z.string(), level: z.enum(["info", "warn", "error"]).default("info") }),
-  "error": z.object({ message: z.string(), detail: z.string().optional(), fatal: z.boolean().optional() }),
-  "log": z.object({ level: z.enum(["debug", "info", "warn", "error"]), message: z.string() }),
+  error: z.object({ message: z.string(), detail: z.string().optional(), fatal: z.boolean().optional() }),
+  log: z.object({ level: z.enum(["debug", "info", "warn", "error"]), message: z.string() }),
 } as const
 
 export type EventType = keyof typeof EventSchemas

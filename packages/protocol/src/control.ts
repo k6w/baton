@@ -3,16 +3,7 @@
  * newline-delimited over a Unix domain socket (or WebSocket).
  */
 import type { DetectResult } from "./adapter.ts"
-import type {
-  AgentInfo,
-  AgentStatus,
-  BatonEvent,
-  Delivery,
-  PermissionOption,
-  TaskState,
-  ToolKind,
-  BusKind,
-} from "./events.ts"
+import type { AgentInfo, AgentStatus, BatonEvent, BusKind, Delivery, PermissionOption, TaskState, ToolKind } from "./events.ts"
 
 export const CONTROL_PROTOCOL_VERSION = 1
 

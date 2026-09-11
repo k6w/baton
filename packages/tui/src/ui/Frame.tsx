@@ -4,12 +4,13 @@
  * The border is drawn by OpenTUI (left/right/bottom); the top row is composed by hand so
  * both titles fit — and so a logo image can sit inside it.
  */
+
+import { BORDERS, type BorderName } from "@batonsh/themes"
 import type { BorderCharacters } from "@opentui/core"
 import { type JSX, Show } from "solid-js"
-import { BORDERS, type BorderName } from "@batonsh/themes"
-import { type Seg, clip, width as sw } from "../lines.ts"
-import { segs } from "./styled.ts"
 import { useUi } from "../context.ts"
+import { clip, type Seg, width as sw } from "../lines.ts"
+import { segs } from "./styled.ts"
 
 export interface FrameProps {
   width: number
@@ -34,7 +35,19 @@ function chars(border: BorderName) {
 
 export function customChars(border: BorderName): BorderCharacters | undefined {
   if (border !== "ascii") return undefined
-  return { topLeft: "+", topRight: "+", bottomLeft: "+", bottomRight: "+", horizontal: "-", vertical: "|", topT: "+", bottomT: "+", leftT: "+", rightT: "+", cross: "+" }
+  return {
+    topLeft: "+",
+    topRight: "+",
+    bottomLeft: "+",
+    bottomRight: "+",
+    horizontal: "-",
+    vertical: "|",
+    topT: "+",
+    bottomT: "+",
+    leftT: "+",
+    rightT: "+",
+    cross: "+",
+  }
 }
 
 export function Frame(props: FrameProps) {
@@ -84,19 +97,47 @@ export function Frame(props: FrameProps) {
   }
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: terminal UI, not DOM — mouse focus on panes is intended
     <box width={props.width} height={props.height} flexDirection="column" onMouseDown={props.onMouseDown} backgroundColor={bg()}>
       <Show
         when={props.logo}
         fallback={
           <box height={1} width={props.width}>
-            <text width={props.width} height={1} wrapMode="none">{segs(...header().before, ...(props.icon ? [{ ...props.icon, text: `${props.icon.text} ` }] : []), ...header().after)}</text>
+            <text width={props.width} height={1} wrapMode="none">
+              {segs(...header().before, ...(props.icon ? [{ ...props.icon, text: `${props.icon.text} ` }] : []), ...header().after)}
+            </text>
           </box>
         }
       >
         <box height={1} flexDirection="row" width={props.width}>
-          <text width={sw(header().before.map((x) => x.text).join(""))} height={1} wrapMode="none">{segs(...header().before)}</text>
+          <text
+            width={sw(
+              header()
+                .before.map((x) => x.text)
+                .join(""),
+            )}
+            height={1}
+            wrapMode="none"
+          >
+            {segs(...header().before)}
+          </text>
           <image source={props.logo!} width={2} height={1} fit="fit" />
-          <text width={Math.max(1, props.width - sw(header().before.map((x) => x.text).join("")) - 2)} height={1} wrapMode="none">{segs({ text: " " }, ...header().after)}</text>
+          <text
+            width={Math.max(
+              1,
+              props.width -
+                sw(
+                  header()
+                    .before.map((x) => x.text)
+                    .join(""),
+                ) -
+                2,
+            )}
+            height={1}
+            wrapMode="none"
+          >
+            {segs({ text: " " }, ...header().after)}
+          </text>
         </box>
       </Show>
       <box

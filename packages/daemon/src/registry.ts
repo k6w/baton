@@ -2,8 +2,9 @@
  * Adapter registry. Built-in adapters are loaded lazily and defensively: a broken or
  * missing adapter must never take the daemon down.
  */
-import type { AgentAdapter, DetectResult } from "@batonsh/protocol"
+
 import { mockAdapter } from "@batonsh/adapter-mock"
+import type { AgentAdapter, DetectResult } from "@batonsh/protocol"
 
 type Loader = () => Promise<AgentAdapter[]>
 
@@ -66,8 +67,6 @@ export class AdapterRegistry {
   }
 
   async detectAll(refresh = false): Promise<(DetectResult & { id: string; displayName: string })[]> {
-    return Promise.all(
-      this.list().map(async (a) => ({ id: a.id, displayName: a.displayName, ...((await this.detect(a.id, refresh)) as DetectResult) })),
-    )
+    return Promise.all(this.list().map(async (a) => ({ id: a.id, displayName: a.displayName, ...((await this.detect(a.id, refresh)) as DetectResult) })))
   }
 }

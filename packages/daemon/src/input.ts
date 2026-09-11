@@ -128,7 +128,10 @@ async function handleCommand(rt: Runtime, text: string): Promise<InputResult> {
       const detected = await rt.registry.detectAll()
       const lines = detected
         .sort((a, b) => Number(b.installed) - Number(a.installed))
-        .map((d) => `${d.installed ? "●" : "○"} ${d.id.padEnd(14)} ${d.installed ? `v${d.version ?? "?"}` : "not installed"}${d.installed ? ` · auth ${d.auth}` : ""}`)
+        .map(
+          (d) =>
+            `${d.installed ? "●" : "○"} ${d.id.padEnd(14)} ${d.installed ? `v${d.version ?? "?"}` : "not installed"}${d.installed ? ` · auth ${d.auth}` : ""}`,
+        )
       return { routedTo: [], command: cmd, output: lines.join("\n") }
     }
     case "approve":

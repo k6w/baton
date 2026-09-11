@@ -3,7 +3,7 @@
  * gives every card an exact size (so headers can be composed precisely) and pages when
  * there are more agents than fit at `ui.min_card_height`.
  */
-import { For, Show, createMemo } from "solid-js"
+import { createMemo, For, Show } from "solid-js"
 import { useUi } from "../context.ts"
 import { segs } from "../ui/styled.ts"
 import { AgentCard } from "./AgentCard.tsx"
@@ -108,11 +108,9 @@ export function Grid(props: { width: number; height: number; cells: Cell[]; onSe
       </For>
       <Show when={layout().pages > 1}>
         <box height={1} flexDirection="row" justifyContent="center">
-          <text
-            wrapMode="none" >{segs(
-              { text: `page ${page() + 1}/${layout().pages}`, fg: ui.theme().textMuted },
-              { text: "  pgup/pgdn", fg: ui.theme().textSubtle },
-            )}</text>
+          <text wrapMode="none">
+            {segs({ text: `page ${page() + 1}/${layout().pages}`, fg: ui.theme().textMuted }, { text: "  pgup/pgdn", fg: ui.theme().textSubtle })}
+          </text>
         </box>
       </Show>
     </box>

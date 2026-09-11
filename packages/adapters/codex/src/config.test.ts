@@ -3,7 +3,7 @@ import { rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import type { SessionConfig } from "@batonsh/protocol"
 import { tempWorkspace } from "../../testkit/src/index.ts"
-import { appServerArgs, approvalSettings, mcpConfigArgs, promptText, providerSettings } from "./config.ts"
+import { approvalSettings, appServerArgs, mcpConfigArgs, promptText, providerSettings } from "./config.ts"
 import { loadFixture } from "./fixtures/replay.ts"
 import { GitSnapshotter, splitGitPatch } from "./snapshot.ts"
 
@@ -30,7 +30,7 @@ describe("MCP injection", () => {
   test("streamable HTTP servers become -c mcp_servers overrides", () => {
     expect(
       mcpConfigArgs([
-        { name: "baton", url: "http://127.0.0.1:4100/mcp", headers: { Authorization: "Bearer t\"k", "X-Agent": "a1" } },
+        { name: "baton", url: "http://127.0.0.1:4100/mcp", headers: { Authorization: 'Bearer t"k', "X-Agent": "a1" } },
         { name: "my server.v2", url: "https://x/mcp" },
       ]),
     ).toEqual([
@@ -97,7 +97,12 @@ describe("git snapshots (shell edits)", () => {
       ])
       // The real index is untouched: everything is still untracked.
       const status = Bun.spawnSync(["git", "status", "--porcelain"], { cwd }).stdout.toString()
-      expect(status.split("\n").filter(Boolean).every((l) => l.startsWith("??"))).toBe(true)
+      expect(
+        status
+          .split("\n")
+          .filter(Boolean)
+          .every((l) => l.startsWith("??")),
+      ).toBe(true)
     } finally {
       s.dispose()
     }

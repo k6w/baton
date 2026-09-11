@@ -13,22 +13,17 @@ import {
   type AgentAdapter,
   type AgentEvent,
   type AgentSession,
-  type DetectResult,
   DEFAULT_PERMISSION_OPTIONS,
-  type PromptInput,
-  type SessionConfig,
+  type DetectResult,
   deferred,
   diffLines,
   diffStat,
   newId,
+  type PromptInput,
+  type SessionConfig,
 } from "@batonsh/protocol"
 
 type Persona = "claude" | "codex" | "generic"
-
-interface Step {
-  delay: number
-  run: () => Promise<void> | void
-}
 
 function prng(seed: number) {
   let s = seed >>> 0 || 0x9e3779b9
@@ -54,14 +49,14 @@ const SNIPPETS: [string, string][] = [
   ["  background: #3b82f6;", "  background: var(--btn-bg);"],
   ["teh fastest way", "the fastest way"],
   ["const retries = 3", "const retries = 5"],
-  ["if (!hex) return", "if (!hex) throw new Error(\"missing color\")"],
+  ["if (!hex) return", 'if (!hex) throw new Error("missing color")'],
   ["export const timeout = 1000", "export const timeout = 30_000"],
 ]
 
 const COMMANDS: [string, string][] = [
   ["git diff --stat", " 1 file changed, 1 insertion(+), 1 deletion(-)"],
   ["bun test", " 42 pass\n 0 fail"],
-  ["rg -n \"teh\" .", "README.md:14:teh fastest way"],
+  ['rg -n "teh" .', "README.md:14:teh fastest way"],
   ["make lint", "✓ 0 problems"],
   ["curl -s localhost:3000/health", "200 OK · 18ms"],
 ]

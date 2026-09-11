@@ -9,9 +9,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { basename, join } from "node:path"
 import { createInterface } from "node:readline/promises"
-import { type DetectResult, runCapture } from "@batonsh/protocol"
-import { gitInfo, projectPaths } from "@batonsh/kernel"
 import { AdapterRegistry } from "@batonsh/daemon"
+import { gitInfo, projectPaths } from "@batonsh/kernel"
+import { type DetectResult, runCapture } from "@batonsh/protocol"
 import { c } from "./style.ts"
 
 export interface Toolchain {
@@ -47,7 +47,11 @@ export function detectToolchain(root: string): Toolchain | undefined {
   if (has("go.mod")) return { kind: "go", packageManager: "go", commands: { test: "go test ./...", lint: "go vet ./...", build: "go build ./..." } }
   if (has("pyproject.toml") || has("requirements.txt")) {
     const uv = has("uv.lock")
-    return { kind: "python", packageManager: uv ? "uv" : "pip", commands: { test: uv ? "uv run pytest" : "pytest", lint: uv ? "uv run ruff check" : "ruff check" } }
+    return {
+      kind: "python",
+      packageManager: uv ? "uv" : "pip",
+      commands: { test: uv ? "uv run pytest" : "pytest", lint: uv ? "uv run ruff check" : "ruff check" },
+    }
   }
   if (has("Makefile")) return { kind: "make", commands: { test: "make test", build: "make" } }
   return undefined
@@ -208,13 +212,15 @@ export async function initProject(opts: InitOptions): Promise<{ created: string[
   say(`  ${c.dim("…")} detecting agents`)
   const agents = await detectAgents()
   for (const a of agents.filter((x) => x.installed)) {
-    const auth = a.auth === "ok" ? c.green("logged in") : a.auth === "missing" ? c.red(`not logged in${a.authHint ? ` — ${a.authHint}` : ""}`) : c.dim("auth unknown")
+    const auth =
+      a.auth === "ok" ? c.green("logged in") : a.auth === "missing" ? c.red(`not logged in${a.authHint ? ` — ${a.authHint}` : ""}`) : c.dim("auth unknown")
     say(`  ${c.green("●")} ${a.id.padEnd(14)} ${c.dim(`v${a.version ?? "?"}`)}  ${auth}`)
   }
   const missing = agents.filter((a) => !a.installed).map((a) => a.id)
   if (missing.length) say(`  ${c.dim(`○ not installed: ${missing.join(", ")}`)}`)
   const { orchestrator, worker } = chooseDefaults(agents)
-  if (orchestrator === "mock") say(`  ${c.yellow("!")} no agent CLI found — using the mock agent. Install claude / codex / opencode and run ${c.bold("baton init")} again.`)
+  if (orchestrator === "mock")
+    say(`  ${c.yellow("!")} no agent CLI found — using the mock agent. Install claude / codex / opencode and run ${c.bold("baton init")} again.`)
 
   // 3. toolchain
   const tc = detectToolchain(root)

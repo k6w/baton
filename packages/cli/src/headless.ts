@@ -2,12 +2,17 @@
  * `baton run "<task>"` — drive a run without the TUI. Streams a readable log (or raw BEP
  * JSON with --json) until the orchestrator and every worker are idle.
  */
+
+import { formatCost } from "@batonsh/kernel"
 import type { BatonEvent } from "@batonsh/protocol"
 import type { BatonClient } from "@batonsh/sdk"
-import { formatCost } from "@batonsh/kernel"
 import { c } from "./style.ts"
 
-export async function runHeadless(client: BatonClient, task: string, opts: { json?: boolean; timeoutS?: number; approve?: "ask" | "all" | "none" }): Promise<number> {
+export async function runHeadless(
+  client: BatonClient,
+  task: string,
+  opts: { json?: boolean; timeoutS?: number; approve?: "ask" | "all" | "none" },
+): Promise<number> {
   const live = await client.live()
   const name = (id?: string) => (id ? (live.state.agents.get(id)?.name ?? id) : "baton")
   let lastActivity = Date.now()
@@ -33,7 +38,8 @@ export async function runHeadless(client: BatonClient, task: string, opts: { jso
           if (e.data.role === "assistant") console.log(`${who} ${e.data.text}`)
           break
         case "bus.message":
-          if (e.data.kind !== "heartbeat" && e.data.kind !== "progress") console.log(`${c.cyan("⇄")} ${name(e.data.from)} → ${name(e.data.to)} ${c.dim(e.data.body.split("\n")[0] ?? "")}`)
+          if (e.data.kind !== "heartbeat" && e.data.kind !== "progress")
+            console.log(`${c.cyan("⇄")} ${name(e.data.from)} → ${name(e.data.to)} ${c.dim(e.data.body.split("\n")[0] ?? "")}`)
           break
         case "permission.requested":
           console.log(`${who} ${c.yellow("?")} ${e.data.title}`)

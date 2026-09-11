@@ -44,7 +44,10 @@ export function permissionModeFor(approval: ApprovalMode): PermissionMode {
   }
 }
 
-export function buildEnv(cfg: Pick<SessionConfig, "env" | "provider">, base: Record<string, string | undefined> = process.env): Record<string, string | undefined> {
+export function buildEnv(
+  cfg: Pick<SessionConfig, "env" | "provider">,
+  base: Record<string, string | undefined> = process.env,
+): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = { ...base }
   for (const k of NESTED_SESSION_VARS) delete env[k]
   env.PATH = augmentedPath()

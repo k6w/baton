@@ -2,11 +2,11 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { testRender } from "@opentui/solid"
 import { type Daemon, startDaemon } from "@batonsh/daemon"
-import { loadConfig } from "@batonsh/kernel"
+import type { loadConfig } from "@batonsh/kernel"
 import { BatonClient, type LiveRun } from "@batonsh/sdk"
 import { loadTheme } from "@batonsh/themes"
+import { testRender } from "@opentui/solid"
 import { App } from "./App.tsx"
 import { UiContext } from "./context.ts"
 import { createUiState } from "./state.ts"
@@ -179,7 +179,12 @@ describe("TUI", () => {
     if (process.env.BATON_PRINT) console.log("INPUT=", JSON.stringify(m.ui.input()), "\n", (await m.frame()).split("\n").slice(0, 16).join("\n"))
     m.t.mockInput.pressEnter()
     await m.frame()
-    if (process.env.BATON_PRINT) console.log("AFTER INPUT=", JSON.stringify(m.ui.input()), live.state.bus.filter((b) => b.from === "user"))
+    if (process.env.BATON_PRINT)
+      console.log(
+        "AFTER INPUT=",
+        JSON.stringify(m.ui.input()),
+        live.state.bus.filter((b) => b.from === "user"),
+      )
     await until(() => live.state.bus.some((b) => b.from === "user" && b.body === "pong"))
     f = await m.frame()
     expect(f).toContain("codex")

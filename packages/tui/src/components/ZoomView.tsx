@@ -56,7 +56,7 @@ export function ZoomView(props: { agentId: string; width: number; height: number
       { text: "  esc to close", fg: t.textSubtle },
     ]
   }
-  let scroll: ScrollBoxRenderable | undefined
+  let _scroll: ScrollBoxRenderable | undefined
   return (
     <Frame
       width={props.width}
@@ -65,12 +65,15 @@ export function ZoomView(props: { agentId: string; width: number; height: number
       borderColor={ui.theme().borderActive}
       icon={look() ? { text: look()!.glyph, fg: look()!.color, bold: true } : undefined}
       logo={look()?.logo}
-      title={[{ text: agent()?.name ?? "?", fg: ui.theme().text, bold: true }, { text: agent()?.label ? ` · ${agent()!.label}` : "", fg: ui.theme().textMuted }]}
+      title={[
+        { text: agent()?.name ?? "?", fg: ui.theme().text, bold: true },
+        { text: agent()?.label ? ` · ${agent()!.label}` : "", fg: ui.theme().textMuted },
+      ]}
       right={usage()}
     >
       <scrollbox
         ref={(r: ScrollBoxRenderable) => {
-          scroll = r
+          _scroll = r
         }}
         flexGrow={1}
         stickyScroll
@@ -81,7 +84,9 @@ export function ZoomView(props: { agentId: string; width: number; height: number
         <text wrapMode="none">{toStyled(lines(), inner().width - 1)}</text>
       </scrollbox>
       <text wrapMode="none">{toStyled(status(), inner().width)}</text>
-      <text wrapMode="none" height={0}>{segs({ text: "", fg: ui.theme().textMuted })}</text>
+      <text wrapMode="none" height={0}>
+        {segs({ text: "", fg: ui.theme().textMuted })}
+      </text>
     </Frame>
   )
 }

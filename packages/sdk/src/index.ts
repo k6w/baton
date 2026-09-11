@@ -1,4 +1,4 @@
-export * from "./client.ts"
+export { type FeedItem, RunState } from "@batonsh/kernel"
 export type * from "@batonsh/protocol"
 export { defineAdapter } from "@batonsh/protocol"
-export { RunState, type FeedItem } from "@batonsh/kernel"
+export * from "./client.ts"

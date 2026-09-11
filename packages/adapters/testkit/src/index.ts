@@ -164,7 +164,10 @@ export function contractSuite(
           t.expect(content).toContain("the quick brown fox")
           const edits = h.ofType("tool.call").filter((e) => e.data.kind === "edit")
           t.expect(edits.length).toBeGreaterThan(0)
-          const diffs = h.ofType("tool.update").flatMap((e) => e.data.content ?? []).filter((c) => c.type === "diff")
+          const diffs = h
+            .ofType("tool.update")
+            .flatMap((e) => e.data.content ?? [])
+            .filter((c) => c.type === "diff")
           t.expect(diffs.length).toBeGreaterThan(0)
         } finally {
           await h.close()

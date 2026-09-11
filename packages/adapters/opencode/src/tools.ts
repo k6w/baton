@@ -229,8 +229,7 @@ export function toolSummary(tool: string, input: Input, output: string, meta: Me
     case "read": {
       const display = m.display as Record<string, unknown> | undefined
       const total = typeof display?.totalLines === "number" ? display.totalLines : undefined
-      const shown =
-        typeof display?.lineEnd === "number" && typeof display?.lineStart === "number" ? display.lineEnd - display.lineStart + 1 : undefined
+      const shown = typeof display?.lineEnd === "number" && typeof display?.lineStart === "number" ? display.lineEnd - display.lineStart + 1 : undefined
       const n = shown ?? total ?? (typeof m.preview === "string" ? countLines(m.preview) : undefined)
       return n !== undefined ? `Read ${plural(n, "line")}` : "Read"
     }
@@ -261,10 +260,11 @@ export function toolSummary(tool: string, input: Input, output: string, meta: Me
   if (isEditTool(tool)) {
     let added = 0
     let removed = 0
-    for (const c of content) if (c.type === "diff") {
-      added += c.added ?? 0
-      removed += c.removed ?? 0
-    }
+    for (const c of content)
+      if (c.type === "diff") {
+        added += c.added ?? 0
+        removed += c.removed ?? 0
+      }
     return `+${added} −${removed}`
   }
   const first = output.trim().split("\n")[0]

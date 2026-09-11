@@ -222,13 +222,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v)
 }
 
-function mergeInto(
-  target: Record<string, unknown>,
-  src: Record<string, unknown>,
-  layer: string,
-  prov: Record<string, string>,
-  prefix = "",
-): void {
+function mergeInto(target: Record<string, unknown>, src: Record<string, unknown>, layer: string, prov: Record<string, string>, prefix = ""): void {
   for (const [k, v] of Object.entries(src)) {
     const key = prefix ? `${prefix}.${k}` : k
     if (isPlainObject(v)) {

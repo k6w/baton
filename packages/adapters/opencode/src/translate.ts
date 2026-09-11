@@ -6,7 +6,7 @@
 import { realpathSync } from "node:fs"
 import type { AgentEvent, AgentStatus, PermissionOption, PermissionOptionKind, ToolContent, ToolStatus } from "@batonsh/protocol"
 import { newId } from "@batonsh/protocol"
-import type { AssistantMessage, Message, Part, PermissionRequest, Session as OcSession, SessionStatus, Todo, ToolPart } from "@opencode-ai/sdk/v2"
+import type { AssistantMessage, Message, Session as OcSession, Part, PermissionRequest, SessionStatus, Todo, ToolPart } from "@opencode-ai/sdk/v2"
 import { editDiffs, isEditTool, toolKind, toolLocations, toolSummary, toolTitle, truncate } from "./tools.ts"
 
 /** Loose shape of an SSE payload (`{type, properties}`); unknown types are ignored. */
@@ -200,7 +200,6 @@ export class OpencodeTranslator {
   handle(ev: OcEvent): AgentEvent[] {
     this.raw = ev
     const out: AgentEvent[] = []
-    // biome-ignore lint/suspicious/noExplicitAny: SSE payloads are narrowed per event type below
     const p = (ev.properties ?? {}) as Record<string, any>
     const sid: string | undefined = typeof p.sessionID === "string" ? p.sessionID : undefined
     const own = sid !== undefined && sid === this.sessionId
@@ -523,13 +522,7 @@ export class OpencodeTranslator {
     const patterns = (req.patterns ?? []).filter(Boolean)
     const title = toolTitleKnown ?? permissionTitle(req.permission, patterns, meta)
     const detail =
-      typeof meta.diff === "string"
-        ? meta.diff
-        : typeof meta.command === "string"
-          ? meta.command
-          : patterns.length
-            ? patterns.join("\n")
-            : undefined
+      typeof meta.diff === "string" ? meta.diff : typeof meta.command === "string" ? meta.command : patterns.length ? patterns.join("\n") : undefined
     const always = (req.always ?? []).filter(Boolean)
     const options = PERMISSION_OPTIONS.map((o) =>
       o.optionId === "always" && always.length && !(always.length === 1 && always[0] === "*") ? { ...o, name: `Always allow ${always.join(", ")}` } : o,

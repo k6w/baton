@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import { join } from "node:path"
+import { Readable, Writable } from "node:stream"
 /**
  * Deterministic mock ACP agent for adapter tests. Behaviour is selected by the prompt text:
  *   "full"       thought + message chunks, plan, read via fs, edit with permission + fs write
@@ -12,8 +14,6 @@
  * succeeds when MOCK_API_KEY is set; "mock-oauth" always fails).
  */
 import * as acp from "@agentclientprotocol/sdk"
-import { join } from "node:path"
-import { Readable, Writable } from "node:stream"
 
 interface State {
   cwd: string
@@ -85,8 +85,14 @@ class MockAgent implements acp.Agent {
   async loadSession(params: acp.LoadSessionRequest): Promise<acp.LoadSessionResponse> {
     sessions.set(params.sessionId, { cwd: params.cwd, mcpServers: params.mcpServers, model: "mock/smart", loadedFrom: params.sessionId, prompts: [] })
     // replay history (the client must not surface this as new output)
-    await this.conn.sessionUpdate({ sessionId: params.sessionId, update: { sessionUpdate: "user_message_chunk", content: { type: "text", text: "old question" } } })
-    await this.conn.sessionUpdate({ sessionId: params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "REPLAYED" } } })
+    await this.conn.sessionUpdate({
+      sessionId: params.sessionId,
+      update: { sessionUpdate: "user_message_chunk", content: { type: "text", text: "old question" } },
+    })
+    await this.conn.sessionUpdate({
+      sessionId: params.sessionId,
+      update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "REPLAYED" } },
+    })
     return { configOptions: configOptions("mock/smart") }
   }
 
@@ -125,7 +131,14 @@ class MockAgent implements acp.Agent {
       case "perm-wait": {
         await this.conn.sessionUpdate({
           sessionId: sid,
-          update: { sessionUpdate: "tool_call", toolCallId: "wait-1", title: "Run rm -rf build", kind: "execute", status: "pending", rawInput: { command: "rm -rf build" } },
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "wait-1",
+            title: "Run rm -rf build",
+            kind: "execute",
+            status: "pending",
+            rawInput: { command: "rm -rf build" },
+          },
         })
         const r = await this.conn.requestPermission({
           sessionId: sid,
@@ -181,7 +194,12 @@ class MockAgent implements acp.Agent {
     // read
     await up({ sessionUpdate: "tool_call", toolCallId: "read-1", title: "Read notes.txt", kind: "read", status: "in_progress", locations: [{ path: notes }] })
     const file = await this.conn.readTextFile({ sessionId: sid, path: notes })
-    await up({ sessionUpdate: "tool_call_update", toolCallId: "read-1", status: "completed", content: [{ type: "content", content: { type: "text", text: file.content } }] })
+    await up({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "read-1",
+      status: "completed",
+      content: [{ type: "content", content: { type: "text", text: file.content } }],
+    })
 
     // edit with permission
     const fixed = file.content.replace("teh", "the")
@@ -218,7 +236,14 @@ class MockAgent implements acp.Agent {
     }
 
     // terminal
-    await up({ sessionUpdate: "tool_call", toolCallId: "exec-1", title: "Run echo", kind: "execute", status: "in_progress", rawInput: { command: "echo hi-from-term" } })
+    await up({
+      sessionUpdate: "tool_call",
+      toolCallId: "exec-1",
+      title: "Run echo",
+      kind: "execute",
+      status: "in_progress",
+      rawInput: { command: "echo hi-from-term" },
+    })
     const term = await this.conn.createTerminal({ sessionId: sid, command: "echo hi-from-term && echo err-line 1>&2", outputByteLimit: 4096 })
     await up({ sessionUpdate: "tool_call_update", toolCallId: "exec-1", content: [{ type: "terminal", terminalId: term.id }] })
     const exit = await term.waitForExit()

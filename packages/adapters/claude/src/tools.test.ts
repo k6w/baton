@@ -4,21 +4,9 @@ import { editDiff, patchToLines, toolKind, toolSummary, toolTitle } from "./tool
 
 describe("tools", () => {
   test("kinds", () => {
-    expect(["Read", "Glob", "Grep", "Edit", "MultiEdit", "NotebookEdit", "Write", "Bash", "WebFetch", "WebSearch", "Task", "Agent", "mcp__x__y"].map(toolKind)).toEqual([
-      "read",
-      "search",
-      "search",
-      "edit",
-      "edit",
-      "edit",
-      "edit",
-      "execute",
-      "fetch",
-      "fetch",
-      "delegate",
-      "delegate",
-      "other",
-    ])
+    expect(
+      ["Read", "Glob", "Grep", "Edit", "MultiEdit", "NotebookEdit", "Write", "Bash", "WebFetch", "WebSearch", "Task", "Agent", "mcp__x__y"].map(toolKind),
+    ).toEqual(["read", "search", "search", "edit", "edit", "edit", "edit", "execute", "fetch", "fetch", "delegate", "delegate", "other"])
   })
 
   test("titles use cwd-relative paths and keep outside paths absolute", () => {
@@ -49,7 +37,13 @@ describe("tools", () => {
   test("MultiEdit applies edits to the snapshot", () => {
     const d = editDiff({
       name: "MultiEdit",
-      input: { file_path: "/w/f", edits: [{ old_string: "a", new_string: "A" }, { old_string: "c", new_string: "C" }] },
+      input: {
+        file_path: "/w/f",
+        edits: [
+          { old_string: "a", new_string: "A" },
+          { old_string: "c", new_string: "C" },
+        ],
+      },
       content: "ok",
       isError: false,
       before: "a\nb\nc\n",
@@ -75,7 +69,9 @@ describe("tools", () => {
   })
 
   test("errors strip tool_use_error tags", () => {
-    expect(toolSummary({ name: "Read", input: {}, content: "<tool_use_error>File does not exist.</tool_use_error>", isError: true })).toBe("File does not exist.")
+    expect(toolSummary({ name: "Read", input: {}, content: "<tool_use_error>File does not exist.</tool_use_error>", isError: true })).toBe(
+      "File does not exist.",
+    )
   })
 })
 

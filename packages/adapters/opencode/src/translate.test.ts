@@ -71,7 +71,11 @@ describe("translator: recorded edit/bash/todo session (deepinfra DeepSeek-V4-Fla
 
   test("every tool reaches completed exactly once", () => {
     const completed = of(out, "tool.update").filter((e) => e.data.status === "completed")
-    expect(completed.map((e) => e.data.toolCallId).sort()).toEqual(of(out, "tool.call").map((e) => e.data.toolCallId).sort())
+    expect(completed.map((e) => e.data.toolCallId).sort()).toEqual(
+      of(out, "tool.call")
+        .map((e) => e.data.toolCallId)
+        .sort(),
+    )
   })
 
   test("edit → diff content from metadata", () => {
@@ -222,7 +226,9 @@ describe("translator: retry + abort (recorded)", async () => {
   test("retry status surfaces as busy with detail", () => {
     const { out } = replay(events)
     validate(out)
-    const details = of(out, "agent.status").map((e) => e.data.detail).filter(Boolean)
+    const details = of(out, "agent.status")
+      .map((e) => e.data.detail)
+      .filter(Boolean)
     expect(details[0]).toBe("retrying (attempt 1): Model busy, retry later")
   })
 
@@ -283,7 +289,14 @@ describe("translator: synthetic edge cases", () => {
         type: "tool",
         tool: "write",
         callID: "call_w",
-        state: { status: "completed", input: { filePath: `${CWD}/a.txt`, content: "x\ny\n" }, output: "ok", title: "a.txt", metadata: { exists: false }, time: { start: 1, end: 2 } },
+        state: {
+          status: "completed",
+          input: { filePath: `${CWD}/a.txt`, content: "x\ny\n" },
+          output: "ok",
+          title: "a.txt",
+          metadata: { exists: false },
+          time: { start: 1, end: 2 },
+        },
       }),
       partEv({
         id: "prt_b",
@@ -333,22 +346,55 @@ describe("translator: synthetic edge cases", () => {
         type: "tool",
         tool: "task",
         callID: "call_task",
-        state: { status: "running", input: { description: "explore repo", prompt: "…", subagent_type: "explore" }, metadata: { sessionId: "ses_child" }, time: { start: 1 } },
+        state: {
+          status: "running",
+          input: { description: "explore repo", prompt: "…", subagent_type: "explore" },
+          metadata: { sessionId: "ses_child" },
+          time: { start: 1 },
+        },
       }),
       { type: "session.created", properties: { sessionID: "ses_child", info: { id: "ses_child", parentID: SID } } },
       {
         type: "message.part.updated",
         properties: {
           sessionID: "ses_child",
-          part: { id: "prt_c", sessionID: "ses_child", messageID: "msg_c", type: "tool", tool: "grep", callID: "call_c", state: { status: "running", input: { pattern: "TODO" }, time: { start: 1 } } },
+          part: {
+            id: "prt_c",
+            sessionID: "ses_child",
+            messageID: "msg_c",
+            type: "tool",
+            tool: "grep",
+            callID: "call_c",
+            state: { status: "running", input: { pattern: "TODO" }, time: { start: 1 } },
+          },
         },
       },
       {
         type: "message.part.updated",
-        properties: { sessionID: "ses_child", part: { id: "prt_ct", sessionID: "ses_child", messageID: "msg_c", type: "text", text: "child chatter", time: { start: 1, end: 2 } } },
+        properties: {
+          sessionID: "ses_child",
+          part: { id: "prt_ct", sessionID: "ses_child", messageID: "msg_c", type: "text", text: "child chatter", time: { start: 1, end: 2 } },
+        },
       },
-      { type: "permission.asked", properties: { id: "per_c", sessionID: "ses_child", permission: "bash", patterns: ["ls"], metadata: { command: "ls" }, always: ["ls *"] } },
-      { type: "message.part.updated", properties: { sessionID: "ses_other", part: { id: "prt_o", sessionID: "ses_other", messageID: "m", type: "tool", tool: "bash", callID: "call_o", state: { status: "running", input: { command: "x" }, time: { start: 1 } } } } },
+      {
+        type: "permission.asked",
+        properties: { id: "per_c", sessionID: "ses_child", permission: "bash", patterns: ["ls"], metadata: { command: "ls" }, always: ["ls *"] },
+      },
+      {
+        type: "message.part.updated",
+        properties: {
+          sessionID: "ses_other",
+          part: {
+            id: "prt_o",
+            sessionID: "ses_other",
+            messageID: "m",
+            type: "tool",
+            tool: "bash",
+            callID: "call_o",
+            state: { status: "running", input: { command: "x" }, time: { start: 1 } },
+          },
+        },
+      },
     ].flatMap((e) => t.handle(e))
     validate(out)
     const calls = of(out, "tool.call")
@@ -387,7 +433,10 @@ describe("translator: synthetic edge cases", () => {
     const t = mk()
     const out = [
       assistant,
-      { type: "message.updated", properties: { sessionID: SID, info: { id: "msg_a", role: "assistant", error: { name: "MessageAbortedError", data: { message: "aborted" } } } } },
+      {
+        type: "message.updated",
+        properties: { sessionID: SID, info: { id: "msg_a", role: "assistant", error: { name: "MessageAbortedError", data: { message: "aborted" } } } },
+      },
       { type: "session.error", properties: { sessionID: SID, error: { name: "MessageAbortedError", data: { message: "aborted" } } } },
       { type: "session.idle", properties: { sessionID: SID } },
     ].flatMap((e) => t.handle(e))
@@ -450,7 +499,8 @@ describe("mapping helpers", () => {
   })
 
   test("auth list parsing", () => {
-    const sample = "\u001b[0m\n┌  Credentials \u001b[90m~/.local/share/opencode/auth.json\n│\n●  Deep Infra \u001b[90mapi\n│\n●  Z.AI \u001b[90mapi\n│\n└  2 credentials\n"
+    const sample =
+      "\u001b[0m\n┌  Credentials \u001b[90m~/.local/share/opencode/auth.json\n│\n●  Deep Infra \u001b[90mapi\n│\n●  Z.AI \u001b[90mapi\n│\n└  2 credentials\n"
     expect(parseAuthList(sample)).toBe(2)
     expect(parseAuthList("┌  Credentials\n│\n└  0 credentials\n")).toBe(0)
     expect(parseAuthList("garbage")).toBeUndefined()

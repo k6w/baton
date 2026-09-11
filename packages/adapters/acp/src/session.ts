@@ -6,6 +6,8 @@
  * strict zod validation) so that agents emitting newer/unknown update variants don't break the
  * session, and so updates are processed strictly in wire order relative to responses.
  */
+
+import { resolve } from "node:path"
 import * as acp from "@agentclientprotocol/sdk"
 import type {
   AdapterContext,
@@ -21,7 +23,6 @@ import type {
   ToolStatus,
 } from "@batonsh/protocol"
 import { augmentedPath, deferred, newId, readLines } from "@batonsh/protocol"
-import { resolve } from "node:path"
 import { blockText, diffContent, mapKind, mapToolContent, rawSummary, toolName, toolTitle } from "./map.ts"
 import type { AcpPreset } from "./presets.ts"
 import { runAuthCheck } from "./presets.ts"
@@ -492,7 +493,11 @@ export class AcpSession implements AgentSession {
         const values = (opt.options as unknown[]).flatMap((o) =>
           o && typeof o === "object" && "options" in o ? (o as acp.SessionConfigSelectGroup).options : [o as acp.SessionConfigSelectOption],
         )
-        const match = pick(values, (v) => v.value, (v) => v.name)
+        const match = pick(
+          values,
+          (v) => v.value,
+          (v) => v.name,
+        )
         if (!match) {
           this.ctx.log("warn", `model ${model} not offered by ${this.opts.preset.displayName}; keeping ${opt.currentValue}`)
           return false
@@ -505,7 +510,11 @@ export class AcpSession implements AgentSession {
       }
       const legacy = this.legacyModels?.availableModels
       if (legacy?.length) {
-        const match = pick(legacy, (m) => m.modelId, (m) => m.name)
+        const match = pick(
+          legacy,
+          (m) => m.modelId,
+          (m) => m.name,
+        )
         if (!match) {
           this.ctx.log("warn", `model ${model} not offered by ${this.opts.preset.displayName}`)
           return false
@@ -623,7 +632,10 @@ export class AcpSession implements AgentSession {
   // ───────────────────────────── tool calls ─────────────────────────────
 
   private onToolCall(u: acp.ToolCall, raw: unknown): void {
-    if (this.tools.has(u.toolCallId)) return this.onToolUpdate(u, raw)
+    if (this.tools.has(u.toolCallId)) {
+      this.onToolUpdate(u, raw)
+      return
+    }
     this.flushAll()
     const kind = mapKind(u.kind)
     const st: ToolState = {
@@ -656,14 +668,23 @@ export class AcpSession implements AgentSession {
       raw,
     )
     const content = this.newContent(st, mapToolContent(u.content, this.terminalLookup(st.id)))
-    if (content.length > 0 || u.rawOutput !== undefined) this.emit("tool.update", { toolCallId: st.id, content: content.length ? content : undefined, rawOutput: u.rawOutput })
+    if (content.length > 0 || u.rawOutput !== undefined)
+      this.emit("tool.update", { toolCallId: st.id, content: content.length ? content : undefined, rawOutput: u.rawOutput })
   }
 
   private onToolUpdate(u: acp.ToolCallUpdate, raw: unknown): void {
     let st = this.tools.get(u.toolCallId)
     if (!st) {
       this.onToolCall(
-        { toolCallId: u.toolCallId, title: u.title ?? "", kind: u.kind ?? undefined, name: u.name, locations: u.locations ?? undefined, rawInput: u.rawInput, status: u.status ?? undefined },
+        {
+          toolCallId: u.toolCallId,
+          title: u.title ?? "",
+          kind: u.kind ?? undefined,
+          name: u.name,
+          locations: u.locations ?? undefined,
+          rawInput: u.rawInput,
+          status: u.status ?? undefined,
+        },
         raw,
       )
       st = this.tools.get(u.toolCallId) as ToolState
@@ -734,9 +755,7 @@ export class AcpSession implements AgentSession {
     const st = owner ? this.tools.get(owner) : undefined
     const snap = this.terminals.snapshot(terminalId)
     if (!st || !snap || this.closed) return
-    const content = this.newContent(st, [
-      { type: "terminal", terminalId, command: snap.command, output: snap.output, exitCode: snap.exit?.exitCode ?? null },
-    ])
+    const content = this.newContent(st, [{ type: "terminal", terminalId, command: snap.command, output: snap.output, exitCode: snap.exit?.exitCode ?? null }])
     if (content.length) this.emit("tool.update", { toolCallId: st.id, content })
   }
 
@@ -813,7 +832,10 @@ export class AcpSession implements AgentSession {
 
   /** The tool call a write belongs to: open call touching the path > open edit call > synthesized. */
   private editToolFor(abs: string): ToolState {
-    const recent = [...this.toolOrder].reverse().map((id) => this.tools.get(id)).filter((t): t is ToolState => !!t)
+    const recent = [...this.toolOrder]
+      .reverse()
+      .map((id) => this.tools.get(id))
+      .filter((t): t is ToolState => !!t)
     const open = recent.filter((t) => t.status === "pending" || t.status === "in_progress")
     const touches = (t: ToolState) => t.locations.some((l) => samePath(this.fs.root, l.path, abs))
     const found =

@@ -3,24 +3,15 @@
  * OPENCODE_SERVER_PASSWORD), driven over REST with `@opencode-ai/sdk` and translated from the
  * SSE `/event` stream into BEP.
  */
-import type {
-  AdapterCapabilities,
-  AdapterContext,
-  AgentAdapter,
-  AgentEvent,
-  AgentSession,
-  DetectResult,
-  PromptInput,
-  SessionConfig,
-} from "@batonsh/protocol"
+import type { AdapterCapabilities, AdapterContext, AgentAdapter, AgentEvent, AgentSession, DetectResult, PromptInput, SessionConfig } from "@batonsh/protocol"
 import { augmentedPath, deferred, defineAdapter, parseVersion, readLines, runCapture, which } from "@batonsh/protocol"
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2"
 import { buildConfig, splitModel } from "./config.ts"
 import { type OcEvent, OpencodeTranslator, replyFor } from "./translate.ts"
 
 export { buildConfig, permissionFor, splitModel } from "./config.ts"
-export { OpencodeTranslator, PERMISSION_OPTIONS, replyFor, stopReasonFor } from "./translate.ts"
 export type { OcEvent } from "./translate.ts"
+export { OpencodeTranslator, PERMISSION_OPTIONS, replyFor, stopReasonFor } from "./translate.ts"
 
 const READY_TIMEOUT_MS = 30_000
 const INTERRUPT_GRACE_MS = 5_000

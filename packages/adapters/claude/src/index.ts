@@ -5,14 +5,22 @@
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
-import { type CanUseTool, type HookCallback, type PermissionResult, type PermissionUpdate, query, type Query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk"
+import {
+  type CanUseTool,
+  type HookCallback,
+  type PermissionResult,
+  type PermissionUpdate,
+  type Query,
+  query,
+  type SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk"
 import type { AgentAdapter, AgentEvent, AgentSession, DetectResult, PermissionOptionKind, PromptInput, SessionConfig } from "@batonsh/protocol"
-import { AsyncQueue, DEFAULT_PERMISSION_OPTIONS, defineAdapter, deferred, newId, parseVersion, runCapture } from "@batonsh/protocol"
+import { AsyncQueue, DEFAULT_PERMISSION_OPTIONS, deferred, defineAdapter, newId, parseVersion, runCapture } from "@batonsh/protocol"
 import { baseOptions, buildEnv, resolveBinary } from "./options.ts"
 import { ClaudeTranslator } from "./translator.ts"
 
-export { ClaudeTranslator } from "./translator.ts"
 export { baseOptions, buildEnv, permissionModeFor } from "./options.ts"
+export { ClaudeTranslator } from "./translator.ts"
 
 const PROTOCOLS = ["agent-sdk", "stream-json"]
 const DENY_MESSAGE = "Denied by user via baton"
@@ -32,7 +40,14 @@ async function detect(opts?: { command?: string }): Promise<DetectResult> {
 
   // Heuristic credential presence (never reads secrets).
   let hasCreds = false
-  for (const k of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"])
+  for (const k of [
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+  ])
     if (process.env[k]) hasCreds = true
   const configDir = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude")
   if (!hasCreds && existsSync(join(configDir, ".credentials.json"))) hasCreds = true
@@ -121,7 +136,9 @@ async function start(cfg: SessionConfig, ctx: AdapterContextLike): Promise<Agent
     pendingPerms.set(requestId, d)
     const onAbort = () => d.resolve(null)
     opts.signal.addEventListener("abort", onAbort, { once: true })
-    emit(tr.permissionRequested(requestId, toolName, toolInput, opts.toolUseID, DEFAULT_PERMISSION_OPTIONS, opts.title ?? opts.description ?? opts.decisionReason))
+    emit(
+      tr.permissionRequested(requestId, toolName, toolInput, opts.toolUseID, DEFAULT_PERMISSION_OPTIONS, opts.title ?? opts.description ?? opts.decisionReason),
+    )
     const optionId = await d.promise
     opts.signal.removeEventListener("abort", onAbort)
     pendingPerms.delete(requestId)
@@ -272,7 +289,10 @@ async function start(cfg: SessionConfig, ctx: AdapterContextLike): Promise<Agent
       for (const d of pendingPerms.values()) d.resolve(null)
       // Graceful: end the input stream and let the CLI finish; abort only if it lingers.
       input.close()
-      const done = await withTimeout(loop.then(() => true), CLOSE_TIMEOUT_MS)
+      const done = await withTimeout(
+        loop.then(() => true),
+        CLOSE_TIMEOUT_MS,
+      )
       if (!done) {
         abort.abort()
         q.close()

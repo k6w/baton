@@ -14,9 +14,26 @@ export const SPINNERS: Record<string, { frames: string[]; interval: number }> = 
 }
 
 export const DEFAULT_VERBS = [
-  "Orchestrating", "Spelunking", "Wrangling", "Schlepping", "Pondering", "Conjuring", "Noodling",
-  "Percolating", "Tinkering", "Finagling", "Cogitating", "Brewing", "Untangling", "Sleuthing",
-  "Whittling", "Marinating", "Herding", "Juggling", "Forging", "Calibrating",
+  "Orchestrating",
+  "Spelunking",
+  "Wrangling",
+  "Schlepping",
+  "Pondering",
+  "Conjuring",
+  "Noodling",
+  "Percolating",
+  "Tinkering",
+  "Finagling",
+  "Cogitating",
+  "Brewing",
+  "Untangling",
+  "Sleuthing",
+  "Whittling",
+  "Marinating",
+  "Herding",
+  "Juggling",
+  "Forging",
+  "Calibrating",
 ]
 
 export type BorderName = "rounded" | "single" | "heavy" | "double" | "ascii" | "none"

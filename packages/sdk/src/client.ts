@@ -8,16 +8,9 @@
  */
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
+import { findProjectRoot, projectPaths, RunState } from "@batonsh/kernel"
+import { type BatonEvent, CONTROL_PROTOCOL_VERSION, type ControlMethod, type ControlParams, type ControlResult, JsonRpcPeer } from "@batonsh/protocol"
 import type { Socket } from "bun"
-import {
-  type BatonEvent,
-  CONTROL_PROTOCOL_VERSION,
-  type ControlMethod,
-  type ControlParams,
-  type ControlResult,
-  JsonRpcPeer,
-} from "@batonsh/protocol"
-import { RunState, findProjectRoot, projectPaths } from "@batonsh/kernel"
 
 export interface ConnectOptions {
   /** Directory inside the project (default: process.cwd()). */
@@ -225,10 +218,13 @@ export class LiveRun {
     this.state.projectName = snap.projectName
     this.state.branch = snap.branch
     // Replay the whole run so per-agent feeds are complete, then follow live.
-    this.unsub = await this.client.subscribe((e) => {
-      this.state.apply(e)
-      for (const l of this.listeners) l(e)
-    }, { fromSeq: 0 })
+    this.unsub = await this.client.subscribe(
+      (e) => {
+        this.state.apply(e)
+        for (const l of this.listeners) l(e)
+      },
+      { fromSeq: 0 },
+    )
     this.state.projectName = snap.projectName
     this.state.branch = snap.branch
   }

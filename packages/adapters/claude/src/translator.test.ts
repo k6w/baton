@@ -12,7 +12,9 @@ function replay(name: string) {
   let n = 0
   const tr = new ClaudeTranslator({ cwd: "/work", id: (p) => `${p}_${++n}` })
   const events: AgentEvent[] = []
-  const lines = readFileSync(join(import.meta.dir, "fixtures", name), "utf8").trim().split("\n")
+  const lines = readFileSync(join(import.meta.dir, "fixtures", name), "utf8")
+    .trim()
+    .split("\n")
   for (const line of lines) {
     const m = JSON.parse(line) as Record<string, unknown> & { type: string }
     if (m._baton === "prompt") events.push(...tr.userPrompt(String(m.uuid), String(m.text)))
@@ -130,7 +132,10 @@ describe("fixture: tools.synthetic.jsonl", () => {
   })
 
   test("Edit diff uses structuredPatch with real line numbers", () => {
-    const diff = r.update("toolu_edit1").flatMap((u) => u.data.content ?? []).find((c) => c.type === "diff")
+    const diff = r
+      .update("toolu_edit1")
+      .flatMap((u) => u.data.content ?? [])
+      .find((c) => c.type === "diff")
     expect(diff).toMatchObject({ type: "diff", path: "/work/notes.txt", added: 1, removed: 1 })
     if (diff?.type !== "diff") throw new Error("no diff")
     expect(diff.lines?.filter((l) => l.kind !== "ctx")).toEqual([
@@ -141,7 +146,10 @@ describe("fixture: tools.synthetic.jsonl", () => {
   })
 
   test("Write of a new file diffs against empty", () => {
-    const diff = r.update("toolu_write1").flatMap((u) => u.data.content ?? []).find((c) => c.type === "diff")
+    const diff = r
+      .update("toolu_write1")
+      .flatMap((u) => u.data.content ?? [])
+      .find((c) => c.type === "diff")
     if (diff?.type !== "diff") throw new Error("no diff")
     expect(diff.oldText).toBeNull()
     expect(diff.added).toBe(2)
@@ -226,7 +234,14 @@ describe("turn queueing", () => {
     ev.push(...tr.userPrompt("a", "first"))
     ev.push(...tr.userPrompt("b", "also do X"))
     // the CLI reports the fold on an assistant frame
-    ev.push(...tr.handle({ type: "assistant", message: { id: "m1", content: [{ type: "text", text: "ok" }] }, parent_tool_use_id: null, user_message_uuids: ["a", "b"] }))
+    ev.push(
+      ...tr.handle({
+        type: "assistant",
+        message: { id: "m1", content: [{ type: "text", text: "ok" }] },
+        parent_tool_use_id: null,
+        user_message_uuids: ["a", "b"],
+      }),
+    )
     ev.push(...tr.handle(result(["a", "b"])))
     expect(ev.filter((e) => e.type === "turn.started")).toHaveLength(1)
     expect(tr.busy).toBe(false)

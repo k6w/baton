@@ -2,7 +2,7 @@
 import { createMemo } from "solid-js"
 import { whoFn } from "../agent-style.ts"
 import { useUi } from "../context.ts"
-import { type Line, busLine } from "../lines.ts"
+import { busLine, type Line } from "../lines.ts"
 import { Frame, innerSize } from "../ui/Frame.tsx"
 import { toStyled } from "../ui/styled.ts"
 

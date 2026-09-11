@@ -24,9 +24,7 @@ const SCENARIOS: Record<string, Scenario> = {
   "edit-with-approval": {
     files: { "notes.txt": "teh quick brown fox\n" },
     approval: "ask",
-    prompts: [
-      "Run `wc -l notes.txt` once, then fix the typo in notes.txt (teh -> the) by editing the file. Reply with one short sentence.",
-    ],
+    prompts: ["Run `wc -l notes.txt` once, then fix the typo in notes.txt (teh -> the) by editing the file. Reply with one short sentence."],
   },
   // apply_patch edits (update + add) behind a fileChange approval.
   "apply-patch": {

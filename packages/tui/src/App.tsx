@@ -1,16 +1,17 @@
 /** Root component: layouts, global keys, command dispatch. */
-import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
-import { Match, Show, Switch, createMemo, onCleanup } from "solid-js"
+
 import { join } from "node:path"
 import { configDir, projectBatonDir } from "@batonsh/kernel"
 import { listThemes, loadTheme } from "@batonsh/themes"
-import { useUi } from "./context.ts"
-import { LOCAL_COMMANDS, completions } from "./completion.ts"
-import { type Cell, Grid, computeGrid } from "./components/Grid.tsx"
+import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
+import { createMemo, Match, onCleanup, Show, Switch } from "solid-js"
+import { completions, LOCAL_COMMANDS } from "./completion.ts"
+import { type Cell, computeGrid, Grid } from "./components/Grid.tsx"
 import { Orchestrator } from "./components/Orchestrator.tsx"
 import { ApprovalsInbox, CommandPalette, HelpOverlay, type PaletteItem, ThemePicker, Toasts } from "./components/Overlays.tsx"
 import { StatusBar } from "./components/StatusBar.tsx"
 import { ZoomView } from "./components/ZoomView.tsx"
+import { useUi } from "./context.ts"
 import type { KeyContext } from "./keymap.ts"
 import type { Prefs } from "./state.ts"
 import { buildSystemTheme } from "./system-theme.ts"
@@ -24,7 +25,10 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
   const renderer = useRenderer()
   const dims = useTerminalDimensions()
 
-  const themeDirs = () => ({ global: join(configDir(), "themes"), project: ui.run.projectRoot ? join(projectBatonDir(ui.run.projectRoot), "themes") : undefined })
+  const themeDirs = () => ({
+    global: join(configDir(), "themes"),
+    project: ui.run.projectRoot ? join(projectBatonDir(ui.run.projectRoot), "themes") : undefined,
+  })
 
   const applyTheme = async (name: string) => {
     if (name === "system") {
@@ -42,7 +46,13 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       ui.toast(`unknown theme "${name}"`, "error")
       return
     }
-    ui.setTheme(loadTheme(name, { appearance: ui.prefs.appearance, terminalBg: renderer.themeMode === "light" ? "#ffffff" : renderer.themeMode === "dark" ? "#000000" : undefined, dirs: themeDirs() }))
+    ui.setTheme(
+      loadTheme(name, {
+        appearance: ui.prefs.appearance,
+        terminalBg: renderer.themeMode === "light" ? "#ffffff" : renderer.themeMode === "dark" ? "#000000" : undefined,
+        dirs: themeDirs(),
+      }),
+    )
   }
 
   // initial theme (system / auto appearance need the renderer)
@@ -111,7 +121,11 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
   })
 
   const gridCols = () =>
-    computeGrid(cells().length, frame().grid.w, frame().grid.h, { minW: ui.config.ui.min_card_width, minH: ui.config.ui.min_card_height, maxCols: ui.config.ui.max_columns }).cols
+    computeGrid(cells().length, frame().grid.w, frame().grid.h, {
+      minW: ui.config.ui.min_card_width,
+      minH: ui.config.ui.min_card_height,
+      maxCols: ui.config.ui.max_columns,
+    }).cols
 
   const zoomTarget = createMemo(() => {
     const z = ui.zoomed()
@@ -131,13 +145,19 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
     if (!agents.length) return
     const i = ((idx % agents.length) + agents.length) % agents.length
     ui.setFocus({ kind: "agent", agentId: agents[i]!.agentId })
-    const perPage = computeGrid(cells().length, frame().grid.w, frame().grid.h, { minW: ui.config.ui.min_card_width, minH: ui.config.ui.min_card_height, maxCols: ui.config.ui.max_columns }).perPage
+    const perPage = computeGrid(cells().length, frame().grid.w, frame().grid.h, {
+      minW: ui.config.ui.min_card_width,
+      minH: ui.config.ui.min_card_height,
+      maxCols: ui.config.ui.max_columns,
+    }).perPage
     if (perPage > 0) ui.setPage(Math.floor(i / perPage))
   }
   const focusedIndex = () => {
     const f = ui.focus()
     if (f.kind !== "agent") return -1
-    return cells().filter((c) => c.kind === "agent").findIndex((c) => c.kind === "agent" && c.agentId === f.agentId)
+    return cells()
+      .filter((c) => c.kind === "agent")
+      .findIndex((c) => c.kind === "agent" && c.agentId === f.agentId)
   }
   const focusedAgent = () => {
     const f = ui.focus()
@@ -378,19 +398,30 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
   const paletteItems = (): PaletteItem[] => {
     const items: PaletteItem[] = []
     for (const c of ui.keymap.commands) if (!c.hidden) items.push({ id: c.id, label: c.title, keys: c.keys[0], run: () => run(c.id) })
-    for (const t of listThemes(themeDirs())) items.push({ id: `theme:${t.name}`, label: `Theme: ${t.name}`, detail: t.source === "builtin" ? "" : t.source, run: () => {
-      setPref("theme", t.name)
-      void applyTheme(t.name)
-    } })
-    items.push({ id: "theme:system", label: "Theme: system (terminal colors)", run: () => {
-      setPref("theme", "system")
-      void applyTheme("system")
-    } })
+    for (const t of listThemes(themeDirs()))
+      items.push({
+        id: `theme:${t.name}`,
+        label: `Theme: ${t.name}`,
+        detail: t.source === "builtin" ? "" : t.source,
+        run: () => {
+          setPref("theme", t.name)
+          void applyTheme(t.name)
+        },
+      })
+    items.push({
+      id: "theme:system",
+      label: "Theme: system (terminal colors)",
+      run: () => {
+        setPref("theme", "system")
+        void applyTheme("system")
+      },
+    })
     for (const l of LAYOUTS) items.push({ id: `layout:${l}`, label: `Layout: ${l}`, run: () => setPref("layout", l) })
     for (const m of ICON_MODES) items.push({ id: `icons:${m}`, label: `Icons: ${m}`, run: () => setPref("icons", m) })
     for (const b of BORDERS) items.push({ id: `border:${b}`, label: `Border: ${b}`, run: () => setPref("border", b) })
     const adapters = ["claude", "codex", "opencode", "gemini", "cursor", "copilot", ...Object.keys(ui.config.agents)]
-    for (const a of [...new Set(adapters)]) items.push({ id: `spawn:${a}`, label: `Spawn: ${a}`, detail: "start a new agent", run: () => submit(`/spawn ${a}`) })
+    for (const a of [...new Set(adapters)])
+      items.push({ id: `spawn:${a}`, label: `Spawn: ${a}`, detail: "start a new agent", run: () => submit(`/spawn ${a}`) })
     for (const a of ui.run.workers()) {
       items.push({ id: `zoom:${a.agentId}`, label: `Zoom: ${a.name}`, detail: a.label, run: () => ui.setZoomed(a.agentId) })
       items.push({ id: `msg:${a.agentId}`, label: `Message: ${a.name}`, run: () => prefill(`@${a.name} `) })

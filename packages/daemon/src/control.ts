@@ -3,7 +3,6 @@
  * CLI, SDK) speaks this; there are no private back doors.
  */
 import { existsSync, unlinkSync } from "node:fs"
-import type { Socket } from "bun"
 import {
   CONTROL_PROTOCOL_VERSION,
   type ControlMethod,
@@ -14,6 +13,7 @@ import {
   matchesType,
   newId,
 } from "@batonsh/protocol"
+import type { Socket } from "bun"
 import { handleInput } from "./input.ts"
 import type { Runtime } from "./runtime.ts"
 

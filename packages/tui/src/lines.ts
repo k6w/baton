@@ -5,9 +5,10 @@
  *   claude  ● Read(LoginButton.tsx)        codex  • Ran git diff --stat
  *           ⎿  Read 314 lines                     └ 1 file +1 -1
  */
-import type { AgentView } from "@batonsh/protocol"
+
 import type { FeedItem } from "@batonsh/kernel"
 import { formatClock, formatDuration, formatTokens } from "@batonsh/kernel"
+import type { AgentView } from "@batonsh/protocol"
 import type { ResolvedTheme } from "@batonsh/themes"
 
 export interface Seg {
@@ -232,16 +233,28 @@ export function renderItem(it: FeedItem, ctx: RenderCtx, out: Line[]): void {
       }
       const prefix = claude ? "> " : "› "
       const lines = wrap(it.text.replace(/^\[baton\]\s*/, ""), w - 2)
-      lines.slice(0, ctx.compact ? 2 : 12).forEach((l, i) =>
-        out.push({ segs: [{ text: i === 0 ? prefix : "  ", fg: t.textMuted }, { text: l, fg: t.text, bold: true }] }),
-      )
+      lines.slice(0, ctx.compact ? 2 : 12).forEach((l, i) => {
+        out.push({
+          segs: [
+            { text: i === 0 ? prefix : "  ", fg: t.textMuted },
+            { text: l, fg: t.text, bold: true },
+          ],
+        })
+      })
       return
     }
     case "message": {
       if (it.role === "thought") {
         if (!ctx.showThoughts) return
         const lines = wrap(it.text, w - 2)
-        lines.slice(-6).forEach((l, i) => out.push({ segs: [{ text: i === 0 ? "✻ " : "  ", fg: t.thought }, { text: l, fg: t.thought, italic: true }] }))
+        lines.slice(-6).forEach((l, i) => {
+          out.push({
+            segs: [
+              { text: i === 0 ? "✻ " : "  ", fg: t.thought },
+              { text: l, fg: t.thought, italic: true },
+            ],
+          })
+        })
         return
       }
       const text = it.text.trim()
@@ -249,15 +262,15 @@ export function renderItem(it: FeedItem, ctx: RenderCtx, out: Line[]): void {
       const lines = wrap(text, w - 2)
       const cut = ctx.compact && lines.length > 4
       const shown = cut ? lines.slice(-4) : lines
-      shown.forEach((l, i) =>
+      shown.forEach((l, i) => {
         out.push({
           segs: [
             { text: i === 0 ? (claude ? "● " : "• ") : "  ", fg: claude ? t.text : t.textMuted },
             ...(i === 0 && cut ? [{ text: "… ", fg: t.textMuted }] : []),
             { text: l, fg: t.text },
           ],
-        }),
-      )
+        })
+      })
       return
     }
     case "tool":
@@ -283,18 +296,40 @@ export function renderItem(it: FeedItem, ctx: RenderCtx, out: Line[]): void {
       if (it.resolved?.endsWith("(policy)")) return
       if (it.resolved) {
         const ok = it.resolved.startsWith("allow")
-        out.push({ segs: [{ text: ok ? "✓ " : "✗ ", fg: ok ? t.success : t.error }, { text: clip(`${it.title} — ${it.resolved}`, w - 2), fg: t.textMuted }] })
+        out.push({
+          segs: [
+            { text: ok ? "✓ " : "✗ ", fg: ok ? t.success : t.error },
+            { text: clip(`${it.title} — ${it.resolved}`, w - 2), fg: t.textMuted },
+          ],
+        })
       } else {
-        out.push({ segs: [{ text: "? ", fg: t.warning, bold: true }, { text: clip(it.title, w - 12), fg: t.warning, bold: true }, { text: " — allow?", fg: t.warning }] })
+        out.push({
+          segs: [
+            { text: "? ", fg: t.warning, bold: true },
+            { text: clip(it.title, w - 12), fg: t.warning, bold: true },
+            { text: " — allow?", fg: t.warning },
+          ],
+        })
         out.push({ segs: [{ text: "  ctrl+a to review · /approve · /deny", fg: t.textMuted }] })
       }
       return
     }
     case "error":
-      for (const l of wrap(it.text, w - 2).slice(0, 4)) out.push({ segs: [{ text: "✗ ", fg: t.error }, { text: l, fg: t.error }] })
+      for (const l of wrap(it.text, w - 2).slice(0, 4))
+        out.push({
+          segs: [
+            { text: "✗ ", fg: t.error },
+            { text: l, fg: t.error },
+          ],
+        })
       return
     case "note":
-      out.push({ segs: [{ text: "· ", fg: t.textMuted }, { text: clip(it.text, w - 2), fg: t.textMuted, italic: true }] })
+      out.push({
+        segs: [
+          { text: "· ", fg: t.textMuted },
+          { text: clip(it.text, w - 2), fg: t.textMuted, italic: true },
+        ],
+      })
       return
   }
 }
@@ -333,14 +368,37 @@ function renderTool(it: Extract<FeedItem, { kind: "tool" }>, ctx: RenderCtx, out
     { text: indent + dot, fg: it.status === "pending" || it.status === "in_progress" ? t.textMuted : dotColor },
     { text: name, fg: t.toolName, bold: true },
   ]
-  if (args) head.push(claude && !baton ? { text: `(${args})`, fg: t.toolArgs } : claude ? { text: `(${args})`, fg: t.toolArgs } : { text: ` ${args}`, fg: t.toolArgs })
+  if (args)
+    head.push(claude && !baton ? { text: `(${args})`, fg: t.toolArgs } : claude ? { text: `(${args})`, fg: t.toolArgs } : { text: ` ${args}`, fg: t.toolArgs })
   out.push(clipLine({ segs: head }, w))
 
   const branch = claude ? "⎿  " : "└ "
-  const sub = (text: string, fg = t.textMuted) => out.push(clipLine({ segs: [{ text: `${indent}  ${branch}`, fg: t.textSubtle }, { text, fg }] }, w))
+  const sub = (text: string, fg = t.textMuted) =>
+    out.push(
+      clipLine(
+        {
+          segs: [
+            { text: `${indent}  ${branch}`, fg: t.textSubtle },
+            { text, fg },
+          ],
+        },
+        w,
+      ),
+    )
 
   if (baton) {
-    for (const e of baton.extra.slice(0, ctx.compact ? 3 : 10)) out.push(clipLine({ segs: [{ text: `${indent}  → `, fg: t.textMuted }, { text: e, fg: t.text }] }, w))
+    for (const e of baton.extra.slice(0, ctx.compact ? 3 : 10))
+      out.push(
+        clipLine(
+          {
+            segs: [
+              { text: `${indent}  → `, fg: t.textMuted },
+              { text: e, fg: t.text },
+            ],
+          },
+          w,
+        ),
+      )
     if (it.status === "failed" && it.output) sub(it.output.split("\n")[0] ?? "", t.error)
     return
   }
@@ -356,7 +414,18 @@ function renderTool(it: Extract<FeedItem, { kind: "tool" }>, ctx: RenderCtx, out
       const sign = l.kind === "add" ? "+" : l.kind === "del" ? "-" : " "
       const bg = l.kind === "add" ? t.diffAddedBg : l.kind === "del" ? t.diffRemovedBg : undefined
       const fg = l.kind === "add" ? t.diffAdded : l.kind === "del" ? t.diffRemoved : t.diffContext
-      out.push(clipLine({ segs: [{ text: `${ln} ${sign} `, fg: l.kind === "ctx" ? t.diffLineNumber : fg, bg }, { text: l.text, fg, bg }], bg }, w))
+      out.push(
+        clipLine(
+          {
+            segs: [
+              { text: `${ln} ${sign} `, fg: l.kind === "ctx" ? t.diffLineNumber : fg, bg },
+              { text: l.text, fg, bg },
+            ],
+            bg,
+          },
+          w,
+        ),
+      )
       diffShown++
     }
   }
@@ -402,12 +471,42 @@ export function statusLine(
       ],
     }
   }
-  if (agent.status === "awaiting_approval") return { segs: [{ text: "◆ ", fg: t.stateWaiting }, { text: "Waiting for approval", fg: t.stateWaiting, bold: true }, { text: " · ctrl+a", fg: t.textMuted }] }
-  if (agent.status === "starting") return { segs: [{ text: `${ctx.frame} `, fg: t.textMuted }, { text: "starting…", fg: t.textMuted }] }
-  if (agent.status === "error") return { segs: [{ text: "✗ ", fg: t.stateError }, { text: agent.statusDetail ?? "error", fg: t.stateError }] }
-  if (agent.status === "exited") return { segs: [{ text: "■ ", fg: t.textSubtle }, { text: `exited${agent.statusDetail ? ` · ${agent.statusDetail}` : ""}`, fg: t.textSubtle }] }
+  if (agent.status === "awaiting_approval")
+    return {
+      segs: [
+        { text: "◆ ", fg: t.stateWaiting },
+        { text: "Waiting for approval", fg: t.stateWaiting, bold: true },
+        { text: " · ctrl+a", fg: t.textMuted },
+      ],
+    }
+  if (agent.status === "starting")
+    return {
+      segs: [
+        { text: `${ctx.frame} `, fg: t.textMuted },
+        { text: "starting…", fg: t.textMuted },
+      ],
+    }
+  if (agent.status === "error")
+    return {
+      segs: [
+        { text: "✗ ", fg: t.stateError },
+        { text: agent.statusDetail ?? "error", fg: t.stateError },
+      ],
+    }
+  if (agent.status === "exited")
+    return {
+      segs: [
+        { text: "■ ", fg: t.textSubtle },
+        { text: `exited${agent.statusDetail ? ` · ${agent.statusDetail}` : ""}`, fg: t.textSubtle },
+      ],
+    }
   const extra = tokens > 0 ? ` · ↓ ${formatTokens(tokens)}` : ""
-  return { segs: [{ text: "◌ ", fg: t.stateIdle }, { text: `idle · ready${extra}`, fg: t.textMuted }] }
+  return {
+    segs: [
+      { text: "◌ ", fg: t.stateIdle },
+      { text: `idle · ready${extra}`, fg: t.textMuted },
+    ],
+  }
 }
 
 const ADAPTER_TITLES: Record<string, string> = {
@@ -422,7 +521,14 @@ const ADAPTER_TITLES: Record<string, string> = {
 
 export function identityLines(agent: AgentView, ctx: { theme: ResolvedTheme; glyph: string; fields: readonly string[]; home: string; title?: string }): Line[] {
   const t = ctx.theme
-  const out: Line[] = [{ segs: [{ text: `${ctx.glyph} `, fg: t.textMuted }, { text: ctx.title ?? ADAPTER_TITLES[agent.adapter] ?? agent.adapter, fg: t.text, bold: true }] }]
+  const out: Line[] = [
+    {
+      segs: [
+        { text: `${ctx.glyph} `, fg: t.textMuted },
+        { text: ctx.title ?? ADAPTER_TITLES[agent.adapter] ?? agent.adapter, fg: t.text, bold: true },
+      ],
+    },
+  ]
   const dir = agent.cwd.startsWith(ctx.home) ? `~${agent.cwd.slice(ctx.home.length)}` : agent.cwd
   const values: Record<string, string | undefined> = {
     adapter: undefined,
@@ -435,7 +541,13 @@ export function identityLines(agent: AgentView, ctx: { theme: ResolvedTheme; gly
   }
   for (const f of ctx.fields) {
     const v = values[f]
-    if (v) out.push({ segs: [{ text: `${f}: `, fg: t.textMuted }, { text: v, fg: t.textMuted }] })
+    if (v)
+      out.push({
+        segs: [
+          { text: `${f}: `, fg: t.textMuted },
+          { text: v, fg: t.textMuted },
+        ],
+      })
   }
   return out
 }

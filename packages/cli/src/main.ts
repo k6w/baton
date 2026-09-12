@@ -11,12 +11,13 @@
  *   baton ps | stop        daemon status / stop the daemon (and all agents)
  *   baton config …         get <key> | explain <key> | path | schema
  *   baton theme …          list | set <name>
+ *   baton trust            allow this project's plugins to run (--revoke to undo)
  *   baton daemon           run the daemon in the foreground (normally started automatically)
  */
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { runDaemonProcess, socketPathFor, startDaemon } from "@batonsh/daemon"
+import { isTrusted, projectPluginSpecs, runDaemonProcess, socketPathFor, startDaemon, trustProject } from "@batonsh/daemon"
 import { BatonConfig, configDir, configJsonSchema, findProjectRoot, getPath, loadConfig, projectPaths } from "@batonsh/kernel"
 import { BatonClient, connect, discoverSocket } from "@batonsh/sdk"
 import { listThemes, loadTheme } from "@batonsh/themes"
@@ -286,6 +287,22 @@ async function cmdTheme(args: Args) {
   } else throw new Error(`unknown: baton theme ${sub}`)
 }
 
+async function cmdTrust(args: Args) {
+  const root = findProjectRoot(process.cwd())
+  const loaded = loadConfig({ projectRoot: root })
+  const specs = projectPluginSpecs(loaded.layers)
+  if (args.flags.revoke) {
+    trustProject(root, specs, true)
+    return console.log(`revoked trust for ${root}`)
+  }
+  if (specs.length === 0) return console.log(c.dim("this project declares no plugins — nothing to trust"))
+  console.log(`${c.bold("Project plugins")} ${c.dim(root)}`)
+  for (const s of specs) console.log(`  ${c.yellow("•")} ${s}`)
+  if (isTrusted(root, specs)) return console.log(c.green("already trusted"))
+  trustProject(root, specs)
+  console.log(c.green("trusted — they load the next time the daemon starts (baton stop && baton)"))
+}
+
 function help() {
   const src = readFileSync(new URL(import.meta.url), "utf8")
   const block = /\/\*\*([\s\S]*?)\*\//.exec(src)?.[1] ?? ""
@@ -323,6 +340,8 @@ async function main() {
       return cmdConfig(sub)
     case "theme":
       return cmdTheme(sub)
+    case "trust":
+      return cmdTrust(sub)
     case "attach":
       return cmdStart(sub)
     case "help":

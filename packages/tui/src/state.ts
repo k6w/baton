@@ -219,7 +219,7 @@ export function notableEvent(e: BatonEvent, run: RunState): { text: string; leve
     case "error":
       return e.data.fatal ? { text: `${name}: ${e.data.message}`, level: "error" } : undefined
     case "log":
-      return e.data.level === "warn" && e.data.message.startsWith("config ") ? { text: e.data.message, level: "warn" } : undefined
+      return e.data.level === "warn" && /^(config|plugin)\b/.test(e.data.message) ? { text: e.data.message, level: "warn" } : undefined
     case "agent.exited":
       return e.data.reason && e.data.reason !== "closed" && e.data.reason !== "killed" ? { text: `${name} exited: ${e.data.reason}`, level: "warn" } : undefined
     default:

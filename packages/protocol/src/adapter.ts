@@ -122,3 +122,13 @@ export const DEFAULT_PERMISSION_OPTIONS: { optionId: string; name: string; kind:
   { optionId: "reject_once", name: "Deny", kind: "reject_once" },
   { optionId: "reject_always", name: "Always deny", kind: "reject_always" },
 ]
+
+export interface BatonPlugin {
+  name?: string
+  adapters?: AgentAdapter[]
+}
+
+/** Helper for plugin modules: `export default definePlugin({ name, adapters: [...] })`. */
+export function definePlugin<T extends BatonPlugin>(p: T): T {
+  return p
+}

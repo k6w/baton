@@ -1,0 +1,30 @@
+{
+  "$schema": "https://baton.sh/theme.schema.json",
+  "defs": {
+    "void": "#0b0d14",
+    "panel": "#11141f",
+    "ink": "#e7e9ff",
+    "dim": "#7a80a8",
+    "pink": "#ff4fd8",
+    "cyan": "#29f0ff",
+    "lime": "#a6ff4d"
+  },
+  "theme": {
+    "background": "void",
+    "backgroundPanel": "panel",
+    "text": "ink",
+    "textMuted": "dim",
+    "primary": "pink",
+    "accent": "cyan",
+    "success": "lime",
+    "border": "#2a2f4a",
+    "borderActive": "cyan",
+    "spinner": "pink",
+    "busFrom": "cyan",
+    "busTo": "pink",
+    "agentClaude": "pink",
+    "agentCodex": "cyan",
+    "diffAddedBg": "#123a1e",
+    "diffRemovedBg": "#3a1230"
+  }
+}

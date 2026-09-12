@@ -133,6 +133,12 @@ export const BatonConfig = z.object({
   ui: UiConfig.default(UiConfig.parse({})),
   agent_style: z.record(z.string(), AgentStyle).default({}),
   keys: z.record(z.string(), z.union([z.string(), z.array(z.string())])).default({}),
+  /**
+   * Plugin modules (paths relative to the config file that lists them, or package names).
+   * A plugin default-exports an adapter, an array of adapters, or `definePlugin({ adapters })`.
+   * Project-level plugins only load after `baton trust` (they run code from the repo).
+   */
+  plugins: z.array(z.string()).default([]),
   daemon: z
     .object({
       /** Keep the daemon alive after the last client detaches. */

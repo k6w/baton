@@ -78,8 +78,9 @@ async function handleCommand(rt: Runtime, text: string): Promise<InputResult> {
   }
   switch (cmd) {
     case "spawn": {
-      const adapter = args[0]
-      if (!adapter) throw new Error(DAEMON_COMMANDS.spawn)
+      // `/spawn` alone (or `/spawn 3 label`) uses the configured default worker
+      const adapter = !args[0] || /^\d+$/.test(args[0]) ? rt.config.defaults.worker : args[0]
+      if (!args[0] || /^\d+$/.test(args[0])) args.unshift(adapter)
       let count = 1
       let labelParts = args.slice(1)
       if (args[1] && /^\d+$/.test(args[1])) {

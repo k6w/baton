@@ -10,6 +10,7 @@ import { type BatonConfig, loadConfig, projectPaths } from "@batonsh/kernel"
 import { type ControlServer, startControlServer } from "./control.ts"
 import { attachDemoDirector } from "./demo.ts"
 import { type McpHttpServer, startMcpServer } from "./mcp.ts"
+import { loadPlugins } from "./plugins.ts"
 import { Runtime } from "./runtime.ts"
 
 export interface DaemonOptions {
@@ -57,6 +58,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   const runtime = new Runtime({ projectRoot: opts.projectRoot, config, storePath: opts.ephemeral ? ":memory:" : paths.state })
   for (const err of loaded.errors) runtime.emit({ type: "log", data: { level: "warn", message: err } })
   await runtime.init()
+  await loadPlugins(runtime, loaded.layers)
 
   const mcp = startMcpServer(runtime, config.daemon.mcp_port)
   runtime.mcpBaseUrl = mcp.url
@@ -83,7 +85,16 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       if (opts.exitOnStop) process.exit(0)
     },
   }
-  daemon.control = startControlServer(runtime, socketPath, { onShutdown: () => void daemon.stop() })
+  // daemon.persist = false: stop once the last client has been gone for a grace period
+  let idleTimer: ReturnType<typeof setTimeout> | undefined
+  daemon.control = startControlServer(runtime, socketPath, {
+    onShutdown: () => void daemon.stop(),
+    onClientsChanged: (n) => {
+      if (idleTimer) clearTimeout(idleTimer)
+      idleTimer = undefined
+      if (n === 0 && !config.daemon.persist && !opts.ephemeral) idleTimer = setTimeout(() => void daemon.stop(), 5000)
+    },
+  })
   if (!opts.ephemeral) {
     writeFileSync(paths.pidFile, String(process.pid))
     if (socketPath !== paths.socket) writeFileSync(join(paths.run, "socket-path"), socketPath)

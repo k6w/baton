@@ -114,7 +114,7 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       const orchW = Math.max(40, Math.round(W * 0.38))
       return { orch: { w: orchW, h: H }, grid: { w: W - orchW, h: H }, direction: "row" as const }
     }
-    if (layout === "swarm" && hasWorkers) return { orch: { w: W, h: 1 }, grid: { w: W, h: H - 1 }, direction: "column" as const, slim: true }
+    if (layout === "swarm" && hasWorkers) return { orch: { w: W, h: 2 }, grid: { w: W, h: H - 2 }, direction: "column" as const, slim: true }
     if (!hasWorkers) return { orch: { w: W, h: H }, grid: { w: W, h: 0 }, direction: "column" as const }
     const orchH = layout === "focus" ? Math.min(10, Math.round(H * 0.3)) : Math.max(8, Math.min(H - ui.config.ui.min_card_height, Math.round(H * 0.34)))
     return { orch: { w: W, h: orchH }, grid: { w: W, h: H - orchH }, direction: "column" as const }

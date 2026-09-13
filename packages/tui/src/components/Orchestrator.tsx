@@ -287,9 +287,42 @@ export function Orchestrator(props: OrchestratorProps) {
     </Show>
   )
 
+  // swarm layout: `› <current task> ─────────── 76%` above the input, like a progress header
+  const swarmHeader = () => {
+    const t = ui.theme()
+    const id = ui.run.orchestratorId
+    const lastPrompt = id ? [...ui.run.feed(id).items].reverse().find((i) => i.kind === "user" && !i.text.startsWith("[baton]")) : undefined
+    const ws = workers()
+    const pct = ws.length ? Math.round((ws.reduce((n, w) => n + (w.progress ?? (w.status === "ready" && w.toolCalls > 0 ? 1 : 0)), 0) / ws.length) * 100) : 0
+    const task = lastPrompt && lastPrompt.kind === "user" ? lastPrompt.text.split("\n")[0]! : "no task yet"
+    const right = `${pct}%`
+    const barW = Math.max(6, Math.min(24, Math.floor(props.width / 6)))
+    const filled = Math.round((pct / 100) * barW)
+    const head = clip(task, Math.max(10, props.width - barW - right.length - 8))
+    const gap = Math.max(1, props.width - 2 - head.length - barW - right.length - 3)
+    return toStyled(
+      [
+        {
+          segs: [
+            { text: "❯ ", fg: t.primary, bold: true },
+            { text: head, fg: t.text, bold: true },
+            { text: " ".repeat(gap) },
+            { text: "━".repeat(filled), fg: t.accent },
+            { text: "─".repeat(barW - filled), fg: t.borderSubtle },
+            { text: `  ${right}`, fg: t.textMuted },
+          ],
+        },
+      ],
+      props.width,
+    )
+  }
+
   if (props.slim) {
     return (
-      <box height={1 + Math.min(6, suggestions().length)} width={props.width} flexDirection="column">
+      <box height={2 + Math.min(6, suggestions().length)} width={props.width} flexDirection="column" backgroundColor={ui.theme().background}>
+        <text height={1} wrapMode="none">
+          {swarmHeader()}
+        </text>
         {suggestionBox()}
         {inputEl}
       </box>

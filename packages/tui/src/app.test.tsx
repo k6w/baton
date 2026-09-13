@@ -119,6 +119,7 @@ describe("TUI", () => {
       const m = await mount(150, 40, { layout })
       const f = await m.frame()
       if (process.env.BATON_PRINT) console.log(`--- ${layout}\n${f}`)
+      if (layout === "swarm") expect(f).toContain("fix the typo in the README")
       expect(f.length).toBeGreaterThan(100)
       expect(f).toContain("codex")
       m.dispose()

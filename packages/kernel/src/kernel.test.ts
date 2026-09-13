@@ -20,6 +20,19 @@ describe("EventStore", () => {
     expect(s.listRuns()[0]?.lastSeq).toBe(b.seq)
   })
 
+  test("events appended from inside a listener are delivered in seq order to every listener", () => {
+    const s = new EventStore()
+    const run = s.createRun("/tmp")
+    s.subscribe((e) => {
+      if (e.type === "turn.started") s.append(run, { type: "orch.note", data: { text: "reacting" } })
+    })
+    const seen: number[] = []
+    s.subscribe((e) => seen.push(e.seq))
+    s.append(run, { type: "turn.started", data: { turnId: "t" } })
+    expect(seen).toEqual([...seen].sort((a, b) => a - b))
+    expect(seen.length).toBe(2)
+  })
+
   test("subscribers see appended events", () => {
     const s = new EventStore()
     const run = s.createRun("/tmp")

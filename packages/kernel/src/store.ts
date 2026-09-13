@@ -39,6 +39,8 @@ export class EventStore {
   private insert: ReturnType<Database["prepare"]>
   private listeners = new Set<Listener>()
   private keepRaw = process.env.BATON_KEEP_RAW === "1"
+  private pending: BatonEvent[] = []
+  private dispatching = false
 
   constructor(path: string = ":memory:") {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true })
@@ -102,10 +104,22 @@ export class EventStore {
       data,
       ...(raw ? { raw: ev.raw } : {}),
     } as BatonEvent
-    for (const l of this.listeners) {
+    // Listeners may append events themselves (e.g. the demo director reacting to a turn).
+    // Queue nested appends so every listener observes events in seq order.
+    this.pending.push(out)
+    if (!this.dispatching) {
+      this.dispatching = true
       try {
-        l(out)
-      } catch {}
+        for (let ev = this.pending.shift(); ev; ev = this.pending.shift()) {
+          for (const l of this.listeners) {
+            try {
+              l(ev)
+            } catch {}
+          }
+        }
+      } finally {
+        this.dispatching = false
+      }
     }
     return out
   }

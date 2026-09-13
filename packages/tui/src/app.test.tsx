@@ -191,4 +191,42 @@ describe("TUI", () => {
     expect(f).toContain("codex")
     m.dispose()
   })
+
+  test("approvals inbox: ctrl+a lists requests, `a` approves through the daemon", async () => {
+    const g = await client.spawn({ adapter: "mock", name: "gatekeeper", approval: "ask", options: { speed: 0, steps: ["exec"] } })
+    await client.prompt(g.agentId, "do the risky thing")
+    await until(() => [...live.state.approvals.values()].some((p) => p.agentId === g.agentId), 10000)
+    const m = await mount(140, 44)
+    await m.frame()
+    m.t.mockInput.pressKey("a", { ctrl: true })
+    let f = await m.frame()
+    expect(f).toContain("Approvals (")
+    expect(f).toContain("gatekeeper")
+    const before = [...live.state.approvals.values()].length
+    // select the gatekeeper's request and approve it
+    const idx = [...live.state.approvals.values()].sort((a, b) => a.ts - b.ts).findIndex((p) => p.agentId === g.agentId)
+    for (let i = 0; i < idx; i++) m.t.mockInput.pressArrow("down")
+    m.t.mockInput.pressKey("a")
+    await until(() => [...live.state.approvals.values()].length < before)
+    f = await m.frame()
+    m.t.mockInput.pressEscape()
+    m.dispose()
+  })
+
+  test("theme picker previews live and reverts on escape", async () => {
+    const m = await mount(120, 40)
+    await m.frame()
+    const original = m.ui.theme().name
+    m.t.mockInput.pressKey("t", { ctrl: true })
+    let f = await m.frame()
+    expect(f).toContain("Theme")
+    m.t.mockInput.pressArrow("down")
+    await m.frame()
+    expect(m.ui.theme().name).not.toBe(original)
+    m.t.mockInput.pressEscape()
+    f = await m.frame()
+    expect(m.ui.theme().name).toBe(original)
+    expect(f).not.toContain("enter keep")
+    m.dispose()
+  })
 })

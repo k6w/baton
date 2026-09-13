@@ -7,6 +7,7 @@
  *   persona: "claude" | "codex" | "generic" — affects tool naming/titles
  *   seed:    number for the PRNG
  *   fail:    if true, the turn ends with an error
+ *   steps:   fixed step sequence, e.g. ["read", "exec", "edit"] (default: random)
  */
 import {
   type AdapterCapabilities,
@@ -249,7 +250,8 @@ class MockSession implements AgentSession {
   }
 
   private async workLoop(input: PromptInput) {
-    const steps = 3 + Math.floor(this.rand() * 4)
+    const scripted = Array.isArray(this.cfg.options?.steps) ? (this.cfg.options.steps as string[]) : undefined
+    const steps = scripted?.length ?? 3 + Math.floor(this.rand() * 4)
     await this.say(`Looking into: ${input.text.slice(0, 60)}`, "thought")
     this.emit({
       type: "plan.updated",
@@ -265,9 +267,14 @@ class MockSession implements AgentSession {
         const body = (bus?.[2] ?? steer.text).slice(0, 60)
         await this.say(`Noted${who ? `, ${who}` : ""}: ${body}`)
       }
-      const r = this.rand()
-      if (r < 0.3) await this.readStep()
-      else if (r < 0.65) await this.editStep()
+      const kind =
+        scripted?.[i] ??
+        (() => {
+          const r = this.rand()
+          return r < 0.3 ? "read" : r < 0.65 ? "edit" : "exec"
+        })()
+      if (kind === "read") await this.readStep()
+      else if (kind === "edit") await this.editStep()
       else await this.execStep()
       this.addUsage(800 + Math.floor(this.rand() * 3000), 120 + Math.floor(this.rand() * 600))
       this.emit({

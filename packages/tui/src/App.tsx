@@ -57,7 +57,11 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
 
   // initial theme (system / auto appearance need the renderer)
   if (ui.prefs.theme === "system" || ui.prefs.appearance === "auto") {
-    void renderer.waitForThemeMode(300).then(() => applyTheme(ui.prefs.theme))
+    // once the terminal reports dark/light — unless the user already changed the theme meanwhile
+    const initial = ui.theme()
+    void renderer.waitForThemeMode(300).then(() => {
+      if (ui.theme() === initial) void applyTheme(ui.prefs.theme)
+    })
   }
 
   // logo support: wait for the capability probe

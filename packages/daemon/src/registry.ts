@@ -13,6 +13,7 @@ const BUILTIN: Loader[] = [
   async () => [(await import("@batonsh/adapter-codex")).codexAdapter],
   async () => [(await import("@batonsh/adapter-opencode")).opencodeAdapter],
   async () => (await import("@batonsh/adapter-acp")).acpAdapters,
+  async () => (await import("@batonsh/adapter-stream-json")).streamJsonAdapters,
 ]
 
 export class AdapterRegistry {

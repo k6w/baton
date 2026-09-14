@@ -64,6 +64,8 @@ const ALIASES: Record<string, string> = {
   "claude-code": "claude",
   "codex-acp": "codex",
   "opencode-acp": "opencode",
+  "claude-cli": "claude",
+  "qwen-stream": "qwen",
   "gemini-cli": "gemini",
   "cursor-agent": "cursor",
   "github-copilot": "copilot",

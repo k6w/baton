@@ -51,6 +51,14 @@
         "@opencode-ai/sdk": "1.19.0",
       },
     },
+    "packages/adapters/stream-json": {
+      "name": "@batonsh/adapter-stream-json",
+      "version": "0.1.0",
+      "dependencies": {
+        "@batonsh/adapter-claude": "workspace:*",
+        "@batonsh/protocol": "workspace:*",
+      },
+    },
     "packages/adapters/testkit": {
       "name": "@batonsh/adapter-testkit",
       "version": "0.1.0",
@@ -83,6 +91,7 @@
         "@batonsh/adapter-codex": "workspace:*",
         "@batonsh/adapter-mock": "workspace:*",
         "@batonsh/adapter-opencode": "workspace:*",
+        "@batonsh/adapter-stream-json": "workspace:*",
         "@batonsh/kernel": "workspace:*",
         "@batonsh/protocol": "workspace:*",
         "@modelcontextprotocol/sdk": "1.32.1",
@@ -236,6 +245,8 @@
     "@batonsh/adapter-mock": ["@batonsh/adapter-mock@workspace:packages/adapters/mock"],
 
     "@batonsh/adapter-opencode": ["@batonsh/adapter-opencode@workspace:packages/adapters/opencode"],
+
+    "@batonsh/adapter-stream-json": ["@batonsh/adapter-stream-json@workspace:packages/adapters/stream-json"],
 
     "@batonsh/adapter-testkit": ["@batonsh/adapter-testkit@workspace:packages/adapters/testkit"],
 

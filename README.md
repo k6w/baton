@@ -104,7 +104,7 @@ flags: --theme <name> --layout <grid|focus|swarm|wide> --orchestrator <adapter> 
 ## Development
 
 ```sh
-bun test                        # ~180 tests: protocol, kernel, daemon, adapters (replayed fixtures), TUI frames
+bun test                        # ~200 tests: protocol, kernel, daemon, adapters (replayed fixtures), TUI frames
 BATON_LIVE=1 bun test packages/adapters/codex    # contract tests against the real CLI (uses your account)
 bunx tsc -p tsconfig.json --noEmit && bunx biome check .
 ```

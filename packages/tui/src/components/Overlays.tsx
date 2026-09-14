@@ -9,8 +9,8 @@ import { createMemo, createSignal, For, type JSX, onCleanup, Show } from "solid-
 import { agentLook } from "../agent-style.ts"
 import { useUi } from "../context.ts"
 import { keyString } from "../keymap.ts"
-import { clip, type Seg, width as sw, wrap } from "../lines.ts"
-import { segs } from "../ui/styled.ts"
+import { clip, type Line, type Seg, width as sw, wrap } from "../lines.ts"
+import { segs, toStyled } from "../ui/styled.ts"
 
 export interface PaletteItem {
   id: string
@@ -69,31 +69,33 @@ function fuzzy(q: string, s: string): number {
 
 function ListView(props: { items: { label: Seg[]; detail?: string; right?: string }[]; selected: number; width: number; height: number }) {
   const ui = useUi()
-  const start = () => Math.max(0, Math.min(props.selected - Math.floor(props.height / 2), props.items.length - props.height))
+  // a single padded text block — per-row reactive texts accumulate stale chunks on update
+  const lines = (): Line[] => {
+    const t = ui.theme()
+    const start = Math.max(0, Math.min(props.selected - Math.floor(props.height / 2), props.items.length - props.height))
+    return props.items.slice(start, start + props.height).map((it, i) => {
+      const active = start + i === props.selected
+      const bg = active ? t.selection : undefined
+      const right = it.right ?? ""
+      const labelW = it.label.reduce((n, s) => n + sw(s.text), 0)
+      const detail = it.detail ? clip(` ${it.detail}`, Math.max(0, props.width - labelW - sw(right) - 6)) : ""
+      const gap = Math.max(1, props.width - 2 - labelW - sw(detail) - sw(right))
+      return {
+        bg,
+        segs: [
+          { text: active ? "› " : "  ", fg: t.primary, bg },
+          ...it.label.map((s) => ({ ...s, bg, bold: active || s.bold })),
+          { text: detail, fg: t.textMuted, bg },
+          { text: " ".repeat(gap), bg },
+          { text: right, fg: t.textSubtle, bg },
+        ],
+      }
+    })
+  }
   return (
-    <box flexDirection="column" height={props.height}>
-      <For each={props.items.slice(start(), start() + props.height)}>
-        {(it, i) => {
-          const active = () => start() + i() === props.selected
-          const t = () => ui.theme()
-          const content = () => {
-            const right = it.right ?? ""
-            const labelW = it.label.reduce((n, s) => n + sw(s.text), 0)
-            const detailBudget = Math.max(0, props.width - labelW - sw(right) - 6)
-            const detail = it.detail ? clip(` ${it.detail}`, detailBudget) : ""
-            const gap = Math.max(1, props.width - 2 - labelW - sw(detail) - sw(right))
-            return segs(
-              { text: active() ? "› " : "  ", fg: t().primary, bg: active() ? t().selection : undefined },
-              ...it.label.map((s) => ({ ...s, bg: active() ? t().selection : undefined, bold: active() || s.bold })),
-              { text: detail, fg: t().textMuted, bg: active() ? t().selection : undefined },
-              { text: " ".repeat(gap), bg: active() ? t().selection : undefined },
-              { text: right, fg: t().textSubtle, bg: active() ? t().selection : undefined },
-            )
-          }
-          return <text wrapMode="none">{content()}</text>
-        }}
-      </For>
-    </box>
+    <text height={props.height} wrapMode="none">
+      {toStyled(lines(), props.width, props.height)}
+    </text>
   )
 }
 

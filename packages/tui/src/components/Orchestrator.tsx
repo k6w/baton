@@ -11,7 +11,7 @@ import { createMemo, createSignal, For, Show } from "solid-js"
 import { agentLook, whoFn } from "../agent-style.ts"
 import { type Completion, completions } from "../completion.ts"
 import { useUi } from "../context.ts"
-import { clip, type Line, renderFeed, type Seg, statusLine, wrap } from "../lines.ts"
+import { clip, type Line, renderFeed, type Seg, statusLine, width as sw, wrap } from "../lines.ts"
 import { Frame, innerSize } from "../ui/Frame.tsx"
 import { segs, toStyled } from "../ui/styled.ts"
 
@@ -269,21 +269,35 @@ export function Orchestrator(props: OrchestratorProps) {
     </box>
   )
 
+  // One padded text block (not a <For> of rows): reactive StyledText children re-rendered in
+  // place would otherwise accumulate, and the window scrolls with the selection.
+  const SUGGEST_ROWS = 6
+  const suggestionLines = (): Line[] => {
+    const sug = suggestions()
+    const t = ui.theme()
+    const sel = Math.min(selected(), sug.length - 1)
+    const start = Math.max(0, Math.min(sel - SUGGEST_ROWS + 1, sug.length - SUGGEST_ROWS))
+    const w = inner().width
+    return sug.slice(start, start + SUGGEST_ROWS).map((s, k) => {
+      const active = start + k === sel
+      const more = k === SUGGEST_ROWS - 1 && start + SUGGEST_ROWS < sug.length ? ` +${sug.length - start - SUGGEST_ROWS}` : ""
+      return {
+        segs: [
+          { text: active ? "› " : "  ", fg: t.primary, bg: active ? t.selection : undefined },
+          { text: s.label, fg: active ? t.text : t.textMuted, bold: active, bg: active ? t.selection : undefined },
+          { text: `  ${clip(s.detail, Math.max(0, w - sw(s.label) - 6 - more.length))}`, fg: t.textSubtle, bg: active ? t.selection : undefined },
+          { text: more, fg: t.textSubtle },
+        ],
+        bg: active ? t.selection : undefined,
+      }
+    })
+  }
+
   const suggestionBox = () => (
     <Show when={suggestions().length > 0}>
-      <box flexDirection="column" height={Math.min(6, suggestions().length)}>
-        <For each={suggestions().slice(0, 6)}>
-          {(s, i) => (
-            <text wrapMode="none">
-              {segs(
-                { text: i() === selected() ? "› " : "  ", fg: ui.theme().primary },
-                { text: s.label, fg: i() === selected() ? ui.theme().text : ui.theme().textMuted, bold: i() === selected() },
-                { text: `  ${clip(s.detail, Math.max(0, inner().width - s.label.length - 6))}`, fg: ui.theme().textSubtle },
-              )}
-            </text>
-          )}
-        </For>
-      </box>
+      <text height={Math.min(SUGGEST_ROWS, suggestions().length)} wrapMode="none">
+        {toStyled(suggestionLines(), inner().width)}
+      </text>
     </Show>
   )
 

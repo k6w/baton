@@ -573,3 +573,70 @@ export function busLine(
     ctx.width,
   )
 }
+
+// ───────────────────────────── workspace badge ─────────────────────────────
+
+export interface WorkspaceLike {
+  mode: "worktree" | "shared"
+  branch?: string
+  files: { path: string }[]
+  added: number
+  removed: number
+  merge?: { status: string; detail?: string }
+  conflicts: { with: string; files: string[]; kind: string }[]
+  review?: { status: string; reviewer: string }
+  leases: { globs: string[] }[]
+}
+
+/** One-line workspace state for a card: `⎇ 3 files +12 −4 · review ✓`, conflicts, merge status. */
+export function workspaceLine(ws: WorkspaceLike | undefined, ctx: { theme: ResolvedTheme; width: number; who: RenderCtx["who"] }): Line | undefined {
+  if (!ws || ws.mode !== "worktree") return undefined
+  const t = ctx.theme
+  const segs: Seg[] = []
+  const sep = () => segs.push({ text: " · ", fg: t.textSubtle })
+  if (ws.conflicts.length) {
+    const c = ws.conflicts[0]!
+    segs.push(
+      { text: "⚠ ", fg: t.warning },
+      { text: `${c.kind === "lease" ? "claimed by" : "conflicts with"} ${ctx.who(c.with).name}`, fg: t.warning },
+      { text: ` ${c.files.join(", ")}`, fg: t.textMuted },
+    )
+    return clipLine({ segs }, ctx.width)
+  }
+  const m = ws.merge
+  if (m && (m.status === "queued" || m.status === "verifying")) segs.push({ text: m.status === "verifying" ? "◐ verifying…" : "◐ merge queued", fg: t.info })
+  else if (m && (m.status === "failed" || m.status === "conflict"))
+    segs.push({ text: `✗ merge ${m.status}`, fg: t.error }, { text: m.detail ? ` ${m.detail.split("\n")[0]}` : "", fg: t.textMuted })
+  else if (ws.files.length) {
+    segs.push(
+      { text: "⎇ ", fg: t.accent },
+      { text: `${ws.files.length} file${ws.files.length === 1 ? "" : "s"} `, fg: t.textMuted },
+      { text: `+${ws.added}`, fg: t.success },
+      { text: ` −${ws.removed}`, fg: t.error },
+    )
+  } else if (m?.status === "merged") segs.push({ text: "✓ merged", fg: t.success })
+  else
+    return ws.leases.length
+      ? clipLine(
+          {
+            segs: [
+              { text: "⚑ ", fg: t.accent },
+              { text: ws.leases.flatMap((l) => l.globs).join(", "), fg: t.textMuted },
+            ],
+          },
+          ctx.width,
+        )
+      : undefined
+  if (ws.review && segs.length) {
+    sep()
+    const r = ws.review
+    segs.push(
+      r.status === "approve"
+        ? { text: "review ✓", fg: t.success }
+        : r.status === "changes_requested"
+          ? { text: "changes requested", fg: t.warning }
+          : { text: `review: ${ctx.who(r.reviewer).name}`, fg: t.info },
+    )
+  }
+  return clipLine({ segs }, ctx.width)
+}

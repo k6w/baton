@@ -6,6 +6,7 @@
 import { createMemo, For, Show } from "solid-js"
 import { useUi } from "../context.ts"
 import { segs } from "../ui/styled.ts"
+import { Txt } from "../ui/Txt.tsx"
 import { AgentCard } from "./AgentCard.tsx"
 import { BusPane } from "./BusPane.tsx"
 
@@ -108,9 +109,10 @@ export function Grid(props: { width: number; height: number; cells: Cell[]; onSe
       </For>
       <Show when={layout().pages > 1}>
         <box height={1} flexDirection="row" justifyContent="center">
-          <text wrapMode="none">
-            {segs({ text: `page ${page() + 1}/${layout().pages}`, fg: ui.theme().textMuted }, { text: "  pgup/pgdn", fg: ui.theme().textSubtle })}
-          </text>
+          <Txt
+            wrapMode="none"
+            value={segs({ text: `page ${page() + 1}/${layout().pages}`, fg: ui.theme().textMuted }, { text: "  pgup/pgdn", fg: ui.theme().textSubtle })}
+          />
         </box>
       </Show>
     </box>

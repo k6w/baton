@@ -11,6 +11,7 @@ import { type JSX, Show } from "solid-js"
 import { useUi } from "../context.ts"
 import { clip, type Seg, width as sw } from "../lines.ts"
 import { segs } from "./styled.ts"
+import { Txt } from "./Txt.tsx"
 
 export interface FrameProps {
   width: number
@@ -103,14 +104,17 @@ export function Frame(props: FrameProps) {
         when={props.logo}
         fallback={
           <box height={1} width={props.width}>
-            <text width={props.width} height={1} wrapMode="none">
-              {segs(...header().before, ...(props.icon ? [{ ...props.icon, text: `${props.icon.text} ` }] : []), ...header().after)}
-            </text>
+            <Txt
+              width={props.width}
+              height={1}
+              wrapMode="none"
+              value={segs(...header().before, ...(props.icon ? [{ ...props.icon, text: `${props.icon.text} ` }] : []), ...header().after)}
+            />
           </box>
         }
       >
         <box height={1} flexDirection="row" width={props.width}>
-          <text
+          <Txt
             width={sw(
               header()
                 .before.map((x) => x.text)
@@ -118,11 +122,10 @@ export function Frame(props: FrameProps) {
             )}
             height={1}
             wrapMode="none"
-          >
-            {segs(...header().before)}
-          </text>
+            value={segs(...header().before)}
+          />
           <image source={props.logo!} width={2} height={1} fit="fit" />
-          <text
+          <Txt
             width={Math.max(
               1,
               props.width -
@@ -135,9 +138,8 @@ export function Frame(props: FrameProps) {
             )}
             height={1}
             wrapMode="none"
-          >
-            {segs({ text: " " }, ...header().after)}
-          </text>
+            value={segs({ text: " " }, ...header().after)}
+          />
         </box>
       </Show>
       <box

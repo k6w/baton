@@ -5,6 +5,7 @@ import { useUi } from "../context.ts"
 import { busLine, type Line } from "../lines.ts"
 import { Frame, innerSize } from "../ui/Frame.tsx"
 import { toStyled } from "../ui/styled.ts"
+import { Txt } from "../ui/Txt.tsx"
 
 export function BusPane(props: { width: number; height: number; focused?: boolean }) {
   const ui = useUi()
@@ -59,10 +60,10 @@ export function BusPane(props: { width: number; height: number; focused?: boolea
       right={[{ text: "a2a", fg: ui.theme().textMuted }]}
     >
       <box flexGrow={1} overflow="hidden">
-        <text wrapMode="none">{toStyled(lines(), inner().width, Math.max(0, inner().height - 1))}</text>
+        <Txt wrapMode="none" value={toStyled(lines(), inner().width, Math.max(0, inner().height - 1))} />
       </box>
       <box height={1}>
-        <text wrapMode="none">{toStyled(footer(), inner().width)}</text>
+        <Txt wrapMode="none" value={toStyled(footer(), inner().width)} />
       </box>
     </Frame>
   )

@@ -6,6 +6,7 @@ import { useUi } from "../context.ts"
 import { identityLines, renderFeed, statusLine } from "../lines.ts"
 import { Frame, innerSize } from "../ui/Frame.tsx"
 import { segs, toStyled } from "../ui/styled.ts"
+import { Txt } from "../ui/Txt.tsx"
 
 export function ZoomView(props: { agentId: string; width: number; height: number }) {
   const ui = useUi()
@@ -81,12 +82,10 @@ export function ZoomView(props: { agentId: string; width: number; height: number
         focused={ui.overlay() === null}
         scrollY
       >
-        <text wrapMode="none">{toStyled(lines(), inner().width - 1)}</text>
+        <Txt wrapMode="none" value={toStyled(lines(), inner().width - 1)} />
       </scrollbox>
-      <text wrapMode="none">{toStyled(status(), inner().width)}</text>
-      <text wrapMode="none" height={0}>
-        {segs({ text: "", fg: ui.theme().textMuted })}
-      </text>
+      <Txt wrapMode="none" value={toStyled(status(), inner().width)} />
+      <Txt wrapMode="none" height={0} value={segs({ text: "", fg: ui.theme().textMuted })} />
     </Frame>
   )
 }

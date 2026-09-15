@@ -1,6 +1,6 @@
 /**
  * Status bar, driven by format strings (`ui.status_left` / `ui.status_right`).
- * Variables: {dot} {running} {total} {noun} {calls} {msgs} {cost} {tokens} {added} {removed}
+ * Variables: {dot} {running} {total} {noun} {calls} {msgs} {cost} {tokens} {added} {removed} {unmerged}
  *            {repo} {branch} {mode} {approvals} {spark} {theme} {layout}
  */
 
@@ -10,6 +10,7 @@ import { agentLook } from "../agent-style.ts"
 import { useUi } from "../context.ts"
 import { type Seg, width as sw } from "../lines.ts"
 import { segs } from "../ui/styled.ts"
+import { Txt } from "../ui/Txt.tsx"
 
 const SPARK = "▁▂▃▄▅▆▇█"
 
@@ -67,6 +68,16 @@ export function StatusBar(props: { width: number }) {
       spark: { text: sparkline(run.activity, ui.now()), fg: t.accent },
       theme: { text: t.name, fg: t.statusText },
       layout: { text: ui.prefs.layout, fg: t.statusText },
+      unmerged: (() => {
+        let files = 0
+        let conflicts = 0
+        for (const w of run.workspaces.values()) {
+          files += w.files.length
+          conflicts += w.conflicts.length ? 1 : 0
+        }
+        if (conflicts) return { text: `⚠ ${conflicts} conflict${conflicts > 1 ? "s" : ""}`, fg: t.warning }
+        return files ? { text: `⎇ ${files} unmerged`, fg: t.accent } : undefined
+      })(),
     }
     const left = renderTemplate(ui.config.ui.status_left, vars, t.statusText)
     let right = renderTemplate(ui.config.ui.status_right, vars, t.statusText)
@@ -79,7 +90,7 @@ export function StatusBar(props: { width: number }) {
   })
   return (
     <box height={1} width={props.width} backgroundColor={ui.theme().statusBar}>
-      <text wrapMode="none">{content()}</text>
+      <Txt value={content()} />
     </box>
   )
 }

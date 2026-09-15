@@ -77,7 +77,7 @@ export const UiConfig = z.object({
   show_thoughts: z.boolean().default(false),
   card_fields: z.array(z.string()).default(["adapter", "version", "model", "dir", "approval"]),
   status_left: z.string().default("{dot} {running}/{total} {noun} running · {calls} calls · {msgs} msgs"),
-  status_right: z.string().default("{cost}  {added} {removed}  {repo}@{branch}"),
+  status_right: z.string().default("{unmerged}  {cost}  {added} {removed}  {repo}@{branch}"),
   timestamp_format: z.enum(["ss.mmm", "hh:mm:ss", "relative"]).default("ss.mmm"),
   mouse: z.boolean().default(true),
 })

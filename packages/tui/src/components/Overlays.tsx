@@ -11,6 +11,7 @@ import { useUi } from "../context.ts"
 import { keyString } from "../keymap.ts"
 import { clip, type Line, type Seg, width as sw, wrap } from "../lines.ts"
 import { segs, toStyled } from "../ui/styled.ts"
+import { Txt } from "../ui/Txt.tsx"
 
 export interface PaletteItem {
   id: string
@@ -20,7 +21,7 @@ export interface PaletteItem {
   run: () => void
 }
 
-function Modal(props: { title: string; width: number; height: number; children: JSX.Element; hint?: string }) {
+export function Modal(props: { title: string; width: number; height: number; children: JSX.Element; hint?: string }) {
   const ui = useUi()
   const dims = useTerminalDimensions()
   const w = () => Math.min(props.width, dims().width - 4)
@@ -67,7 +68,7 @@ function fuzzy(q: string, s: string): number {
   return 0
 }
 
-function ListView(props: { items: { label: Seg[]; detail?: string; right?: string }[]; selected: number; width: number; height: number }) {
+export function ListView(props: { items: { label: Seg[]; detail?: string; right?: string }[]; selected: number; width: number; height: number }) {
   const ui = useUi()
   // a single padded text block — per-row reactive texts accumulate stale chunks on update
   const lines = (): Line[] => {
@@ -92,11 +93,7 @@ function ListView(props: { items: { label: Seg[]; detail?: string; right?: strin
       }
     })
   }
-  return (
-    <text height={props.height} wrapMode="none">
-      {toStyled(lines(), props.width, props.height)}
-    </text>
-  )
+  return <Txt height={props.height} wrapMode="none" value={toStyled(lines(), props.width, props.height)} />
 }
 
 export function CommandPalette(props: { items: PaletteItem[]; onClose: () => void }) {
@@ -120,7 +117,7 @@ export function CommandPalette(props: { items: PaletteItem[]; onClose: () => voi
   return (
     <Modal title="Commands" width={width} height={22} hint="↑↓ select · enter run · esc close">
       <box height={1} flexDirection="row">
-        <text wrapMode="none">{segs({ text: "› ", fg: ui.theme().primary, bold: true })}</text>
+        <Txt wrapMode="none" value={segs({ text: "› ", fg: ui.theme().primary, bold: true })} />
         <input
           flexGrow={1}
           focused
@@ -141,7 +138,7 @@ export function CommandPalette(props: { items: PaletteItem[]; onClose: () => voi
           }}
         />
       </box>
-      <text wrapMode="none">{segs({ text: "─".repeat(width - 4), fg: ui.theme().borderSubtle })}</text>
+      <Txt wrapMode="none" value={segs({ text: "─".repeat(width - 4), fg: ui.theme().borderSubtle })} />
       <ListView
         items={filtered().map((it) => ({ label: [{ text: it.label, fg: ui.theme().text }], detail: it.detail, right: it.keys }))}
         selected={sel()}
@@ -253,7 +250,7 @@ export function ApprovalsInbox(props: { onClose: () => void }) {
   })
   return (
     <Modal title={`Approvals (${pending().length})`} width={74} height={22} hint="a allow · A always · d deny · D never · esc">
-      <Show when={pending().length > 0} fallback={<text>{segs({ text: "Nothing pending.", fg: ui.theme().textMuted })}</text>}>
+      <Show when={pending().length > 0} fallback={<Txt value={segs({ text: "Nothing pending.", fg: ui.theme().textMuted })} />}>
         <ListView
           items={pending().map((p) => {
             const a = ui.run.agents.get(p.agentId)
@@ -271,8 +268,8 @@ export function ApprovalsInbox(props: { onClose: () => void }) {
           width={70}
           height={Math.min(10, Math.max(1, pending().length))}
         />
-        <text wrapMode="none">{segs({ text: "─".repeat(70), fg: ui.theme().borderSubtle })}</text>
-        <For each={detail()}>{(l) => <text wrapMode="word">{segs(...l)}</text>}</For>
+        <Txt wrapMode="none" value={segs({ text: "─".repeat(70), fg: ui.theme().borderSubtle })} />
+        <For each={detail()}>{(l) => <Txt wrapMode="word" value={segs(...l)} />}</For>
       </Show>
     </Modal>
   )
@@ -323,7 +320,7 @@ export function HelpOverlay(props: { onClose: () => void }) {
   }
   return (
     <Modal title="Keyboard shortcuts" width={78} height={Math.min(40, lines().length + 3)} hint="esc close · rebind any key in config [keys]">
-      <For each={lines()}>{(l) => <text wrapMode="none">{segs(...l)}</text>}</For>
+      <For each={lines()}>{(l) => <Txt wrapMode="none" value={segs(...l)} />}</For>
     </Modal>
   )
 }
@@ -339,7 +336,7 @@ export function Toasts(props: { width: number }) {
             const color = t.level === "error" ? th.error : t.level === "warn" ? th.warning : th.info
             return (
               <box border borderStyle="rounded" borderColor={color} backgroundColor={th.backgroundOverlay} paddingLeft={1} paddingRight={1}>
-                <text wrapMode="word">{segs({ text: t.text, fg: th.text })}</text>
+                <Txt wrapMode="word" value={segs({ text: t.text, fg: th.text })} />
               </box>
             )
           }}

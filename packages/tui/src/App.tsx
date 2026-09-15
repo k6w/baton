@@ -10,6 +10,7 @@ import { type Cell, computeGrid, Grid } from "./components/Grid.tsx"
 import { Orchestrator } from "./components/Orchestrator.tsx"
 import { ApprovalsInbox, CommandPalette, HelpOverlay, type PaletteItem, ThemePicker, Toasts } from "./components/Overlays.tsx"
 import { StatusBar } from "./components/StatusBar.tsx"
+import { ChangesOverlay, DiffOverlay, TasksOverlay } from "./components/Workspace.tsx"
 import { ZoomView } from "./components/ZoomView.tsx"
 import { useUi } from "./context.ts"
 import type { KeyContext } from "./keymap.ts"
@@ -210,6 +211,20 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       case "theme.pick":
         ui.setOverlay("theme")
         break
+      case "changes.open":
+        ui.setOverlay("changes")
+        break
+      case "tasks.open":
+        ui.setOverlay("tasks")
+        break
+      case "pane.diff": {
+        const a = focusedAgent()
+        if (a) {
+          ui.setDiffAgent(a.agentId)
+          ui.setOverlay("diff")
+        }
+        break
+      }
       case "layout.cycle":
         setPref("layout", LAYOUTS[(LAYOUTS.indexOf(ui.prefs.layout) + 1) % LAYOUTS.length]!)
         ui.toast(`layout: ${ui.prefs.layout}`)
@@ -426,7 +441,20 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
     const adapters = ["claude", "codex", "opencode", "gemini", "cursor", "copilot", ...Object.keys(ui.config.agents)]
     for (const a of [...new Set(adapters)])
       items.push({ id: `spawn:${a}`, label: `Spawn: ${a}`, detail: "start a new agent", run: () => submit(`/spawn ${a}`) })
+    items.push({ id: "merge-all", label: "Merge all worker changes", detail: "/merge all", run: () => submit("/merge all") })
     for (const a of ui.run.workers()) {
+      if (ui.run.workspaces.get(a.agentId)?.mode === "worktree") {
+        items.push({
+          id: `diff:${a.agentId}`,
+          label: `Diff: ${a.name}`,
+          run: () => {
+            ui.setDiffAgent(a.agentId)
+            ui.setOverlay("diff")
+          },
+        })
+        items.push({ id: `merge:${a.agentId}`, label: `Merge: ${a.name}`, run: () => submit(`/merge ${a.name}`) })
+        items.push({ id: `review:${a.agentId}`, label: `Review: ${a.name}`, detail: "cross-vendor review", run: () => submit(`/review ${a.name}`) })
+      }
       items.push({ id: `zoom:${a.agentId}`, label: `Zoom: ${a.name}`, detail: a.label, run: () => ui.setZoomed(a.agentId) })
       items.push({ id: `msg:${a.agentId}`, label: `Message: ${a.name}`, run: () => prefill(`@${a.name} `) })
       items.push({ id: `int:${a.agentId}`, label: `Interrupt: ${a.name}`, run: () => void call(ui.client?.interrupt(a.agentId)) })
@@ -482,6 +510,15 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
         </Match>
         <Match when={ui.overlay() === "help"}>
           <HelpOverlay onClose={() => ui.setOverlay(null)} />
+        </Match>
+        <Match when={ui.overlay() === "changes"}>
+          <ChangesOverlay onClose={() => ui.setOverlay(null)} />
+        </Match>
+        <Match when={ui.overlay() === "diff"}>
+          <DiffOverlay onClose={() => ui.setOverlay(ui.run.workspaces.size ? "changes" : null)} />
+        </Match>
+        <Match when={ui.overlay() === "tasks"}>
+          <TasksOverlay onClose={() => ui.setOverlay(null)} onPrefill={prefill} />
         </Match>
       </Switch>
     </box>

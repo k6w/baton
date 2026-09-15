@@ -14,6 +14,7 @@ import { useUi } from "../context.ts"
 import { clip, type Line, renderFeed, type Seg, statusLine, width as sw, wrap } from "../lines.ts"
 import { Frame, innerSize } from "../ui/Frame.tsx"
 import { segs, toStyled } from "../ui/styled.ts"
+import { Txt } from "../ui/Txt.tsx"
 
 export interface OrchestratorProps {
   width: number
@@ -56,6 +57,10 @@ export function Orchestrator(props: OrchestratorProps) {
     const model = o?.model ?? ui.config.orchestrator.model
     const ws = workers()
     const out: Seg[] = []
+    if (ui.run.tasks.size) {
+      const tasks = [...ui.run.tasks.values()]
+      out.push({ text: `▤ ${tasks.filter((x) => x.state === "completed").length}/${tasks.length}`, fg: t.accent }, { text: " · ", fg: t.textMuted })
+    }
     if (ws.length) {
       const done = ws.filter((w) => w.status === "ready" && w.toolCalls > 0).length
       out.push({ text: `✓ ${done}/${ws.length}`, fg: t.success }, { text: " · ", fg: t.textMuted })
@@ -162,6 +167,15 @@ export function Orchestrator(props: OrchestratorProps) {
     const t = ui.theme()
     const frames = ui.spinnerFrames()
     const out: Line[] = []
+    if (ui.run.plan?.status === "proposed") {
+      out.push({
+        segs: [
+          { text: "◆ ", fg: t.warning, bold: true },
+          { text: `plan proposed: ${ui.run.tasks.size} tasks`, fg: t.warning, bold: true },
+          { text: " — ctrl+g to review · /plan approve · /plan reject <why>", fg: t.textMuted },
+        ],
+      })
+    }
     if (ui.run.approvals.size) {
       out.push({
         segs: [
@@ -245,7 +259,7 @@ export function Orchestrator(props: OrchestratorProps) {
 
   const inputEl = (
     <box height={1} flexDirection="row">
-      <text wrapMode="none">{prompt()}</text>
+      <Txt value={prompt()} />
       <input
         ref={(r: InputRenderable) => {
           inputRef = r
@@ -295,9 +309,7 @@ export function Orchestrator(props: OrchestratorProps) {
 
   const suggestionBox = () => (
     <Show when={suggestions().length > 0}>
-      <text height={Math.min(SUGGEST_ROWS, suggestions().length)} wrapMode="none">
-        {toStyled(suggestionLines(), inner().width)}
-      </text>
+      <Txt height={Math.min(SUGGEST_ROWS, suggestions().length)} wrapMode="none" value={toStyled(suggestionLines(), inner().width)} />
     </Show>
   )
 
@@ -334,9 +346,7 @@ export function Orchestrator(props: OrchestratorProps) {
   if (props.slim) {
     return (
       <box height={2 + Math.min(6, suggestions().length)} width={props.width} flexDirection="column" backgroundColor={ui.theme().background}>
-        <text height={1} wrapMode="none">
-          {swarmHeader()}
-        </text>
+        <Txt height={1} value={swarmHeader()} />
         {suggestionBox()}
         {inputEl}
       </box>
@@ -355,14 +365,10 @@ export function Orchestrator(props: OrchestratorProps) {
       right={headerRight()}
     >
       <box height={bodyRows()} overflow="hidden">
-        <text height={bodyRows()} wrapMode="none">
-          {toStyled(body(), inner().width)}
-        </text>
+        <Txt height={bodyRows()} wrapMode="none" value={toStyled(body(), inner().width)} />
       </box>
       <Show when={status().length > 0}>
-        <text height={status().length} wrapMode="none">
-          {toStyled(status(), inner().width)}
-        </text>
+        <Txt height={status().length} wrapMode="none" value={toStyled(status(), inner().width)} />
       </Show>
       {suggestionBox()}
       {inputEl}

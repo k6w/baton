@@ -4,9 +4,10 @@ import type { AgentView } from "@batonsh/protocol"
 import { createMemo } from "solid-js"
 import { agentLook, whoFn } from "../agent-style.ts"
 import { useUi } from "../context.ts"
-import { identityLines, type Line, renderFeed, statusLine } from "../lines.ts"
+import { identityLines, type Line, renderFeed, statusLine, workspaceLine } from "../lines.ts"
 import { Frame, innerSize } from "../ui/Frame.tsx"
 import { toStyled } from "../ui/styled.ts"
+import { Txt } from "../ui/Txt.tsx"
 
 export function AgentCard(props: { agentId: string; width: number; height: number; focused: boolean; onSelect?: () => void; onZoom?: () => void }) {
   const ui = useUi()
@@ -25,6 +26,11 @@ export function AgentCard(props: { agentId: string; width: number; height: numbe
     return a ? agentLook(ui, a) : undefined
   })
   const inner = () => innerSize(props.width, props.height, ui.prefs.border)
+
+  const wsLine = createMemo(() => {
+    ver()
+    return workspaceLine(ui.run.workspaces.get(props.agentId), { theme: ui.theme(), width: inner().width, who: whoFn(ui) })
+  })
 
   // Body lines are recomputed only when this agent's events change (or size/theme/prefs).
   let cacheKey = ""
@@ -54,7 +60,7 @@ export function AgentCard(props: { agentId: string; width: number; height: numbe
         compact: true,
       })
     }
-    const bodyH = Math.max(0, height - 1)
+    const bodyH = Math.max(0, height - (wsLine() ? 2 : 1))
     cached = lines.slice(-bodyH)
     cacheKey = key
     return cached
@@ -65,7 +71,9 @@ export function AgentCard(props: { agentId: string; width: number; height: numbe
     const l = look()
     if (!a || !l) return []
     const frames = ui.spinnerFrames()
-    return [statusLine(a, { theme: ui.theme(), look: l.look, frame: frames[ui.frame() % frames.length] ?? "·", verbs: ui.verbs, now: ui.now() })]
+    const line = statusLine(a, { theme: ui.theme(), look: l.look, frame: frames[ui.frame() % frames.length] ?? "·", verbs: ui.verbs, now: ui.now() })
+    const ws = wsLine()
+    return ws ? [ws, line] : [line]
   })
 
   const borderColor = () => {
@@ -102,10 +110,10 @@ export function AgentCard(props: { agentId: string; width: number; height: numbe
       }}
     >
       <box flexGrow={1} overflow="hidden">
-        <text wrapMode="none">{toStyled(body(), inner().width, Math.max(0, inner().height - 1))}</text>
+        <Txt wrapMode="none" value={toStyled(body(), inner().width, Math.max(0, inner().height - status().length))} />
       </box>
-      <box height={1}>
-        <text wrapMode="none">{toStyled(status(), inner().width)}</text>
+      <box height={status().length}>
+        <Txt wrapMode="none" value={toStyled(status(), inner().width, status().length)} />
       </box>
     </Frame>
   )

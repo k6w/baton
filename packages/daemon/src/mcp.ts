@@ -91,6 +91,56 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime): McpServer {
       }),
   )
 
+  server.registerTool(
+    "claim_files",
+    {
+      description:
+        "Claim files or globs you are about to change so other agents keep off them (e.g. ['src/auth/**', 'README.md']). Fails if someone else holds an exclusive claim.",
+      inputSchema: {
+        paths: z.array(z.string()).min(1),
+        exclusive: z.boolean().optional(),
+        ttl_s: z.number().int().min(60).max(86400).optional(),
+      },
+    },
+    (a) =>
+      guard(() => {
+        const r = rt.collab.claim(me, a.paths, a.exclusive ?? true, a.ttl_s ?? 1800)
+        if (!r.ok)
+          return fail(`already claimed: ${r.conflicts.map((c) => `${c.globs.join(", ")} by ${c.agent}`).join("; ")} — coordinate with them via send_message`)
+        return ok(`claimed ${a.paths.join(", ")}${r.conflicts.length ? ` (shared with ${r.conflicts.map((c) => c.agent).join(", ")})` : ""}`)
+      }),
+  )
+
+  server.registerTool(
+    "release_files",
+    { description: "Release your file claims (all of them, or the given paths).", inputSchema: { paths: z.array(z.string()).optional() } },
+    (a) => guard(() => ok(`released ${rt.collab.release(me, a.paths)} claim(s)`)),
+  )
+
+  server.registerTool(
+    "my_changes",
+    { description: "Summary of the files you changed in your workspace (not yet merged into the project).", inputSchema: {} },
+    () =>
+      guard(async () => {
+        const ws = await rt.collab.refresh(me)
+        if (!ws) return ok("no workspace")
+        if (ws.mode === "shared") return ok(`you work directly in ${ws.path} (shared workspace)`)
+        return ok(ws.files.length ? ws.files.map((f) => `${f.path} +${f.added} −${f.removed}`).join("\n") : "no changes yet")
+      }),
+  )
+
+  server.registerTool(
+    "submit_review",
+    {
+      description: "Submit your verdict for the review you were asked to do.",
+      inputSchema: {
+        verdict: z.enum(["approve", "changes_requested"]),
+        notes: z.string().describe("Specific, actionable findings (or why it is good to merge)"),
+      },
+    },
+    (a) => guard(() => ok(`review submitted for ${rt.collab.submitReview(me, a.verdict, a.notes).author}`)),
+  )
+
   if (isLead || rt.config.budget.max_depth > 0) {
     server.registerTool(
       "spawn_agent",
@@ -109,6 +159,11 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime): McpServer {
           model: z.string().optional(),
           role: z.string().optional(),
           count: z.number().int().min(1).max(10).optional().describe("Spawn several identical agents"),
+          task_id: z.string().optional().describe("Plan task this agent works on (from plan_tasks)"),
+          isolation: z
+            .enum(["worktree", "shared"])
+            .optional()
+            .describe("worktree (default): own git worktree, merge later · shared: edit the project directly"),
         },
       },
       (a) =>
@@ -124,6 +179,8 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime): McpServer {
               role: a.role,
               parentId: me,
               prompt: a.task,
+              taskId: a.task_id,
+              isolation: a.isolation,
             })
             names.push(info.name)
           }
@@ -133,6 +190,124 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime): McpServer {
   }
 
   if (isLead) {
+    const agentRef = (name: string) => {
+      const t = rt.findAgent(name)
+      if (!t) throw new Error(`no agent "${name}"`)
+      return t
+    }
+
+    server.registerTool(
+      "merge",
+      {
+        description:
+          "Merge an agent's worktree changes into the project (three-way, runs workspace.verify first if configured). Returns merged files, or the conflicting files.",
+        inputSchema: { agent: z.string() },
+      },
+      (a) =>
+        guard(async () => {
+          const t = agentRef(a.agent)
+          const r = await rt.collab.merge(t.info.agentId, me)
+          if (r.status === "merged") return ok(`merged ${t.info.name}: ${r.files.map((f) => `${f.path} +${f.added} −${f.removed}`).join(", ")}`)
+          if (r.status === "empty") return ok(`${t.info.name} has no changes to merge`)
+          return fail(
+            `${r.status}: ${r.detail ?? ""}${r.status === "conflict" ? ` — call sync("${t.info.name}") so the agent resolves them in its worktree, then merge again` : ""}`,
+          )
+        }),
+    )
+
+    server.registerTool(
+      "sync",
+      {
+        description: "Bring the project's latest state into an agent's worktree; conflicts are left as markers and the agent is asked to resolve them.",
+        inputSchema: { agent: z.string() },
+      },
+      (a) =>
+        guard(async () => {
+          const t = agentRef(a.agent)
+          const r = await rt.collab.sync(t.info.agentId)
+          return ok(
+            r.clean
+              ? `${t.info.name} is up to date with the project`
+              : `${t.info.name} has conflicts in ${r.conflicts.join(", ")}; it was asked to resolve them`,
+          )
+        }),
+    )
+
+    server.registerTool(
+      "get_diff",
+      {
+        description: "Unified diff of an agent's unmerged changes (optionally limited to paths). Long diffs are truncated.",
+        inputSchema: { agent: z.string(), paths: z.array(z.string()).optional() },
+      },
+      (a) =>
+        guard(async () => {
+          const t = agentRef(a.agent)
+          const d = await rt.collab.diff(t.info.agentId, a.paths ?? [])
+          if (!d.trim()) return ok("(no changes)")
+          return ok(d.length > 60_000 ? `${d.slice(0, 60_000)}\n… [truncated, ${d.length} bytes]` : d)
+        }),
+    )
+
+    server.registerTool(
+      "request_review",
+      {
+        description:
+          "Have another agent review an agent's changes (default reviewer: a different vendor, e.g. Codex reviews Claude). The verdict comes back to you as a result message.",
+        inputSchema: { agent: z.string(), reviewer: z.string().optional().describe("adapter id, profile, or an existing agent's name") },
+      },
+      (a) =>
+        guard(async () => {
+          const t = agentRef(a.agent)
+          const r = await rt.collab.requestReview(t.info.agentId, { reviewer: a.reviewer, requester: me })
+          return ok(`${r.reviewer} is reviewing ${t.info.name}`)
+        }),
+    )
+
+    server.registerTool(
+      "plan_tasks",
+      {
+        description:
+          "Record the task plan (a DAG) before dispatching. Shown to the user; if plan approval is enabled this waits for their decision. Then pass task_id to spawn_agent.",
+        inputSchema: {
+          tasks: z
+            .array(
+              z.object({
+                id: z.string().optional(),
+                title: z.string(),
+                description: z.string().optional(),
+                deps: z.array(z.string()).optional(),
+                files: z.array(z.string()).optional(),
+                acceptance: z.string().optional(),
+              }),
+            )
+            .min(1),
+        },
+      },
+      (a) =>
+        guard(async () => {
+          const r = await rt.collab.plan(a.tasks)
+          if (!r.approved) return fail(`plan rejected by the user${r.notes ? `: ${r.notes}` : ""} — revise it`)
+          return ok(`plan recorded (${r.ids.join(", ")})${r.notes ? `; user notes: ${r.notes}` : ""}`)
+        }),
+    )
+
+    server.registerTool(
+      "update_task",
+      {
+        description: "Update a plan task's state.",
+        inputSchema: {
+          task_id: z.string(),
+          state: z.enum(["submitted", "working", "input_required", "completed", "failed", "canceled", "rejected"]),
+          note: z.string().optional(),
+        },
+      },
+      (a) =>
+        guard(() => {
+          rt.collab.updateTask(a.task_id, a.state, a.note)
+          return ok("ok")
+        }),
+    )
+
     server.registerTool(
       "wait_for_results",
       {

@@ -32,6 +32,11 @@ export const REMOTE_COMMANDS: Record<string, string> = {
   label: "/label <agent> <text>",
   rename: "/rename <agent> <new-name>",
   agents: "/agents — installed adapters + auth",
+  merge: "/merge <agent|all> — land worktree changes",
+  sync: "/sync <agent>",
+  review: "/review <agent> [reviewer]",
+  diff: "/diff <agent>",
+  plan: "/plan approve|reject [notes]",
   approve: "/approve [all]",
   deny: "/deny [all]",
 }
@@ -88,7 +93,19 @@ export function completions(input: string, run: RunState, config: BatonConfig): 
       case "label":
       case "rename":
       case "zoom":
+      case "sync":
+      case "review":
+      case "diff":
         options = agents()
+        break
+      case "merge":
+        options = [{ v: "all", d: "every worktree" }, ...agents()]
+        break
+      case "plan":
+        options = [
+          { v: "approve", d: "let the orchestrator dispatch" },
+          { v: "reject", d: "send it back with notes" },
+        ]
         break
       case "theme":
         themeNames ??= listThemes({ opencode: true }).map((t) => t.name)

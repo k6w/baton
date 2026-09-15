@@ -28,6 +28,19 @@ export type FeedItem =
   | { kind: "error"; id: string; text: string; ts: number }
   | { kind: "note"; id: string; text: string; ts: number }
 
+export interface WorkspaceView {
+  mode: "worktree" | "shared"
+  path: string
+  branch?: string
+  files: { path: string; added: number; removed: number }[]
+  added: number
+  removed: number
+  merge?: { status: "queued" | "verifying" | "merged" | "failed" | "conflict"; detail?: string; files?: string[]; ts: number }
+  conflicts: { with: string; files: string[]; kind: "merge" | "lease" }[]
+  review?: { status: "requested" | "approve" | "changes_requested"; reviewer: string; notes?: string }
+  leases: { leaseId: string; globs: string[]; exclusive: boolean }[]
+}
+
 export interface AgentFeed {
   items: FeedItem[]
   index: Map<string, FeedItem>
@@ -47,6 +60,8 @@ export class RunState {
   feeds = new Map<string, AgentFeed>()
   tasks = new Map<string, TaskView>()
   approvals = new Map<string, PendingApproval>()
+  workspaces = new Map<string, WorkspaceView>()
+  plan: { planId: string; status: "proposed" | "approved" | "rejected"; notes?: string } | undefined
   bus: BusMessageView[] = []
   lastSeq = 0
   totals = { toolCalls: 0, messages: 0, added: 0, removed: 0, costUsd: 0, input: 0, output: 0 }
@@ -325,16 +340,107 @@ export class RunState {
         break
       }
       case "task.created":
-        this.tasks.set(e.data.taskId, { taskId: e.data.taskId, title: e.data.title, state: "submitted", owner: e.data.owner, deps: e.data.deps })
+        this.tasks.set(e.data.taskId, {
+          taskId: e.data.taskId,
+          title: e.data.title,
+          state: "submitted",
+          owner: e.data.owner,
+          deps: e.data.deps,
+          note: e.data.description,
+        })
         break
       case "task.state": {
         const t = this.tasks.get(e.data.taskId)
         if (t) {
           t.state = e.data.state
           if (e.data.owner) t.owner = e.data.owner
+          if (e.data.note) t.note = e.data.note
         }
         break
       }
+      case "workspace.created":
+        if (aid) {
+          this.workspaces.set(aid, { mode: e.data.mode, path: e.data.path, branch: e.data.branch, files: [], added: 0, removed: 0, conflicts: [], leases: [] })
+          if (agent) agent.cwd = e.data.path
+        }
+        break
+      case "workspace.changed": {
+        const w = aid ? this.workspaces.get(aid) : undefined
+        if (w) {
+          w.files = e.data.files
+          w.added = e.data.added
+          w.removed = e.data.removed
+          const paths = new Set(e.data.files.map((f) => f.path))
+          w.conflicts = w.conflicts.filter((c) => c.files.some((f) => paths.has(f)))
+          if (w.merge?.status === "merged" && e.data.files.length) w.merge = undefined
+        }
+        break
+      }
+      case "workspace.conflict": {
+        const w = aid ? this.workspaces.get(aid) : undefined
+        if (w) {
+          w.conflicts = w.conflicts.filter((c) => !(c.with === e.data.with && c.kind === e.data.kind))
+          w.conflicts.push({ with: e.data.with, files: e.data.files, kind: e.data.kind })
+        }
+        if (aid) {
+          const other = this.agents.get(e.data.with)?.name ?? "another agent"
+          this.push(aid, {
+            kind: "note",
+            id: `c_${e.id}`,
+            text: `${e.data.kind === "lease" ? "claimed by" : "conflicts with"} ${other}: ${e.data.files.join(", ")}`,
+            ts: e.ts,
+          })
+        }
+        break
+      }
+      case "workspace.merge": {
+        const w = aid ? this.workspaces.get(aid) : undefined
+        if (w) {
+          w.merge = { status: e.data.status, detail: e.data.detail, files: e.data.files, ts: e.ts }
+          if (e.data.status === "merged") w.conflicts = []
+        }
+        if (aid && (e.data.status === "merged" || e.data.status === "failed" || e.data.status === "conflict")) {
+          const text =
+            e.data.status === "merged"
+              ? e.data.files?.length
+                ? `merged ${e.data.files.length} file${e.data.files.length === 1 ? "" : "s"} (+${e.data.added ?? 0} −${e.data.removed ?? 0}) into the project`
+                : "nothing to merge"
+              : `merge ${e.data.status}: ${e.data.detail ?? ""}`
+          this.push(aid, { kind: e.data.status === "merged" ? "note" : "error", id: `m_${e.id}`, text, ts: e.ts })
+        }
+        break
+      }
+      case "workspace.removed":
+        if (aid) this.workspaces.delete(aid)
+        break
+      case "lease.claimed": {
+        const w = aid ? this.workspaces.get(aid) : undefined
+        if (w) w.leases.push({ leaseId: e.data.leaseId, globs: e.data.globs, exclusive: e.data.exclusive })
+        break
+      }
+      case "lease.released":
+        for (const w of this.workspaces.values()) w.leases = w.leases.filter((l) => l.leaseId !== e.data.leaseId)
+        break
+      case "review.requested": {
+        const w = aid ? this.workspaces.get(aid) : undefined
+        if (w) w.review = { status: "requested", reviewer: e.data.reviewer }
+        break
+      }
+      case "review.verdict": {
+        const w = this.workspaces.get(e.data.author)
+        if (w) w.review = { status: e.data.verdict, reviewer: e.data.reviewer, notes: e.data.notes }
+        if (aid)
+          this.push(aid, {
+            kind: "note",
+            id: `r_${e.id}`,
+            text: `review: ${e.data.verdict === "approve" ? "approved" : "changes requested"} — ${e.data.notes.split("\n")[0]}`,
+            ts: e.ts,
+          })
+        break
+      }
+      case "task.plan":
+        this.plan = { planId: e.data.planId, status: e.data.status, notes: e.data.notes }
+        break
       case "error":
         if (aid) this.push(aid, { kind: "error", id: `e_${e.id}`, text: e.data.message, ts: e.ts })
         break

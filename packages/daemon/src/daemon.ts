@@ -52,6 +52,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       ...config,
       orchestrator: { ...config.orchestrator, enabled: true, agent: "mock", mode: "orchestrator" },
       bus: { ...config.bus, heartbeat_s: Math.min(config.bus.heartbeat_s || 4, 4) },
+      // simulated agents don't edit files: skip worktrees in demo mode
+      workspace: { ...config.workspace, isolation: "shared" },
     }
   }
   if (!opts.ephemeral) mkdirSync(paths.run, { recursive: true })

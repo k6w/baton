@@ -23,6 +23,11 @@ export const DAEMON_COMMANDS: Record<string, string> = {
   label: "/label <name> <text> — set an agent's card label",
   rename: "/rename <name> <new-name>",
   agents: "/agents — list agents and installed adapters",
+  merge: "/merge <agent|all> — merge worktree changes into the project",
+  sync: "/sync <agent> — bring the project's latest state into an agent's worktree",
+  review: "/review <agent> [reviewer] — cross-vendor review of an agent's changes",
+  diff: "/diff <agent> — show what an agent changed",
+  plan: "/plan approve|reject [notes] — decide on the orchestrator's proposed plan",
   approve: "/approve [all] — approve the oldest (or all) pending requests",
   deny: "/deny [all] — deny the oldest (or all) pending requests",
 }
@@ -134,6 +139,57 @@ async function handleCommand(rt: Runtime, text: string): Promise<InputResult> {
             `${d.installed ? "●" : "○"} ${d.id.padEnd(14)} ${d.installed ? `v${d.version ?? "?"}` : "not installed"}${d.installed ? ` · auth ${d.auth}` : ""}`,
         )
       return { routedTo: [], command: cmd, output: lines.join("\n") }
+    }
+    case "merge": {
+      const targets =
+        args[0] === "all"
+          ? [...rt.collab.workspaces.byAgent.values()]
+              .filter((w) => w.mode === "worktree")
+              .map((w) => rt.agents.get(w.agentId)!)
+              .filter(Boolean)
+          : [byName(args[0])]
+      const lines: string[] = []
+      for (const t of targets) {
+        const r = await rt.collab.merge(t.info.agentId)
+        lines.push(
+          r.status === "merged"
+            ? `✓ ${t.info.name}: ${r.files.length} file(s) merged`
+            : r.status === "empty"
+              ? `· ${t.info.name}: nothing to merge`
+              : `✗ ${t.info.name}: ${r.status} — ${r.detail ?? ""}`,
+        )
+      }
+      return { routedTo: targets.map((t) => t.info.name), command: cmd, output: lines.join("\n") || "no worktrees" }
+    }
+    case "sync": {
+      const t = byName(args[0])
+      const r = await rt.collab.sync(t.info.agentId)
+      return {
+        routedTo: [t.info.name],
+        command: cmd,
+        output: r.clean ? `${t.info.name} is up to date` : `${t.info.name}: conflicts in ${r.conflicts.join(", ")} — asked to resolve`,
+      }
+    }
+    case "review": {
+      const t = byName(args[0])
+      const r = await rt.collab.requestReview(t.info.agentId, { reviewer: args[1] })
+      return { routedTo: [t.info.name], command: cmd, output: `${r.reviewer} is reviewing ${t.info.name}` }
+    }
+    case "diff": {
+      const t = byName(args[0])
+      const ws = await rt.collab.refresh(t.info.agentId)
+      const files = ws?.files ?? []
+      return {
+        routedTo: [t.info.name],
+        command: cmd,
+        output: files.length ? files.map((f) => `${f.path}  +${f.added} −${f.removed}`).join("\n") : `${t.info.name}: no unmerged changes`,
+      }
+    }
+    case "plan": {
+      const verdict = args[0]
+      if (verdict !== "approve" && verdict !== "reject") throw new Error(DAEMON_COMMANDS.plan)
+      const ok = rt.collab.decidePlan(verdict === "approve", args.slice(1).join(" ") || undefined)
+      return { routedTo: [], command: cmd, output: ok ? `plan ${verdict === "approve" ? "approved" : "rejected"}` : "no plan is waiting for approval" }
     }
     case "approve":
     case "deny": {

@@ -94,8 +94,10 @@ export const BatonConfig = z.object({
       mode: z.string().default("orchestrator"),
       /** Extra instructions appended to the orchestrator playbook. */
       instructions: z.string().optional(),
+      /** Require the user to approve the orchestrator's task plan before it dispatches work. */
+      plan_approval: z.boolean().default(false),
     })
-    .default({ enabled: true, agent: "claude", approval: "auto-edit", mode: "orchestrator" }),
+    .default({ enabled: true, agent: "claude", approval: "auto-edit", mode: "orchestrator", plan_approval: false }),
   defaults: z
     .object({
       approval: Approval.default("ask"),
@@ -139,6 +141,37 @@ export const BatonConfig = z.object({
    * Project-level plugins only load after `baton trust` (they run code from the repo).
    */
   plugins: z.array(z.string()).default([]),
+  workspace: z
+    .object({
+      /** worktree: every worker gets its own git worktree; shared: everyone edits the project directly. */
+      isolation: z.enum(["worktree", "shared"]).default("worktree"),
+      /** Where worktrees live (default: ~/.local/state/baton/worktrees/<project>). Outside the repo so test runners never see them. */
+      dir: z.string().optional(),
+      /** Symlinked from the project into each worktree when present (dependency folders). */
+      link: z.array(z.string()).default(["node_modules", ".venv", "vendor"]),
+      /** Copied into each worktree when present (usually git-ignored secrets). */
+      copy: z.array(z.string()).default([".env", ".env.local", ".env.development.local"]),
+      /** Command run once in each new worktree (e.g. "bun install"). */
+      setup: z.string().optional(),
+      /** Command that must pass in the worktree before its changes are merged. */
+      verify: z.string().optional(),
+      /** off | suggested (orchestrator is told to get reviews) | required (merge refuses without an approval). */
+      review: z.enum(["off", "suggested", "required"]).default("suggested"),
+      /** Adapter used for reviews (default: a different vendor than the author). */
+      reviewer: z.string().optional(),
+      /** What happens to a worktree when its agent is removed. */
+      cleanup: z.enum(["merged", "always", "never"]).default("merged"),
+      /** Predict merge conflicts between workers as they edit. */
+      conflict_check: z.boolean().default(true),
+    })
+    .default({
+      isolation: "worktree",
+      link: ["node_modules", ".venv", "vendor"],
+      copy: [".env", ".env.local", ".env.development.local"],
+      review: "suggested",
+      cleanup: "merged",
+      conflict_check: true,
+    }),
   daemon: z
     .object({
       /** Keep the daemon alive after the last client detaches. */

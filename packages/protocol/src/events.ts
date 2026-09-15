@@ -233,6 +233,53 @@ export const EventSchemas = {
     note: z.string().optional(),
   }),
 
+  "task.plan": z.object({
+    planId: z.string(),
+    status: z.enum(["proposed", "approved", "rejected"]),
+    notes: z.string().optional(),
+  }),
+
+  // workspaces (git worktree per agent)
+  "workspace.created": z.object({
+    path: z.string(),
+    branch: z.string().optional(),
+    base: z.string().optional(),
+    mode: z.enum(["worktree", "shared"]),
+  }),
+  "workspace.changed": z.object({
+    files: z.array(z.object({ path: z.string(), added: z.number(), removed: z.number() })),
+    added: z.number(),
+    removed: z.number(),
+  }),
+  "workspace.conflict": z.object({
+    with: z.string(), // other agentId
+    files: z.array(z.string()),
+    kind: z.enum(["merge", "lease"]),
+  }),
+  "workspace.merge": z.object({
+    status: z.enum(["queued", "verifying", "merged", "failed", "conflict"]),
+    commit: z.string().optional(),
+    files: z.array(z.string()).optional(),
+    added: z.number().optional(),
+    removed: z.number().optional(),
+    detail: z.string().optional(),
+  }),
+  "workspace.removed": z.object({ kept: z.boolean(), reason: z.string().optional() }),
+
+  // file leases
+  "lease.claimed": z.object({ leaseId: z.string(), globs: z.array(z.string()), exclusive: z.boolean(), expiresAt: z.number() }),
+  "lease.released": z.object({ leaseId: z.string() }),
+
+  // reviews
+  "review.requested": z.object({ reviewId: z.string(), author: z.string(), reviewer: z.string() }),
+  "review.verdict": z.object({
+    reviewId: z.string(),
+    author: z.string(),
+    reviewer: z.string(),
+    verdict: z.enum(["approve", "changes_requested"]),
+    notes: z.string(),
+  }),
+
   // budget
   "budget.warn": z.object({ scope: z.string(), usedUsd: z.number(), limitUsd: z.number() }),
   "budget.exceeded": z.object({ scope: z.string(), usedUsd: z.number(), limitUsd: z.number() }),

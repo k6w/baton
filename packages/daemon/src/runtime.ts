@@ -20,6 +20,7 @@ import {
   type SpawnParams,
   type ToolKind,
 } from "@batonsh/protocol"
+import { Collaboration } from "./collab.ts"
 import { identityBlock, loadPlaybook } from "./playbooks.ts"
 import { PolicyEngine, pickOption } from "./policy.ts"
 import { AdapterRegistry } from "./registry.ts"
@@ -78,6 +79,7 @@ export class Runtime {
   private runWarned = false
   private closed = false
   readonly projectRoot: string
+  readonly collab: Collaboration
 
   constructor(opts: RuntimeOptions) {
     this.projectRoot = opts.projectRoot
@@ -86,6 +88,7 @@ export class Runtime {
     this.store = new EventStore(opts.storePath ?? ":memory:")
     this.policy = new PolicyEngine(opts.config.policy.preset, opts.config.policy.rules)
     this.runId = this.store.createRun(opts.projectRoot)
+    this.collab = new Collaboration(this)
     const git = gitInfo(opts.projectRoot)
     this.state.projectRoot = opts.projectRoot
     this.state.projectName = opts.config.project.name ?? projectName(opts.projectRoot)
@@ -203,6 +206,7 @@ export class Runtime {
       playbook,
       identityBlock({ name, adapter: adapterId, isOrchestrator: params.isOrchestrator, peers }),
       params.isOrchestrator ? this.config.orchestrator.instructions : undefined,
+      params.isOrchestrator ? workspacePolicy(this.config) : undefined,
       rolePrompt ? `\n## Role: ${info.role}\n${rolePrompt}` : undefined,
     ]
       .filter(Boolean)
@@ -220,6 +224,12 @@ export class Runtime {
         }
       : undefined
 
+    // workers get their own git worktree; the orchestrator (and explicit cwd) work in place
+    const isolation = params.isolation ?? (params.isOrchestrator || params.cwd ? "shared" : this.config.workspace.isolation)
+    if (isolation === "worktree") info.cwd = await this.collab.prepare(rt, "worktree")
+    else this.emit({ type: "workspace.created", data: { path: info.cwd, mode: "shared" } }, agentId)
+    if (params.taskId) this.collab.assignTask(params.taskId, agentId)
+
     const ac = new AbortController()
     try {
       rt.session = await adapter.start(
@@ -232,7 +242,7 @@ export class Runtime {
           systemPrompt,
           mcpServers: this.mcpBaseUrl && rt.caps.mcp ? [{ name: "baton", url: `${this.mcpBaseUrl}/mcp/${rt.token}` }] : [],
           approval,
-          env: { ...profile?.env, BATON_AGENT: name, BATON_AGENT_ID: agentId },
+          env: { ...profile?.env, BATON_AGENT: name, BATON_AGENT_ID: agentId, BATON_PROJECT_ROOT: this.projectRoot },
           command: profile?.command,
           args: profile?.args,
           options: { ...profile?.options, ...params.options },
@@ -248,6 +258,7 @@ export class Runtime {
       this.emit({ type: "error", data: { message: `failed to start ${name}: ${message}`, fatal: true } }, agentId)
       this.emit({ type: "agent.exited", data: { code: null, reason: message } }, agentId)
       rt.closing = true
+      void this.collab.remove(agentId)
       throw new Error(`failed to start ${name}: ${message}`)
     }
     if (this.state.agents.get(agentId)?.status === "starting") this.emit({ type: "agent.status", data: { status: "ready" } }, agentId)
@@ -314,13 +325,9 @@ export class Runtime {
         this.policy.forgetAgent(agentId)
         break
     }
+    this.collab.onEvent(rt, stored)
   }
 
-  /**
-   * Send input to an agent. `expectResult` (default: the sender dispatched work — i.e. it is
-   * the orchestrator or the agent's parent) makes the agent's next turn result flow back to
-   * the sender as a `result` bus message.
-   */
   private authHinted = new Set<string>()
 
   /** One actionable note per adapter when it fails on authentication. */
@@ -337,6 +344,11 @@ export class Runtime {
     })
   }
 
+  /**
+   * Send input to an agent. `expectResult` (default: the sender dispatched work — i.e. it is
+   * the orchestrator or the agent's parent) makes the agent's next turn result flow back to
+   * the sender as a `result` bus message.
+   */
   async promptAgent(agentId: string, text: string, opts: { from?: string; delivery?: Delivery; expectResult?: boolean } = {}): Promise<void> {
     const rt = this.agents.get(agentId)
     if (!rt?.session || rt.closing) throw new Error(`agent ${agentId} is not running`)
@@ -369,6 +381,7 @@ export class Runtime {
       await Promise.race([rt.session?.close(), new Promise((r) => setTimeout(r, 5000))])
     } catch {}
     if (this.state.agents.get(agentId)?.status !== "exited") this.emit({ type: "agent.exited", data: { code: 0, reason: "killed" } }, agentId)
+    await this.collab.remove(agentId)
   }
 
   rename(agentId: string, name?: string, label?: string) {
@@ -542,12 +555,18 @@ export class Runtime {
   }
 
   private reportResult(rt: AgentRuntime, outcome: "ok" | "failed" | "interrupted") {
+    this.collab.onResult(rt, outcome)
     if (rt.resultTo.size === 0) return
     const targets = [...rt.resultTo]
     rt.resultTo.clear()
     const diff = rt.turnDiff.added || rt.turnDiff.removed ? ` (+${rt.turnDiff.added} −${rt.turnDiff.removed})` : ""
     const text = rt.lastAssistantText.trim() || "(no summary)"
-    const body = `result ${outcome}${diff}\n${text.length > 4000 ? `${text.slice(0, 4000)}…` : text}`
+    const ws = this.collab.workspaces.byAgent.get(rt.info.agentId)
+    const where =
+      ws?.mode === "worktree" && (rt.turnDiff.added || rt.turnDiff.removed)
+        ? `\n[changes are in ${rt.info.name}'s own worktree — call merge("${rt.info.name}") to bring them into the project]`
+        : ""
+    const body = `result ${outcome}${diff}\n${text.length > 4000 ? `${text.slice(0, 4000)}…` : text}${where}`
     for (const t of targets) {
       if (!this.agents.get(t) || this.agents.get(t)?.closing) continue
       try {
@@ -657,4 +676,19 @@ export class Runtime {
     this.closed = true
     this.store.close()
   }
+}
+
+function workspacePolicy(c: BatonConfig): string {
+  const w = c.workspace
+  const lines = ["\n## Project settings"]
+  lines.push(
+    w.isolation === "worktree"
+      ? "- Workers get their own worktree; nothing lands until you merge(agent)."
+      : "- isolation = shared: workers edit the project directly (no merge step) — keep their files disjoint.",
+  )
+  if (w.review === "required") lines.push("- Reviews are REQUIRED: merge refuses until a reviewer approves the current changes (request_review).")
+  else if (w.review === "suggested") lines.push("- Get a cross-vendor review (request_review) before merging non-trivial changes.")
+  if (w.verify) lines.push(`- Merges run \`${w.verify}\` in the worktree first; failures block the merge.`)
+  if (c.orchestrator.plan_approval) lines.push("- The user approves plans: call plan_tasks before spawning workers and wait for the verdict.")
+  return lines.join("\n")
 }

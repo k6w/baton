@@ -89,6 +89,14 @@ export function startControlServer(rt: Runtime, socketPath: string, hooks: { onS
       return { ok: true }
     },
     "config.get": () => ({ config: rt.config }),
+    "workspace.merge": async (p) => {
+      const r = await rt.collab.merge(p.agentId)
+      return { status: r.status, files: (r.conflicts ?? r.files.map((f) => f.path)) as string[], detail: r.detail }
+    },
+    "workspace.sync": (p) => rt.collab.sync(p.agentId),
+    "workspace.diff": async (p) => ({ patch: await rt.collab.diff(p.agentId, p.paths ?? []) }),
+    "review.request": async (p) => ({ reviewer: (await rt.collab.requestReview(p.agentId, { reviewer: p.reviewer })).reviewer }),
+    "plan.decide": (p) => ({ ok: rt.collab.decidePlan(p.approved, p.notes) }),
     "daemon.shutdown": () => {
       setTimeout(hooks.onShutdown, 10)
       return { ok: true }

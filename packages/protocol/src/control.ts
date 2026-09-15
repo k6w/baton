@@ -38,6 +38,7 @@ export interface TaskView {
   state: TaskState
   owner?: string
   deps: string[]
+  note?: string
 }
 
 export interface BusMessageView {
@@ -85,6 +86,10 @@ export interface SpawnParams {
   parentId?: string
   approval?: "ask" | "auto-edit" | "auto" | "yolo"
   options?: Record<string, unknown>
+  /** worktree (own git worktree) | shared (work in `cwd` / the project directly). */
+  isolation?: "worktree" | "shared"
+  /** Plan task this agent is assigned to. */
+  taskId?: string
 }
 
 export interface ControlMethods {
@@ -116,6 +121,11 @@ export interface ControlMethods {
   }
   "permission.respond": { params: { agentId: string; requestId: string; optionId: string | null }; result: { ok: true } }
   "run.mode": { params: { mode: string }; result: { ok: true } }
+  "workspace.merge": { params: { agentId: string }; result: { status: string; files: string[]; detail?: string } }
+  "workspace.sync": { params: { agentId: string }; result: { clean: boolean; conflicts: string[] } }
+  "workspace.diff": { params: { agentId: string; paths?: string[] }; result: { patch: string } }
+  "review.request": { params: { agentId: string; reviewer?: string }; result: { reviewer: string } }
+  "plan.decide": { params: { approved: boolean; notes?: string }; result: { ok: boolean } }
   "config.get": { params: { key?: string } | undefined; result: { config: unknown; provenance?: Record<string, string> } }
   "daemon.shutdown": { params: Record<string, never> | undefined; result: { ok: true } }
 }

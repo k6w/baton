@@ -31,6 +31,7 @@ model = "sonnet"                  # optional; passed to the adapter
 approval = "auto-edit"            # ask | auto-edit | auto | yolo — how freely the agent itself acts
 mode = "orchestrator"             # playbook: .baton/playbooks/<mode>.md overrides the built-in one
 instructions = "Prefer Codex for reviews."   # appended to the playbook
+plan_approval = false             # true: the orchestrator's plan_tasks waits for /plan approve|reject
 
 [defaults]
 worker = "codex"                  # default adapter for /spawn suggestions
@@ -75,6 +76,18 @@ match = "^Bash\\((bun|npm) test"  # regex against the request title + detail
 agents = ["codex-1", "codex"]     # agent names or adapter ids (optional)
 action = "allow"                  # allow | deny | ask
 
+[workspace]
+isolation = "worktree"            # worktree: each worker gets its own git worktree · shared: everyone edits the project
+# dir = "~/worktrees"             # default ~/.local/state/baton/worktrees/<project> (outside the repo, so test runners never see it)
+link = ["node_modules", ".venv", "vendor"]   # symlinked into each worktree when present
+copy = [".env", ".env.local"]     # copied into each worktree when present
+setup = "bun install"             # run once in each new worktree (optional)
+verify = "bun test"               # must pass in the worktree before a merge lands (optional)
+review = "suggested"              # off | suggested | required (merge refuses without an approving review)
+reviewer = "codex"                # adapter for reviews (default: a different vendor than the author)
+cleanup = "merged"                # merged (keep worktrees with unmerged work) | always | never
+conflict_check = true             # predict conflicts between workers while they edit
+
 [bus]
 heartbeat_s = 15                  # worker → lead heartbeats/progress in the bus log (0 = off)
 contact = "open"                  # open | tree (only parent/children/siblings may message each other)
@@ -100,7 +113,7 @@ show_bus = true
 show_thoughts = false
 card_fields = ["adapter", "version", "model", "dir", "approval"]   # idle identity card (+ role, session)
 status_left = "{dot} {running}/{total} {noun} running · {calls} calls · {msgs} msgs"
-status_right = "{cost}  {added} {removed}  {repo}@{branch}"
+status_right = "{unmerged}  {cost}  {added} {removed}  {repo}@{branch}"
 timestamp_format = "ss.mmm"       # ss.mmm | hh:mm:ss | relative
 
 [agent_style.claude]              # per adapter (or per agent name)
@@ -118,8 +131,8 @@ mcp_port = 0                      # 0 = random free port on 127.0.0.1
 
 ### Status bar variables
 
-`{dot} {running} {total} {noun} {calls} {msgs} {cost} {tokens} {added} {removed} {repo} {branch} {mode}
-{approvals} {spark} {theme} {layout}`. Variables with no value are dropped, along with any separator left
+`{dot} {running} {total} {noun} {calls} {msgs} {cost} {tokens} {added} {removed} {unmerged} {repo} {branch}
+{mode} {approvals} {spark} {theme} {layout}`. Variables with no value are dropped, along with any separator left
 dangling.
 
 ### Playbooks

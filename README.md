@@ -50,10 +50,12 @@ Then type what you want. The orchestrator decides how many agents to use, which 
 | `@all stop and commit` · `@role:reviewer …` | broadcasts to every agent, or to every agent with that role |
 | `!codex-3` · `!all` | interrupts an agent (or everyone) |
 | `/spawn codex 3 typo hunt` | starts three Codex agents labelled "typo hunt" |
+| `/merge <agent\|all>` · `/sync` · `/review <agent> [reviewer]` · `/diff` · `/plan approve\|reject` | land worker branches, resolve conflicts, cross-vendor review, approve plans |
 | `/kill`, `/interrupt`, `/model`, `/label`, `/rename`, `/mode`, `/agents`, `/approve`, `/deny` | daemon commands; Tab completes names and arguments |
 | `/theme`, `/layout`, `/icons`, `/border`, `/look`, `/bus`, `/thoughts`, `/zoom` | UI commands |
 
 Keys: `ctrl+p` command palette · `ctrl+t` theme picker with live preview · `ctrl+a` approvals inbox ·
+`ctrl+d` changes and diffs · `ctrl+g` task plan ·
 `ctrl+y` approve the oldest request · `tab` focus the agent grid (then `hjkl`/arrows, `z` zoom, `m` message,
 `x` interrupt) · `ctrl+l` cycle layouts · `?` all shortcuts. Every binding can be changed
 ([docs/keybindings.md](docs/keybindings.md)).
@@ -70,6 +72,12 @@ Keys: `ctrl+p` command palette · `ctrl+t` theme picker with live preview · `ct
 - **A message bus between agents.** Every agent gets a `baton` MCP server (`send_message`, `read_inbox`, `list_agents`, `report_progress`; the orchestrator additionally gets `spawn_agent`, `wait_for_results`, `interrupt_agent`, `kill_agent`).
   - Messages are pushed into each agent through its native steering call: Codex `turn/steer`, Claude streaming input, Amp steer messages. Agents that can't steer get them queued for their next turn.
   - A worker's result automatically flows back to whoever dispatched the task.
+- **Every worker gets its own git worktree.**
+  - It starts from your current state, including uncommitted changes.
+  - Baton predicts conflicts between workers *while* they edit.
+  - Changes land through a 3-way merge queue into your working tree; your index and branch are never touched.
+  - An optional verify command must pass first, and there's an optional cross-vendor review gate (Codex reviews Claude's work, and vice versa).
+  - Plus file claims, task plans with optional approval, and a Changes view (`ctrl+d`) with a diff viewer. See [docs/workspaces.md](docs/workspaces.md).
 - **One approval inbox.** Permission requests from every protocol go through a policy engine (`strict` / `balanced` / `yolo` plus your own rules). Whatever the policy doesn't decide lands in one inbox. An agent can never pass your approval on to another agent.
 - **Budgets** per agent and per run (warn at 80%, interrupt at 100%), plus limits on agent count and spawn depth.
 - **A daemon you can detach from.** `batond` runs per project and the TUI is just a client: quit with `ctrl+c` and your agents keep working; run `baton` again to re-attach. Every event is stored in SQLite, so runs survive crashes and can be replayed.
@@ -82,6 +90,7 @@ Keys: `ctrl+p` command palette · `ctrl+t` theme picker with live preview · `ct
 
 ## Documentation
 
+- [Workspaces, merging & reviews](docs/workspaces.md): worktrees, the merge queue, conflicts, reviews, file claims, plans
 - [Configuration](docs/configuration.md): every setting, the order config layers are applied, env vars, `baton config explain`
 - [Agents, providers & plugins](docs/agents.md): supported agents, custom agents, model providers, writing adapters
 - [Themes & appearance](docs/themes.md): the theme format, every token, importing, logos, layouts
@@ -104,7 +113,7 @@ flags: --theme <name> --layout <grid|focus|swarm|wide> --orchestrator <adapter> 
 ## Development
 
 ```sh
-bun test                        # ~200 tests: protocol, kernel, daemon, adapters (replayed fixtures), TUI frames
+bun test                        # ~220 tests: protocol, kernel, daemon, adapters (replayed fixtures), TUI frames
 BATON_LIVE=1 bun test packages/adapters/codex    # contract tests against the real CLI (uses your account)
 bunx tsc -p tsconfig.json --noEmit && bunx biome check .
 ```

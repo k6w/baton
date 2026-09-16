@@ -140,6 +140,10 @@ Adapter checklist (`packages/adapters/testkit` has `startHarness` and a shared `
 | `report_progress(percent, note?)` | everyone | shown on the agent's card and in the bus |
 | `spawn_agent(adapter, task?, label?, model?, role?, count?)` | orchestrator (and workers if `budget.max_depth > 0`) | its results flow back to the spawner |
 | `wait_for_results(agents?, timeout_s?)` | orchestrator | blocks until the given workers report |
+| `plan_tasks(tasks)`, `update_task(id, state)` | orchestrator | the task plan (waits for approval when `plan_approval` is set) |
+| `get_diff(agent)`, `merge(agent)`, `sync(agent)`, `request_review(agent, reviewer?)` | orchestrator | review and land worker branches |
+| `claim_files(paths)`, `release_files()`, `my_changes()` | everyone | file claims and your own unmerged changes |
+| `submit_review(verdict, notes)` | reviewers | approve or request changes |
 | `interrupt_agent`, `kill_agent`, `set_label` | orchestrator | |
 
 Calls to these tools are approved automatically. Baton's own coordination never waits for a human.

@@ -31,6 +31,9 @@ The `?` overlay lists your current bindings and flags any conflicts.
 | `app.shutdown` (stop daemon + agents) | `ctrl+q` | global |
 | `approvals.open` / `approvals.allow` | `ctrl+a` / `ctrl+y` | global |
 | `theme.pick` | `ctrl+t` | global |
+| `changes.open` (worker branches, diff, merge) | `ctrl+d` | global |
+| `tasks.open` (task plan) | `ctrl+g` | global |
+| `pane.diff` | `d` | grid |
 | `layout.cycle` | `ctrl+l` | global |
 | `focus.next` / `focus.prev` | `tab` / `shift+tab` | global |
 | `focus.input` | `i`, `/`, `@` | grid |
@@ -45,5 +48,7 @@ The `?` overlay lists your current bindings and flags any conflicts.
 | `toggle.icons`, `toggle.border`, `toggle.look`, `toggle.density`, `toggle.animations` | (unbound; in the palette) | global |
 
 In the approvals inbox: `a`/Enter allow once · `A` always allow · `d` deny · `D` always deny.
+In Changes: Enter/`v` diff · `m` merge · `s` sync · `r` review. In the diff view: `m` merge, Esc back.
+In the task plan: `a` approve / `x` reject a proposed plan.
 In the input: Tab completes `@names`, `/commands` and their arguments; ↑/↓ moves through history.
 Mouse: click a card to focus it, double-click to zoom.

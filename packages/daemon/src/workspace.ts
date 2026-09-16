@@ -10,8 +10,8 @@
  */
 
 import { createHash } from "node:crypto"
-import { copyFileSync, existsSync, lstatSync, mkdirSync, symlinkSync } from "node:fs"
-import { basename, join } from "node:path"
+import { copyFileSync, existsSync, lstatSync, mkdirSync, rmdirSync, symlinkSync } from "node:fs"
+import { basename, dirname, join } from "node:path"
 import type { BatonConfig } from "@batonsh/kernel"
 import { stateDir } from "@batonsh/kernel"
 import { applyPatch, commitTree, diffPatch, diffStat, type FileStat, git, headCommit, isGitRepo, mergeTree, snapshotCommit, snapshotTree } from "./git.ts"
@@ -206,6 +206,9 @@ export class WorkspaceManager {
     if (keep) return { kept: true, reason: hasChanges ? `unmerged changes kept in ${ws.path} (branch ${ws.branch})` : "cleanup = never" }
     await git(this.projectRoot, ["worktree", "remove", "--force", ws.path], { allowFail: true })
     if (ws.branch) await git(this.projectRoot, ["branch", "-D", ws.branch], { allowFail: true })
+    try {
+      rmdirSync(dirname(ws.path)) // only succeeds when no other worktrees remain
+    } catch {}
     return { kept: false }
   }
 }

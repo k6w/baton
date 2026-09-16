@@ -245,7 +245,8 @@ export class Runtime {
           env: { ...profile?.env, BATON_AGENT: name, BATON_AGENT_ID: agentId, BATON_PROJECT_ROOT: this.projectRoot },
           command: profile?.command,
           args: profile?.args,
-          options: { ...profile?.options, ...params.options },
+          // the lead's directory also receives merges — don't attribute those to its own commands
+          options: { ...(params.isOrchestrator ? { shellDiffs: false } : {}), ...profile?.options, ...params.options },
         },
         {
           signal: ac.signal,

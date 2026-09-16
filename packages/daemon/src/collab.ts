@@ -320,10 +320,15 @@ export class Collaboration {
     const existing = opts.reviewer ? this.rt.findAgent(opts.reviewer) : undefined
     const reviewId = newId("rev")
     const files = (ws?.files ?? []).map((f) => `- ${f.path} (+${f.added} −${f.removed})`).join("\n") || "- (no changes detected yet)"
-    const task = `Review the changes ${author.info.name} made${author.info.label ? ` for "${author.info.label}"` : ""} in this directory.
+    // Inline the patch: reviewers may run sandboxed (no access to the main repo's git metadata).
+    const patch = await this.workspaces.patch(authorId).catch(() => "")
+    const shown = patch.length > 40_000 ? `${patch.slice(0, 40_000)}\n… [truncated; ${patch.length} bytes total]` : patch
+    const task = `Review the changes ${author.info.name} made${author.info.label ? ` for "${author.info.label}"` : ""}. You are in its workspace (the changed files are on disk here).
 Changed files:
 ${files}
-${wsAny.base ? `See the full diff with: git diff ${wsAny.base}` : "Inspect the working tree changes with git diff."}
+
+${shown ? `The diff:\n\`\`\`diff\n${shown}\n\`\`\`` : "(no diff available — inspect the files directly)"}
+
 Check correctness, edge cases and tests (run them if the project has any). Do NOT modify files.
 When done, call the baton tool submit_review with verdict "approve" or "changes_requested" and specific, actionable notes.`
     let reviewerId: string

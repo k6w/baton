@@ -1,5 +1,6 @@
 /** Root component: layouts, global keys, command dispatch. */
 
+import { appendFileSync } from "node:fs"
 import { join } from "node:path"
 import { configDir, projectBatonDir } from "@batonsh/kernel"
 import { listThemes, loadTheme } from "@batonsh/themes"
@@ -16,6 +17,8 @@ import { useUi } from "./context.ts"
 import type { KeyContext } from "./keymap.ts"
 import type { Prefs } from "./state.ts"
 import { buildSystemTheme } from "./system-theme.ts"
+
+const debugKeys = process.env.BATON_DEBUG_KEYS
 
 const LAYOUTS: Prefs["layout"][] = ["grid", "focus", "swarm", "wide"]
 const ICON_MODES: Prefs["icons"][] = ["auto", "unicode", "nerd", "ascii"]
@@ -381,6 +384,12 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
 
   let lastCtrlC = 0
   useKeyboard((key) => {
+    // BATON_DEBUG_KEYS=<file>: log every key with the UI's focus state (for diagnosing input issues)
+    if (debugKeys)
+      appendFileSync(
+        debugKeys,
+        `${Date.now()} key=${key.name} seq=${JSON.stringify(key.sequence)} overlay=${ui.overlay()} focus=${ui.focus().kind} zoom=${ui.zoomed()}\n`,
+      )
     if (ui.overlay()) {
       if (key.ctrl && key.name === "c") ui.setOverlay(null)
       return

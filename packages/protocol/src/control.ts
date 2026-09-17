@@ -127,6 +127,8 @@ export interface ControlMethods {
   "review.request": { params: { agentId: string; reviewer?: string }; result: { reviewer: string } }
   "plan.decide": { params: { approved: boolean; notes?: string }; result: { ok: boolean } }
   "config.get": { params: { key?: string } | undefined; result: { config: unknown; provenance?: Record<string, string> } }
+  /** Re-read config files (after the settings screen wrote them). */
+  "config.reload": { params: Record<string, never> | undefined; result: { errors: string[] } }
   "daemon.shutdown": { params: Record<string, never> | undefined; result: { ok: true } }
 }
 

@@ -665,6 +665,19 @@ export class Runtime {
     }
   }
 
+  /** Swap in a freshly loaded config (settings screen / file edits). New agents use it; running ones keep theirs. */
+  applyConfig(next: BatonConfig) {
+    this.config = next
+    this.policy.configure(next.policy.preset, next.policy.rules)
+    this.collab.workspaces.configure(next.workspace)
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
+    this.heartbeatTimer = undefined
+    if (next.bus.heartbeat_s > 0) {
+      this.heartbeatTimer = setInterval(() => this.heartbeat(), next.bus.heartbeat_s * 1000)
+      this.heartbeatTimer.unref?.()
+    }
+  }
+
   setMode(mode: string) {
     this.emit({ type: "orch.mode", data: { mode } })
   }

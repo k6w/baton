@@ -59,6 +59,10 @@ export class WorkspaceManager {
     private runId: string,
   ) {}
 
+  configure(cfg: Cfg) {
+    this.cfg = cfg
+  }
+
   async isRepo(): Promise<boolean> {
     this.repo ??= await isGitRepo(this.projectRoot)
     return this.repo

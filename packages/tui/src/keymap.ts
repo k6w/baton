@@ -23,6 +23,7 @@ export const DEFAULT_COMMANDS: CommandDef[] = [
   { id: "app.shutdown", title: "Quit and stop all agents", context: "global", keys: ["ctrl+q"] },
   { id: "approvals.open", title: "Review pending approvals", context: "global", keys: ["ctrl+a"] },
   { id: "approvals.allow", title: "Approve oldest request", context: "global", keys: ["ctrl+y"] },
+  { id: "settings.open", title: "Settings…", context: "global", keys: ["ctrl+s", "f2"] },
   { id: "theme.pick", title: "Choose theme…", context: "global", keys: ["ctrl+t"] },
   { id: "changes.open", title: "Changes: review, diff and merge worker branches", context: "global", keys: ["ctrl+d"] },
   { id: "tasks.open", title: "Task plan", context: "global", keys: ["ctrl+g"] },

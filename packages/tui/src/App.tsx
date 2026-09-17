@@ -4,12 +4,13 @@ import { appendFileSync } from "node:fs"
 import { join } from "node:path"
 import { configDir, projectBatonDir } from "@batonsh/kernel"
 import { listThemes, loadTheme } from "@batonsh/themes"
-import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
+import { onBlur, onFocus, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
 import { createMemo, Match, onCleanup, Show, Switch } from "solid-js"
 import { completions, LOCAL_COMMANDS } from "./completion.ts"
 import { type Cell, computeGrid, Grid } from "./components/Grid.tsx"
 import { Orchestrator } from "./components/Orchestrator.tsx"
 import { ApprovalsInbox, CommandPalette, HelpOverlay, type PaletteItem, ThemePicker, Toasts } from "./components/Overlays.tsx"
+import { SettingsOverlay } from "./components/Settings.tsx"
 import { StatusBar } from "./components/StatusBar.tsx"
 import { ChangesOverlay, DiffOverlay, TasksOverlay } from "./components/Workspace.tsx"
 import { ZoomView } from "./components/ZoomView.tsx"
@@ -67,6 +68,9 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       if (ui.theme() === initial) void applyTheme(ui.prefs.theme)
     })
   }
+
+  onFocus(() => ui.setTermFocused(true))
+  onBlur(() => ui.setTermFocused(false))
 
   // logo support: wait for the capability probe
   const capPoll = setInterval(() => {
@@ -213,6 +217,9 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
         break
       case "theme.pick":
         ui.setOverlay("theme")
+        break
+      case "settings.open":
+        ui.setOverlay("settings")
         break
       case "changes.open":
         ui.setOverlay("changes")
@@ -362,6 +369,9 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       }
       case "help":
         ui.setOverlay("help")
+        break
+      case "settings":
+        ui.setOverlay("settings")
         break
       case "quit":
         props.onExit({ shutdown: false })
@@ -519,6 +529,9 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
         </Match>
         <Match when={ui.overlay() === "help"}>
           <HelpOverlay onClose={() => ui.setOverlay(null)} />
+        </Match>
+        <Match when={ui.overlay() === "settings"}>
+          <SettingsOverlay onClose={() => ui.setOverlay(null)} applyTheme={(n) => void applyTheme(n)} />
         </Match>
         <Match when={ui.overlay() === "changes"}>
           <ChangesOverlay onClose={() => ui.setOverlay(null)} />

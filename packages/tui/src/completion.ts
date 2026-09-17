@@ -19,6 +19,7 @@ export const LOCAL_COMMANDS: Record<string, string> = {
   thoughts: "/thoughts — toggle agent reasoning",
   zoom: "/zoom <agent>",
   help: "/help — keyboard shortcuts",
+  settings: "/settings — every setting, live",
   quit: "/quit — leave (agents keep running)",
   shutdown: "/shutdown — stop the daemon and all agents",
 }

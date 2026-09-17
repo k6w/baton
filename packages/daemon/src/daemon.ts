@@ -46,9 +46,10 @@ export function socketPathFor(projectRoot: string): string {
 export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   const paths = projectPaths(opts.projectRoot)
   const loaded = loadConfig({ projectRoot: opts.projectRoot, overrides: opts.overrides })
-  let config: BatonConfig = loaded.config
-  if (opts.demo) {
-    config = {
+  const adjust = (c: BatonConfig): BatonConfig => (opts.demo ? demoConfig(c) : c)
+  const config: BatonConfig = adjust(loaded.config)
+  function demoConfig(config: BatonConfig): BatonConfig {
+    return {
       ...config,
       orchestrator: { ...config.orchestrator, enabled: true, agent: "mock", mode: "orchestrator" },
       bus: { ...config.bus, heartbeat_s: Math.min(config.bus.heartbeat_s || 4, 4) },
@@ -91,6 +92,12 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   let idleTimer: ReturnType<typeof setTimeout> | undefined
   daemon.control = startControlServer(runtime, socketPath, {
     onShutdown: () => void daemon.stop(),
+    reloadConfig: () => {
+      const fresh = loadConfig({ projectRoot: opts.projectRoot, overrides: opts.overrides })
+      runtime.applyConfig(adjust(fresh.config))
+      for (const err of fresh.errors) runtime.emit({ type: "log", data: { level: "warn", message: err } })
+      return { errors: fresh.errors }
+    },
     onClientsChanged: (n) => {
       if (idleTimer) clearTimeout(idleTimer)
       idleTimer = undefined

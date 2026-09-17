@@ -8,6 +8,7 @@ import { createCliRenderer } from "@opentui/core"
 import { render } from "@opentui/solid"
 import { App } from "./App.tsx"
 import { UiContext } from "./context.ts"
+import { noticeFor, shouldNotify } from "./notify.ts"
 import { createUiState, notableEvent } from "./state.ts"
 
 export interface RunTuiOptions {
@@ -49,9 +50,11 @@ export async function runTui(opts: RunTuiOptions): Promise<{ shutdown: boolean }
     ui.bump()
     const n = notableEvent(e, opts.live.state)
     if (n) ui.toast(n.text, n.level)
-    if (e.type === "permission.requested") {
-      const who = e.agentId ? opts.live.state.agents.get(e.agentId)?.name : "agent"
-      renderer.triggerNotification(`${who}: ${e.data.title}`, "Baton — approval needed")
+    const notice = noticeFor(e, opts.live.state)
+    if (notice) {
+      const how = shouldNotify(notice, ui.config.notify, ui.termFocused())
+      if (how.desktop) renderer.triggerNotification(notice.body, notice.title)
+      if (how.bell) process.stdout.write("\x07")
     }
   })
   const offClose = opts.client.onClose((reason) => {

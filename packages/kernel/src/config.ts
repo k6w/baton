@@ -141,6 +141,18 @@ export const BatonConfig = z.object({
    * Project-level plugins only load after `baton trust` (they run code from the repo).
    */
   plugins: z.array(z.string()).default([]),
+  notify: z
+    .object({
+      /** Desktop notifications (OSC 9/777 via the terminal). */
+      desktop: z.boolean().default(true),
+      /** Ring the terminal bell. */
+      bell: z.boolean().default(false),
+      /** Also notify while the Baton window has focus. */
+      when_focused: z.boolean().default(false),
+      /** approval = an agent needs you · done = the orchestrator finished · error = an agent failed · merge = a merge landed or failed */
+      events: z.array(z.enum(["approval", "done", "error", "merge"])).default(["approval", "done", "error"]),
+    })
+    .default({ desktop: true, bell: false, when_focused: false, events: ["approval", "done", "error"] }),
   workspace: z
     .object({
       /** worktree: every worker gets its own git worktree; shared: everyone edits the project directly. */

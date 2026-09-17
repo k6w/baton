@@ -56,7 +56,7 @@ export function savePrefs(p: Partial<Prefs>): void {
   } catch {}
 }
 
-export type Overlay = null | "palette" | "approvals" | "help" | "theme" | "changes" | "diff" | "tasks"
+export type Overlay = null | "palette" | "approvals" | "help" | "theme" | "changes" | "diff" | "tasks" | "settings"
 export type Focus = { kind: "input" } | { kind: "agent"; agentId: string }
 
 export interface Toast {
@@ -68,7 +68,9 @@ export interface Toast {
 export interface UiState {
   client: BatonClient | undefined
   run: RunState
+  /** Reactive config store: reads inside components track, so live edits re-render. */
   config: BatonConfig
+  setConfig: SetStoreFunction<BatonConfig>
   prefs: Prefs
   setPrefs: SetStoreFunction<Prefs>
   persistPrefs: () => void
@@ -96,6 +98,9 @@ export interface UiState {
   keymap: Keymap
   verbs: string[]
   spinnerFrames: Accessor<string[]>
+  /** Whether the terminal window has focus (focus reporting; assumed true if unsupported). */
+  termFocused: Accessor<boolean>
+  setTermFocused: Setter<boolean>
   /** Whether the terminal can show logo images. */
   imageSupport: Accessor<boolean>
   setImageSupport: Setter<boolean>
@@ -104,6 +109,7 @@ export interface UiState {
 }
 
 export function createUiState(opts: { client?: BatonClient; run: RunState; config: BatonConfig; theme: ResolvedTheme; persist?: boolean }): UiState {
+  const [config, setConfig] = createStore<BatonConfig>(structuredClone(opts.config))
   const base: Prefs = {
     theme: opts.config.ui.theme,
     appearance: opts.config.ui.appearance,
@@ -130,6 +136,7 @@ export function createUiState(opts: { client?: BatonClient; run: RunState; confi
   const [toasts, setToasts] = createSignal<Toast[]>([])
   const [input, setInput] = createSignal("")
   const [imageSupport, setImageSupport] = createSignal(false)
+  const [termFocused, setTermFocused] = createSignal(true)
 
   // Throttled re-render: at most `fps` times per second.
   const frameMs = Math.max(8, Math.floor(1000 / opts.config.ui.fps))
@@ -171,7 +178,8 @@ export function createUiState(opts: { client?: BatonClient; run: RunState; confi
   return {
     client: opts.client,
     run: opts.run,
-    config: opts.config,
+    config,
+    setConfig,
     prefs,
     setPrefs,
     persistPrefs: () => {
@@ -205,6 +213,8 @@ export function createUiState(opts: { client?: BatonClient; run: RunState; confi
     spinnerFrames,
     imageSupport,
     setImageSupport,
+    termFocused,
+    setTermFocused,
     home: process.env.HOME ?? "",
     dispose: () => {
       clearInterval(clock)

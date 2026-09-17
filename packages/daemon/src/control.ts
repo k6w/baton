@@ -37,7 +37,11 @@ export interface ControlServer {
 
 type Handler<M extends ControlMethod> = (params: ControlParams<M>, conn: Conn) => Promise<ControlResult<M>> | ControlResult<M>
 
-export function startControlServer(rt: Runtime, socketPath: string, hooks: { onShutdown: () => void; onClientsChanged?: (n: number) => void }): ControlServer {
+export function startControlServer(
+  rt: Runtime,
+  socketPath: string,
+  hooks: { onShutdown: () => void; onClientsChanged?: (n: number) => void; reloadConfig?: () => { errors: string[] } },
+): ControlServer {
   if (existsSync(socketPath)) unlinkSync(socketPath)
   const conns = new Set<Conn>()
 
@@ -89,6 +93,7 @@ export function startControlServer(rt: Runtime, socketPath: string, hooks: { onS
       return { ok: true }
     },
     "config.get": () => ({ config: rt.config }),
+    "config.reload": () => hooks.reloadConfig?.() ?? { errors: ["reload not supported"] },
     "workspace.merge": async (p) => {
       const r = await rt.collab.merge(p.agentId)
       return { status: r.status, files: (r.conflicts ?? r.files.map((f) => f.path)) as string[], detail: r.detail }

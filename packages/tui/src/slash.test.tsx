@@ -65,7 +65,7 @@ test("slash menu: arrow keys don't smear the suggestion rows", async () => {
   const p = await frame()
   if (process.env.BATON_PRINT) console.log(p)
   for (const line of p.split("\n")) expect((line.match(/Command palette/g) ?? []).length).toBeLessThanOrEqual(1)
-  expect(p).toMatch(/› (Quit|Review|Approve|Choose|Keyboard)/)
+  expect(p).toMatch(/› (Quit|Inbox|Jump|Approve|Settings|Choose|Keyboard)/)
   ui.dispose()
   t.renderer.destroy()
   await live.stop()

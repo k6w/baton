@@ -1,7 +1,7 @@
 /** Modal overlays: command palette, theme picker, approvals inbox, help. */
 
 import { join } from "node:path"
-import { configDir, projectBatonDir } from "@batonsh/kernel"
+import { type AttentionItem, type AttentionKind, attentionItems, configDir, projectBatonDir } from "@batonsh/kernel"
 import { listThemes, loadTheme } from "@batonsh/themes"
 import type { InputRenderable } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
@@ -209,66 +209,113 @@ export function ThemePicker(props: { onClose: () => void; onPick: (name: string)
   )
 }
 
-export function ApprovalsInbox(props: { onClose: () => void }) {
+const KIND_STYLE: Record<AttentionKind, { glyph: string; token: "warning" | "error" | "info" | "success" | "accent" }> = {
+  approval: { glyph: "?", token: "warning" },
+  plan: { glyph: "◆", token: "warning" },
+  failed: { glyph: "✗", token: "error" },
+  conflict: { glyph: "⚠", token: "warning" },
+  merge: { glyph: "✗", token: "error" },
+  budget: { glyph: "$", token: "error" },
+  stalled: { glyph: "⏸", token: "warning" },
+  looping: { glyph: "↻", token: "warning" },
+  ready: { glyph: "✓", token: "success" },
+}
+
+export function attentionGlyph(kind: AttentionKind): { glyph: string; token: "warning" | "error" | "info" | "success" | "accent" } {
+  return KIND_STYLE[kind]
+}
+
+/**
+ * Inbox: everything waiting on you across all agents — approvals (answer in place), plans,
+ * failures, conflicts, stuck agents, finished work to merge. Enter jumps to the item.
+ */
+export function Inbox(props: { onClose: () => void; onJump: (item: AttentionItem) => void }) {
   const ui = useUi()
   const [sel, setSel] = createSignal(0)
-  const pending = createMemo(() => {
+  const items = createMemo(() => {
     ui.version()
-    return [...ui.run.approvals.values()].sort((a, b) => a.ts - b.ts)
+    return attentionItems(ui.run)
   })
+  const current = () => items()[Math.min(sel(), items().length - 1)]
   const respond = async (kind: "allow_once" | "allow_always" | "reject_once" | "reject_always") => {
-    const p = pending()[sel()]
-    if (!p || !ui.client) return
+    const it = current()
+    if (!it || it.kind !== "approval" || !ui.client) return
+    const p = ui.run.approvals.get(it.requestId!)
+    if (!p) return
     const opt = p.options.find((o) => o.kind === kind) ?? p.options.find((o) => o.kind.startsWith(kind.split("_")[0]!))
     try {
       await ui.client.respond(p.agentId, p.requestId, opt?.optionId ?? null)
     } catch (e) {
       ui.toast(e instanceof Error ? e.message : String(e), "error")
     }
-    if (pending().length <= 1) props.onClose()
+    if (items().length <= 1) props.onClose()
   }
   useKeyboard((k) => {
-    const n = pending().length
+    const n = items().length
     const ks = keyString(k)
+    const it = current()
     if (k.name === "escape") props.onClose()
     else if (k.name === "down" || k.name === "j") setSel((s) => (n ? (s + 1) % n : 0))
     else if (k.name === "up" || k.name === "k") setSel((s) => (n ? (s - 1 + n) % n : 0))
-    else if (ks === "a" || k.name === "return" || k.name === "enter" || ks === "y") void respond("allow_once")
-    else if (ks === "shift+a") void respond("allow_always")
-    else if (ks === "d" || ks === "n") void respond("reject_once")
-    else if (ks === "shift+d") void respond("reject_always")
+    else if (!it) return
+    else if (it.kind === "approval" && (ks === "a" || ks === "y")) void respond("allow_once")
+    else if (it.kind === "approval" && ks === "shift+a") void respond("allow_always")
+    else if (it.kind === "approval" && (ks === "d" || ks === "n")) void respond("reject_once")
+    else if (it.kind === "approval" && ks === "shift+d") void respond("reject_always")
+    else if (k.name === "return" || k.name === "enter") {
+      if (it.kind === "approval") void respond("allow_once")
+      else {
+        props.onClose()
+        props.onJump(it)
+      }
+    }
   })
   const detail = createMemo(() => {
-    const p = pending()[sel()]
-    if (!p) return []
+    const it = current()
     const t = ui.theme()
-    const a = ui.run.agents.get(p.agentId)
-    const lines: Seg[][] = [[{ text: `${a?.name ?? "agent"} wants to:`, fg: t.textMuted }], [{ text: p.title, fg: t.text, bold: true }]]
-    if (p.detail) for (const l of wrap(p.detail, 66).slice(0, 6)) lines.push([{ text: l, fg: t.textMuted }])
-    lines.push([{ text: p.options.map((o) => o.name).join(" · "), fg: t.textSubtle }])
+    if (!it) return []
+    const lines: Seg[][] = [[{ text: it.title, fg: t.text, bold: true }]]
+    if (it.detail) for (const l of wrap(it.detail, 82).slice(0, 5)) lines.push([{ text: l, fg: t.textMuted }])
+    if (it.kind === "approval") {
+      const p = ui.run.approvals.get(it.requestId!)
+      if (p) lines.push([{ text: `options: ${p.options.map((o) => o.name).join(" · ")}`, fg: t.textSubtle }])
+    }
+    const hint: Partial<Record<AttentionKind, string>> = {
+      approval: "a allow · A always · d deny · D never",
+      plan: "enter: review the plan",
+      failed: "enter: open the agent",
+      conflict: "enter: open changes — merge one side, then /sync the other",
+      merge: "enter: open changes",
+      stalled: "enter: peek — nudge it, interrupt (x) or reassign",
+      looping: "enter: peek — nudge it or interrupt (x)",
+      budget: "raise the budget in settings (ctrl+s) to continue",
+      ready: "enter: review the diff, m to merge",
+    }
+    lines.push([{ text: hint[it.kind] ?? "", fg: t.textSubtle }])
     return lines
   })
   return (
-    <Modal title={`Approvals (${pending().length})`} width={74} height={22} hint="a allow · A always · d deny · D never · esc">
-      <Show when={pending().length > 0} fallback={<Txt value={segs({ text: "Nothing pending.", fg: ui.theme().textMuted })} />}>
+    <Modal title={`Inbox (${items().length})`} width={88} height={24} hint="↑↓ select · enter act · esc close">
+      <Show when={items().length > 0} fallback={<Txt value={segs({ text: "All clear — nothing needs you right now.", fg: ui.theme().textMuted })} />}>
         <ListView
-          items={pending().map((p) => {
-            const a = ui.run.agents.get(p.agentId)
+          items={items().map((it) => {
+            const st = KIND_STYLE[it.kind]
+            const a = it.agentId ? ui.run.agents.get(it.agentId) : undefined
             const look = a ? agentLook(ui, a) : undefined
             return {
               label: [
-                { text: `${look?.glyph ?? "●"} `, fg: look?.color ?? ui.theme().text },
-                { text: (a?.name ?? "agent").padEnd(12), fg: ui.theme().text },
-                { text: p.title, fg: ui.theme().text },
+                { text: `${st.glyph} `, fg: ui.theme()[st.token] },
+                { text: look ? `${look.glyph} ` : "  ", fg: look?.color ?? ui.theme().text },
+                { text: clip(it.title, 62), fg: ui.theme().text },
               ],
-              right: p.kind ?? "",
+              right: it.kind,
             }
           })}
           selected={sel()}
-          width={70}
-          height={Math.min(10, Math.max(1, pending().length))}
+          width={84}
+          height={Math.min(12, Math.max(1, items().length))}
         />
-        <Txt wrapMode="none" value={segs({ text: "─".repeat(70), fg: ui.theme().borderSubtle })} />
+        <Txt value={segs({ text: "─".repeat(84), fg: ui.theme().borderSubtle })} />
         <For each={detail()}>{(l) => <Txt wrapMode="word" value={segs(...l)} />}</For>
       </Show>
     </Modal>

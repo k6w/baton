@@ -1,5 +1,6 @@
 /** One agent in the grid: header (icon, name, label), live activity, status line. */
 
+import { attentionItems } from "@batonsh/kernel"
 import type { AgentView } from "@batonsh/protocol"
 import { createMemo } from "solid-js"
 import { agentLook, whoFn } from "../agent-style.ts"
@@ -8,6 +9,7 @@ import { identityLines, type Line, renderFeed, statusLine, workspaceLine } from 
 import { Frame, innerSize } from "../ui/Frame.tsx"
 import { toStyled } from "../ui/styled.ts"
 import { Txt } from "../ui/Txt.tsx"
+import { attentionGlyph } from "./Overlays.tsx"
 
 export function AgentCard(props: { agentId: string; width: number; height: number; focused: boolean; onSelect?: () => void; onZoom?: () => void }) {
   const ui = useUi()
@@ -90,6 +92,23 @@ export function AgentCard(props: { agentId: string; width: number; height: numbe
     const a = agent()
     if (!a) return []
     const t = ui.theme()
+    // attention chip first: the thing you need to know about this agent
+    const it = attentionItems(ui.run).find((x) => x.agentId === props.agentId && x.kind !== "ready")
+    if (it) {
+      const st = attentionGlyph(it.kind)
+      const words: Record<string, string> = {
+        approval: "needs you",
+        failed: "failed",
+        stalled: "stuck?",
+        looping: "looping?",
+        conflict: "conflict",
+        merge: "merge failed",
+        budget: "budget",
+        plan: "plan",
+      }
+      const word = words[it.kind] ?? it.kind
+      return [{ text: `${st.glyph} ${word}`, fg: t[st.token], bold: true }]
+    }
     const pct = a.progress !== undefined && a.status === "busy" ? ` ${Math.round(a.progress * 100)}%` : ""
     const text = a.label ?? a.role ?? ""
     return text || pct ? [{ text: `${text}${pct}`, fg: t.textMuted }] : []

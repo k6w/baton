@@ -19,6 +19,10 @@ export interface AgentView extends AgentInfo {
   sessionId?: string
   /** 0..1 from the agent's plan, if any. */
   progress?: number
+  /** Timestamp of the agent's latest event (for stall detection / "last active"). */
+  lastEventAt?: number
+  /** Watchdog flag (stalled / looping). */
+  attention?: { reason: "stalled" | "looping"; detail?: string; ts: number }
   lastActivity?: string
 }
 

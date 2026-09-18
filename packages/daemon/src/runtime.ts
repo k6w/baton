@@ -39,6 +39,11 @@ export interface AgentRuntime {
   /** Timestamps of auto-delivered prompts (loop protection). */
   deliveries: number[]
   lastProgressSent?: number
+  /** Watchdog bookkeeping. */
+  lastEventAt: number
+  lastToolTitle?: string
+  toolRepeats: number
+  flagged?: "stalled" | "looping"
   lastAssistantText: string
   turnDiff: { added: number; removed: number }
   busy: boolean
@@ -76,6 +81,7 @@ export class Runtime {
   mcpBaseUrl: string | undefined
   private counters = new Map<string, number>()
   private heartbeatTimer?: ReturnType<typeof setInterval>
+  private watchdogTimer?: ReturnType<typeof setInterval>
   private runWarned = false
   private closed = false
   readonly projectRoot: string
@@ -95,6 +101,8 @@ export class Runtime {
     this.state.branch = git.branch
     this.store.subscribe((e) => this.state.apply(e))
     this.emit({ type: "run.started", data: { cwd: opts.projectRoot, mode: opts.config.orchestrator.mode } })
+    this.watchdogTimer = setInterval(() => this.watchdog(), 30_000)
+    this.watchdogTimer.unref?.()
     if (opts.config.bus.heartbeat_s > 0) {
       this.heartbeatTimer = setInterval(() => this.heartbeat(), opts.config.bus.heartbeat_s * 1000)
       this.heartbeatTimer.unref?.()
@@ -195,6 +203,8 @@ export class Runtime {
       busy: false,
       closing: false,
       budgetWarned: false,
+      lastEventAt: Date.now(),
+      toolRepeats: 0,
     }
     this.agents.set(agentId, rt)
     this.emit({ type: "agent.spawned", data: info }, agentId)
@@ -281,6 +291,9 @@ export class Runtime {
       this.emit({ type: "log", data: { level: "warn", message: `[${rt.info.name}] invalid event ${ev.type}: ${e instanceof Error ? e.message : e}` } }, agentId)
       return
     }
+    rt.lastEventAt = stored.ts
+    if (rt.flagged === "stalled") rt.flagged = undefined
+    if (stored.type === "tool.call") this.loopCheck(rt, stored.data.title)
     switch (stored.type) {
       case "turn.started":
         rt.busy = true
@@ -576,6 +589,54 @@ export class Runtime {
     }
   }
 
+  /** Same tool call N times in a row → the agent is probably looping. */
+  private loopCheck(rt: AgentRuntime, title: string) {
+    const n = this.config.watchdog.loop_repeats
+    if (rt.lastToolTitle === title) rt.toolRepeats++
+    else {
+      rt.lastToolTitle = title
+      rt.toolRepeats = 1
+      if (rt.flagged === "looping") {
+        rt.flagged = undefined
+        this.emit({ type: "agent.attention", data: { reason: "clear" } }, rt.info.agentId)
+      }
+    }
+    if (n > 0 && rt.toolRepeats === n) {
+      rt.flagged = "looping"
+      const detail = `${title} ×${n}`
+      this.emit({ type: "agent.attention", data: { reason: "looping", detail } }, rt.info.agentId)
+      this.notifyLeadAbout(rt, `${rt.info.name} may be stuck in a loop (${detail}).`)
+    }
+  }
+
+  /** Busy agents that went silent. Runs on the heartbeat timer (and every 30s). */
+  watchdog(now = Date.now()) {
+    const stall = this.config.watchdog.stall_s * 1000
+    if (stall <= 0) return
+    for (const rt of this.agents.values()) {
+      if (!rt.busy || rt.closing || rt.flagged === "stalled") continue
+      if (this.state.agents.get(rt.info.agentId)?.status === "awaiting_approval") continue
+      if (now - rt.lastEventAt < stall) continue
+      rt.flagged = "stalled"
+      const mins = Math.round((now - rt.lastEventAt) / 60000)
+      this.emit({ type: "agent.attention", data: { reason: "stalled", detail: `no activity for ${mins}m` } }, rt.info.agentId)
+      this.notifyLeadAbout(rt, `${rt.info.name} has shown no activity for ${mins} minutes.`)
+    }
+  }
+
+  private notifyLeadAbout(rt: AgentRuntime, text: string) {
+    const lead = this.orchestrator()
+    if (!lead || lead === rt) return
+    try {
+      this.send({
+        from: "baton",
+        to: lead.info.agentId,
+        body: `${text} Consider nudging it (send_message), interrupting, or reassigning the task.`,
+        kind: "system",
+      })
+    } catch {}
+  }
+
   private heartbeat() {
     for (const rt of this.agents.values()) {
       if (rt.closing || rt.info.isOrchestrator || !rt.busy) continue
@@ -685,6 +746,7 @@ export class Runtime {
   async close(): Promise<void> {
     if (this.closed) return
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
+    if (this.watchdogTimer) clearInterval(this.watchdogTimer)
     await Promise.all([...this.agents.keys()].map((id) => this.kill(id)))
     this.emit({ type: "run.ended", data: { reason: "shutdown" } })
     this.closed = true

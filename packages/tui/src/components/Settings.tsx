@@ -193,8 +193,11 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
       return
     }
     if (ks === "/") {
-      setFilter("")
-      setRow(0)
+      // next tick: otherwise the "/" lands in the freshly focused search box
+      setTimeout(() => {
+        setFilter("")
+        setRow(0)
+      }, 0)
       return
     }
     if (k.name === "tab") return setScope((s) => (s === "project" ? "global" : "project"))
@@ -337,11 +340,6 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
               searchRef = r
             }}
             onInput={(v: string) => {
-              // the "/" that opened the search lands in the freshly focused box — drop it
-              if (v.startsWith("/") && searchRef) {
-                searchRef.value = v.slice(1)
-                v = v.slice(1)
-              }
               setFilter(v)
               setRow(0)
               setPane("settings")

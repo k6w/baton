@@ -62,6 +62,8 @@ export class RunState {
   approvals = new Map<string, PendingApproval>()
   workspaces = new Map<string, WorkspaceView>()
   plan: { planId: string; status: "proposed" | "approved" | "rejected"; notes?: string } | undefined
+  /** Budget stops that still need the user's attention. */
+  budgetHits: { scope: string; usedUsd: number; limitUsd: number; ts: number; agentId?: string }[] = []
   bus: BusMessageView[] = []
   lastSeq = 0
   totals = { toolCalls: 0, messages: 0, added: 0, removed: 0, costUsd: 0, input: 0, output: 0 }
@@ -121,6 +123,12 @@ export class RunState {
     if (!this.runId) this.runId = e.runId
     const aid = e.agentId
     const agent = aid ? this.agents.get(aid) : undefined
+    if (agent && e.type !== "agent.attention") {
+      agent.lastEventAt = e.ts
+      if (agent.attention && (e.type === "tool.call" || e.type === "turn.started" || e.type === "turn.completed" || e.type === "message.delta")) {
+        if (!(agent.attention.reason === "looping" && e.type === "tool.call")) agent.attention = undefined
+      }
+    }
 
     switch (e.type) {
       case "run.started":
@@ -358,6 +366,12 @@ export class RunState {
         }
         break
       }
+      case "agent.attention":
+        if (agent) agent.attention = e.data.reason === "clear" ? undefined : { reason: e.data.reason, detail: e.data.detail, ts: e.ts }
+        break
+      case "budget.exceeded":
+        this.budgetHits.push({ scope: e.data.scope, usedUsd: e.data.usedUsd, limitUsd: e.data.limitUsd, ts: e.ts, agentId: aid })
+        break
       case "workspace.created":
         if (aid) {
           this.workspaces.set(aid, { mode: e.data.mode, path: e.data.path, branch: e.data.branch, files: [], added: 0, removed: 0, conflicts: [], leases: [] })

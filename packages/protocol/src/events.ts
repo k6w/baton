@@ -130,6 +130,8 @@ export const EventSchemas = {
   "agent.spawned": AgentInfo,
   "agent.status": z.object({ status: AgentStatus, detail: z.string().optional() }),
   "agent.updated": AgentInfo.partial(),
+  /** Watchdog findings: an agent may need a nudge. Cleared by its next turn/tool activity. */
+  "agent.attention": z.object({ reason: z.enum(["stalled", "looping", "clear"]), detail: z.string().optional() }),
   "agent.exited": z.object({ code: z.number().nullable().optional(), reason: z.string().optional() }),
   "agent.session": z.object({ sessionId: z.string() }), // native resume id
 

@@ -2,14 +2,16 @@
 
 import { appendFileSync } from "node:fs"
 import { join } from "node:path"
-import { configDir, projectBatonDir } from "@batonsh/kernel"
+import { type AttentionItem, attentionItems, configDir, projectBatonDir, urgentCount } from "@batonsh/kernel"
 import { listThemes, loadTheme } from "@batonsh/themes"
 import { onBlur, onFocus, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
-import { createMemo, Match, onCleanup, Show, Switch } from "solid-js"
+import { createEffect, createMemo, Match, onCleanup, Show, Switch } from "solid-js"
 import { completions, LOCAL_COMMANDS } from "./completion.ts"
 import { type Cell, computeGrid, Grid } from "./components/Grid.tsx"
+import { HintBar } from "./components/HintBar.tsx"
 import { Orchestrator } from "./components/Orchestrator.tsx"
-import { ApprovalsInbox, CommandPalette, HelpOverlay, type PaletteItem, ThemePicker, Toasts } from "./components/Overlays.tsx"
+import { CommandPalette, HelpOverlay, Inbox, type PaletteItem, ThemePicker, Toasts } from "./components/Overlays.tsx"
+import { PeekOverlay } from "./components/Peek.tsx"
 import { SettingsOverlay } from "./components/Settings.tsx"
 import { StatusBar } from "./components/StatusBar.tsx"
 import { ChangesOverlay, DiffOverlay, TasksOverlay } from "./components/Workspace.tsx"
@@ -83,6 +85,8 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
   setTimeout(() => clearInterval(capPoll), 3000)
   onCleanup(() => clearInterval(capPoll))
 
+  const chromeH = () => (ui.config.ui.hints ? 2 : 1)
+
   const setPref = <K extends keyof Prefs>(k: K, v: Prefs[K]) => {
     ui.setPrefs(k, v as never)
     ui.persistPrefs()
@@ -119,7 +123,7 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
 
   const frame = createMemo(() => {
     const W = dims().width
-    const H = dims().height - 1 // status bar
+    const H = dims().height - chromeH() // status bar (+ hint bar)
     const layout = ui.prefs.layout
     const hasWorkers = workers().length > 0
     if (layout === "wide" && hasWorkers) {
@@ -186,9 +190,50 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
     }
   }
 
+  let attentionCursor = -1
+  /** Take the user to whatever an attention item is about. */
+  const jumpTo = (it: AttentionItem) => {
+    ui.setZoomed(null)
+    if (it.kind === "plan") return ui.setOverlay("tasks")
+    if (it.kind === "approval") return ui.setOverlay("inbox")
+    if (!it.agentId) return ui.toast(it.title)
+    const idx = cells()
+      .filter((c) => c.kind === "agent")
+      .findIndex((c) => c.kind === "agent" && c.agentId === it.agentId)
+    if (idx >= 0) focusAgentAt(idx)
+    if (it.kind === "ready" || it.kind === "conflict" || it.kind === "merge") {
+      ui.setDiffAgent(it.agentId)
+      ui.setOverlay(it.kind === "ready" ? "diff" : "changes")
+    } else {
+      ui.setPeekAgent(it.agentId)
+      ui.setOverlay("peek")
+    }
+  }
+
+  // terminal tab title: "⚑ 2 baton · project"
+  createEffect(() => {
+    ui.version()
+    if (!ui.config.ui.tab_title) return
+    const n = urgentCount(attentionItems(ui.run))
+    const title = `${n ? `⚑${n} ` : ""}baton · ${ui.run.projectName || "project"}`
+    if (title !== lastTitle) {
+      lastTitle = title
+      // must not run inside a render phase (OpenTUI session control) — defer to the next tick
+      setTimeout(() => {
+        try {
+          renderer.setTerminalTitle(title)
+        } catch {}
+      }, 0)
+    }
+  })
+  let lastTitle = ""
+
   const prefill = (text: string) => {
-    ui.setInput(text)
-    ui.setFocus({ kind: "input" })
+    // next tick: the key that triggered this must not land in the freshly focused input
+    setTimeout(() => {
+      ui.setFocus({ kind: "input" })
+      ui.setInput(text)
+    }, 0)
   }
 
   const run = (id: string) => {
@@ -209,9 +254,27 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       case "app.shutdown":
         props.onExit({ shutdown: true })
         break
-      case "approvals.open":
-        ui.setOverlay("approvals")
+      case "inbox.open":
+        ui.setOverlay("inbox")
         break
+      case "attention.next": {
+        const items = attentionItems(ui.run)
+        if (!items.length) {
+          ui.toast("nothing needs you right now")
+          break
+        }
+        attentionCursor = (attentionCursor + 1) % items.length
+        jumpTo(items[attentionCursor]!)
+        break
+      }
+      case "pane.peek": {
+        const a = focusedAgent()
+        if (a) {
+          ui.setPeekAgent(a.agentId)
+          ui.setOverlay("peek")
+        }
+        break
+      }
       case "approvals.allow":
         void call(ui.client?.submit("/approve"), (r) => r.output && ui.toast(r.output))
         break
@@ -490,7 +553,7 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
 
   return (
     <box width={dims().width} height={dims().height} flexDirection="column" backgroundColor={ui.theme().background}>
-      <box flexDirection={frame().direction} height={dims().height - 1}>
+      <box flexDirection={frame().direction} height={dims().height - chromeH()}>
         <Orchestrator width={frame().orch.w} height={frame().orch.h} focused={inputFocused()} onSubmit={submit} slim={!!frame().slim} />
         <Show when={frame().grid.h > 0 && frame().grid.w > 0}>
           <Switch>
@@ -509,6 +572,9 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
           </Switch>
         </Show>
       </box>
+      <Show when={ui.config.ui.hints}>
+        <HintBar width={dims().width} />
+      </Show>
       <StatusBar width={dims().width} />
       <Toasts width={dims().width} />
       <Switch>
@@ -524,8 +590,22 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
             }}
           />
         </Match>
-        <Match when={ui.overlay() === "approvals"}>
-          <ApprovalsInbox onClose={() => ui.setOverlay(null)} />
+        <Match when={ui.overlay() === "inbox"}>
+          <Inbox onClose={() => ui.setOverlay(null)} onJump={jumpTo} />
+        </Match>
+        <Match when={ui.overlay() === "peek" && ui.peekAgent()}>
+          <PeekOverlay
+            agentId={ui.peekAgent()!}
+            onClose={() => ui.setOverlay(null)}
+            onZoom={() => {
+              ui.setZoomed(ui.peekAgent())
+              ui.setOverlay(null)
+            }}
+            onDiff={() => {
+              ui.setDiffAgent(ui.peekAgent())
+              ui.setOverlay("diff")
+            }}
+          />
         </Match>
         <Match when={ui.overlay() === "help"}>
           <HelpOverlay onClose={() => ui.setOverlay(null)} />

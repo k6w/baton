@@ -76,10 +76,14 @@ export const UiConfig = z.object({
   show_bus: z.boolean().default(true),
   show_thoughts: z.boolean().default(false),
   card_fields: z.array(z.string()).default(["adapter", "version", "model", "dir", "approval"]),
-  status_left: z.string().default("{dot} {running}/{total} {noun} running · {calls} calls · {msgs} msgs"),
+  status_left: z.string().default("{dot} {running}/{total} {noun} running · {calls} calls · {msgs} msgs  {attention}"),
   status_right: z.string().default("{unmerged}  {cost}  {added} {removed}  {repo}@{branch}"),
   timestamp_format: z.enum(["ss.mmm", "hh:mm:ss", "relative"]).default("ss.mmm"),
   mouse: z.boolean().default(true),
+  /** One-line hint bar with the keys that matter in the current context. */
+  hints: z.boolean().default(true),
+  /** Show "⚑ 2 baton · project" in the terminal tab title. */
+  tab_title: z.boolean().default(true),
 })
 export type UiConfig = z.infer<typeof UiConfig>
 
@@ -141,6 +145,14 @@ export const BatonConfig = z.object({
    * Project-level plugins only load after `baton trust` (they run code from the repo).
    */
   plugins: z.array(z.string()).default([]),
+  watchdog: z
+    .object({
+      /** Flag a busy agent with no activity for this long (seconds, 0 = off). */
+      stall_s: z.number().int().nonnegative().default(300),
+      /** Flag an agent repeating the same tool call this many times in a row (0 = off). */
+      loop_repeats: z.number().int().nonnegative().default(4),
+    })
+    .default({ stall_s: 300, loop_repeats: 4 }),
   notify: z
     .object({
       /** Desktop notifications (OSC 9/777 via the terminal). */

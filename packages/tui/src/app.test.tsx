@@ -200,7 +200,8 @@ describe("TUI", () => {
     await m.frame()
     m.t.mockInput.pressKey("a", { ctrl: true })
     let f = await m.frame()
-    expect(f).toContain("Approvals (")
+    expect(f).toContain("Inbox (")
+    expect(f).toContain("needs you")
     expect(f).toContain("gatekeeper")
     const before = [...live.state.approvals.values()].length
     // select the gatekeeper's request and approve it
@@ -227,6 +228,51 @@ describe("TUI", () => {
     f = await m.frame()
     expect(m.ui.theme().name).toBe(original)
     expect(f).not.toContain("enter keep")
+    m.dispose()
+  })
+
+  test("attention: ctrl+n jumps, space peeks, answering from the peek resolves the request, reply goes to the agent", async () => {
+    const g = await client.spawn({ adapter: "mock", name: "peeky", approval: "ask", options: { speed: 0, steps: ["exec"] } })
+    await client.prompt(g.agentId, "risky")
+    await until(() => [...live.state.approvals.values()].some((p) => p.agentId === g.agentId), 10000)
+    const m = await mount(140, 44)
+    await m.frame()
+    m.t.mockInput.pressKey("n", { ctrl: true })
+    let f = await m.frame()
+    expect(m.ui.overlay()).toBe("inbox") // approvals are answered in the inbox
+    m.t.mockInput.pressEscape()
+    await m.frame()
+    // focus the agent and peek
+    m.ui.setFocus({ kind: "agent", agentId: g.agentId })
+    await m.frame()
+    m.t.mockInput.pressKey(" ")
+    f = await m.frame()
+    expect(m.ui.overlay()).toBe("peek")
+    expect(f).toContain("a allow · A always")
+    m.t.mockInput.pressKey("a")
+    await until(() => ![...live.state.approvals.values()].some((p) => p.agentId === g.agentId))
+    // reply
+    m.t.mockInput.pressKey("r")
+    await m.frame()
+    await m.t.mockInput.typeText("pong")
+    m.t.mockInput.pressEnter()
+    await until(() => live.state.bus.some((b) => b.from === "user" && b.to === g.agentId && b.body === "pong"))
+    m.t.mockInput.pressEscape()
+    m.dispose()
+  })
+
+  test("m on a focused card prefills '@name ' in the input (without typing the m)", async () => {
+    const m = await mount(140, 44)
+    await m.frame()
+    const w = live.state.workers()[0]!
+    m.ui.setFocus({ kind: "agent", agentId: w.agentId })
+    await m.frame()
+    m.t.mockInput.pressKey("m")
+    await Bun.sleep(30)
+    const f = await m.frame()
+    expect(m.ui.focus().kind).toBe("input")
+    expect(f).toContain(`❯ @${w.name} `)
+    expect(f).not.toContain(`❯ m@`)
     m.dispose()
   })
 })

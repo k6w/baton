@@ -4,7 +4,7 @@
  *            {repo} {branch} {mode} {approvals} {spark} {theme} {layout}
  */
 
-import { formatCost, formatCount, formatTokens } from "@batonsh/kernel"
+import { attentionItems, formatCost, formatCount, formatTokens, urgentCount } from "@batonsh/kernel"
 import { createMemo } from "solid-js"
 import { agentLook } from "../agent-style.ts"
 import { useUi } from "../context.ts"
@@ -65,6 +65,10 @@ export function StatusBar(props: { width: number }) {
       branch: run.branch ? { text: run.branch, fg: t.statusText } : undefined,
       mode: { text: run.mode, fg: t.statusText },
       approvals: run.approvals.size ? { text: `⚠ ${run.approvals.size}`, fg: t.warning } : undefined,
+      attention: (() => {
+        const n = urgentCount(attentionItems(run))
+        return n ? { text: `⚑ ${n}`, fg: t.warning } : undefined
+      })(),
       spark: { text: sparkline(run.activity, ui.now()), fg: t.accent },
       theme: { text: t.name, fg: t.statusText },
       layout: { text: ui.prefs.layout, fg: t.statusText },
@@ -82,7 +86,6 @@ export function StatusBar(props: { width: number }) {
     const left = renderTemplate(ui.config.ui.status_left, vars, t.statusText)
     let right = renderTemplate(ui.config.ui.status_right, vars, t.statusText)
     if (!run.branch) right = right.filter((s) => s.text !== "@")
-    if (run.approvals.size) left.push({ text: "  ", fg: t.statusText }, vars.approvals!)
     const lw = left.reduce((n, s) => n + sw(s.text), 0)
     const rw = right.reduce((n, s) => n + sw(s.text), 0)
     const gap = Math.max(1, props.width - lw - rw - 2)

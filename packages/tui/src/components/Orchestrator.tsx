@@ -7,7 +7,7 @@
 import type { FeedItem } from "@batonsh/kernel"
 import { formatCost } from "@batonsh/kernel"
 import type { InputRenderable } from "@opentui/core"
-import { createMemo, createSignal, For, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js"
 import { agentLook, whoFn } from "../agent-style.ts"
 import { type Completion, completions } from "../completion.ts"
 import { useUi } from "../context.ts"
@@ -209,6 +209,15 @@ export function Orchestrator(props: OrchestratorProps) {
       inputRef.cursorOffset = c.replace.length
     }
   }
+
+  // programmatic input changes (prefill from m / palette "Message: …") → the input element
+  createEffect(() => {
+    const v = ui.input()
+    if (inputRef && inputRef.value !== v) {
+      inputRef.value = v
+      inputRef.cursorOffset = v.length
+    }
+  })
 
   const submit = (value: string) => {
     const text = value.trim()

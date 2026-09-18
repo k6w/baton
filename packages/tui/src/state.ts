@@ -56,7 +56,7 @@ export function savePrefs(p: Partial<Prefs>): void {
   } catch {}
 }
 
-export type Overlay = null | "palette" | "approvals" | "help" | "theme" | "changes" | "diff" | "tasks" | "settings"
+export type Overlay = null | "palette" | "inbox" | "help" | "theme" | "changes" | "diff" | "tasks" | "settings" | "peek"
 export type Focus = { kind: "input" } | { kind: "agent"; agentId: string }
 
 export interface Toast {
@@ -86,6 +86,9 @@ export interface UiState {
   setZoomed: Setter<string | null>
   overlay: Accessor<Overlay>
   setOverlay: Setter<Overlay>
+  /** Agent shown in the peek overlay. */
+  peekAgent: Accessor<string | null>
+  setPeekAgent: Setter<string | null>
   /** Agent whose diff the diff overlay shows. */
   diffAgent: Accessor<string | null>
   setDiffAgent: Setter<string | null>
@@ -133,6 +136,7 @@ export function createUiState(opts: { client?: BatonClient; run: RunState; confi
   const [overlay, setOverlay] = createSignal<Overlay>(null)
   const [page, setPage] = createSignal(0)
   const [diffAgent, setDiffAgent] = createSignal<string | null>(null)
+  const [peekAgent, setPeekAgent] = createSignal<string | null>(null)
   const [toasts, setToasts] = createSignal<Toast[]>([])
   const [input, setInput] = createSignal("")
   const [imageSupport, setImageSupport] = createSignal(false)
@@ -204,6 +208,8 @@ export function createUiState(opts: { client?: BatonClient; run: RunState; confi
     setPage,
     diffAgent,
     setDiffAgent,
+    peekAgent,
+    setPeekAgent,
     toasts,
     toast,
     input,

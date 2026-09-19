@@ -160,6 +160,7 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime): McpServer {
           role: z.string().optional(),
           count: z.number().int().min(1).max(10).optional().describe("Spawn several identical agents"),
           task_id: z.string().optional().describe("Plan task this agent works on (from plan_tasks)"),
+          reason: z.string().optional().describe("Required when count > 1: why parallel agents help here (e.g. '3 independent modules, no shared files')"),
           isolation: z
             .enum(["worktree", "shared"])
             .optional()
@@ -169,6 +170,19 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime): McpServer {
       (a) =>
         guard(async () => {
           const n = a.count ?? 1
+          if (n > 1 && !a.reason?.trim())
+            return fail("count > 1 needs a reason: say why parallel agents help (independent pieces, no shared files). Prefer one agent for coupled work.")
+          // above the soft limit, the user decides (never the policy)
+          const live = [...rt.agents.values()].filter((x) => !x.closing && !x.info.isOrchestrator).length
+          const soft = rt.config.budget.soft_max_agents
+          if (soft > 0 && live + n > soft) {
+            const ok = await rt.askUser(
+              me,
+              `start ${n} more ${a.adapter} agent${n === 1 ? "" : "s"} (${live + n} total)?`,
+              `${a.reason ?? "no reason given"}${a.task ? `\ntask: ${a.task.slice(0, 300)}` : ""}`,
+            )
+            if (!ok) return fail(`the user declined starting more agents (${live} running). Reuse existing agents (send_message) or do it with fewer.`)
+          }
           const names: string[] = []
           for (let i = 0; i < n; i++) {
             const info = await rt.spawn({

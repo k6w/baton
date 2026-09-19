@@ -76,7 +76,7 @@ export const UiConfig = z.object({
   show_bus: z.boolean().default(true),
   show_thoughts: z.boolean().default(false),
   card_fields: z.array(z.string()).default(["adapter", "version", "model", "dir", "approval"]),
-  status_left: z.string().default("{dot} {running}/{total} {noun} running · {calls} calls · {msgs} msgs  {attention}"),
+  status_left: z.string().default("{trust} {dot} {running}/{total} {noun} running · {calls} calls · {msgs} msgs  {attention}"),
   status_right: z.string().default("{unmerged}  {cost}  {added} {removed}  {repo}@{branch}"),
   timestamp_format: z.enum(["ss.mmm", "hh:mm:ss", "relative"]).default("ss.mmm"),
   mouse: z.boolean().default(true),
@@ -116,10 +116,12 @@ export const BatonConfig = z.object({
       run_usd: z.number().positive().optional(),
       per_agent_usd: z.number().positive().optional(),
       max_agents: z.number().int().positive().default(16),
+      /** Above this many live workers, the orchestrator must get your OK to spawn more (0 = never ask). */
+      soft_max_agents: z.number().int().nonnegative().default(4),
       max_depth: z.number().int().nonnegative().default(2),
       warn_at: z.number().min(0).max(1).default(0.8),
     })
-    .default({ max_agents: 16, max_depth: 2, warn_at: 0.8 }),
+    .default({ max_agents: 16, soft_max_agents: 4, max_depth: 2, warn_at: 0.8 }),
   policy: z
     .object({
       preset: z.enum(["strict", "balanced", "yolo"]).default("balanced"),

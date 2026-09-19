@@ -678,7 +678,47 @@ export class Runtime {
     queueMicrotask(() => void this.resolvePermission(rt.info.agentId, requestId, opt?.optionId ?? null, "policy"))
   }
 
+  private asks = new Map<string, (ok: boolean) => void>()
+
+  /**
+   * Ask the user a yes/no question on behalf of an agent (shows in the inbox like any approval,
+   * but is never decided by the policy). Resolves false on deny or after `timeoutMs`.
+   */
+  askUser(agentId: string, title: string, detail?: string, timeoutMs = 15 * 60_000): Promise<boolean> {
+    const requestId = newId("ask")
+    const d = deferred<boolean>()
+    this.asks.set(requestId, d.resolve)
+    this.emit(
+      {
+        type: "permission.requested",
+        data: {
+          requestId,
+          title,
+          kind: "delegate",
+          detail,
+          options: [
+            { optionId: "yes", name: "Yes", kind: "allow_once" },
+            { optionId: "no", name: "No", kind: "reject_once" },
+          ],
+        },
+      },
+      agentId,
+    )
+    const t = setTimeout(() => {
+      if (this.asks.has(requestId)) void this.resolvePermission(agentId, requestId, "no", "timeout")
+    }, timeoutMs)
+    t.unref?.()
+    return d.promise.finally(() => clearTimeout(t))
+  }
+
   async resolvePermission(agentId: string, requestId: string, optionId: string | null, by: "user" | "policy" | "timeout" | "cancelled" = "user") {
+    const ask = this.asks.get(requestId)
+    if (ask) {
+      this.asks.delete(requestId)
+      this.emit({ type: "permission.resolved", data: { requestId, optionId, kind: optionId === "yes" ? "allow_once" : "reject_once", by } }, agentId)
+      ask(optionId === "yes")
+      return
+    }
     const rt = this.agents.get(agentId)
     const pending = this.state.approvals.get(requestId)
     if (!rt?.session || !pending) return

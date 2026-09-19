@@ -20,6 +20,7 @@ export const LOCAL_COMMANDS: Record<string, string> = {
   zoom: "/zoom <agent>",
   help: "/help — keyboard shortcuts",
   settings: "/settings — every setting, live",
+  costs: "/costs — spend per agent and vendor",
   guide: "/guide — short lessons on how Baton works",
   recipes: "/recipes — browse workflows",
   welcome: "/welcome — the first-run screen",

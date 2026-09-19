@@ -25,6 +25,7 @@ export const DEFAULT_COMMANDS: CommandDef[] = [
   { id: "attention.next", title: "Jump to the next thing that needs you", context: "global", keys: ["ctrl+n"] },
   { id: "approvals.allow", title: "Approve oldest request", context: "global", keys: ["ctrl+y"] },
   { id: "settings.open", title: "Settings…", context: "global", keys: ["ctrl+s", "f2"] },
+  { id: "costs.open", title: "Costs: spend per agent and vendor, budgets", context: "global", keys: ["ctrl+e"] },
   { id: "guide.open", title: "Guide: short lessons on how Baton works", context: "global", keys: [] },
   { id: "recipes.open", title: "Recipes: proven multi-agent workflows", context: "global", keys: [] },
   { id: "welcome.open", title: "Welcome screen", context: "global", keys: [] },

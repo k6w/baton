@@ -367,7 +367,7 @@ export function Orchestrator(props: OrchestratorProps) {
       width={props.width}
       height={props.height}
       border={ui.prefs.border}
-      borderColor={props.focused ? ui.theme().borderActive : ui.theme().border}
+      borderColor={ui.config.policy.preset === "yolo" ? ui.theme().error : props.focused ? ui.theme().borderActive : ui.theme().border}
       icon={{ text: orch() ? agentLook(ui, orch()!).glyph : "✱", fg: ui.theme().primary, bold: true }}
       logo={orch() ? agentLook(ui, orch()!).logo : undefined}
       title={[{ text: "orchestrator", fg: ui.theme().text, bold: true }]}

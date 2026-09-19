@@ -1,6 +1,6 @@
 /**
  * Status bar, driven by format strings (`ui.status_left` / `ui.status_right`).
- * Variables: {dot} {running} {total} {noun} {calls} {msgs} {cost} {tokens} {added} {removed} {unmerged}
+ * Variables: {trust} {attention} {dot} {running} {total} {noun} {calls} {msgs} {cost} {tokens} {added} {removed} {unmerged}
  *            {repo} {branch} {mode} {approvals} {spark} {theme} {layout}
  */
 
@@ -65,6 +65,10 @@ export function StatusBar(props: { width: number }) {
       branch: run.branch ? { text: run.branch, fg: t.statusText } : undefined,
       mode: { text: run.mode, fg: t.statusText },
       approvals: run.approvals.size ? { text: `⚠ ${run.approvals.size}`, fg: t.warning } : undefined,
+      trust: (() => {
+        const yolo = ui.config.policy.preset === "yolo" || [...run.agents.values()].some((a) => a.status !== "exited" && a.approval === "yolo")
+        return yolo ? { text: "⚠ YOLO", fg: t.error } : undefined
+      })(),
       attention: (() => {
         const n = urgentCount(attentionItems(run))
         return n ? { text: `⚑ ${n}`, fg: t.warning } : undefined

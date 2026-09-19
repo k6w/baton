@@ -462,6 +462,7 @@ export function statusLine(
     const parts = [elapsed]
     if (ctx.orchestrator && ctx.subagents) parts.push(`${ctx.subagents} subagents`)
     else parts.push(`↓ ${formatTokens(tokens)}`)
+    if (!ctx.orchestrator && agent.usage.costUsd >= 0.01) parts.push(`$${agent.usage.costUsd.toFixed(2)}`)
     if (ctx.orchestrator) parts.push("esc to interrupt")
     return {
       segs: [
@@ -500,7 +501,8 @@ export function statusLine(
         { text: `exited${agent.statusDetail ? ` · ${agent.statusDetail}` : ""}`, fg: t.textSubtle },
       ],
     }
-  const extra = tokens > 0 ? ` · ↓ ${formatTokens(tokens)}` : ""
+  const cost = agent.usage.costUsd > 0 ? ` · $${agent.usage.costUsd < 0.01 ? "<0.01" : agent.usage.costUsd.toFixed(2)}` : ""
+  const extra = tokens > 0 ? ` · ↓ ${formatTokens(tokens)}${cost}` : ""
   return {
     segs: [
       { text: "◌ ", fg: t.stateIdle },

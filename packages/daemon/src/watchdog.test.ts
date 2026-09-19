@@ -26,3 +26,38 @@ test("watchdog flags silent busy agents and tells the lead", async () => {
   expect(rt.store.query({ types: ["agent.attention"], agentId: w.agentId }).length).toBe(n)
   await d.stop()
 })
+
+test("spawn guard: parallel spawns need a reason; above the soft limit the user decides", async () => {
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js")
+  const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js")
+  const root = mkdtempSync(join(tmpdir(), "baton-guard-"))
+  const d = await startDaemon({
+    projectRoot: root,
+    ephemeral: true,
+    socketPath: join(root, "s.sock"),
+    overrides: { orchestrator: { agent: "mock" }, bus: { heartbeat_s: 0 }, budget: { soft_max_agents: 2 }, policy: { preset: "yolo" } },
+  })
+  const rt = d.runtime
+  const lead = await rt.ensureOrchestrator()
+  const c = new Client({ name: "lead", version: "1" })
+  await c.connect(new StreamableHTTPClientTransport(new URL(`${rt.mcpBaseUrl}/mcp/${lead.token}`)))
+  const call = (args: Record<string, unknown>) => c.callTool({ name: "spawn_agent", arguments: { adapter: "mock", ...args } })
+  const noReason = await call({ count: 2 })
+  expect(noReason.isError).toBe(true)
+  expect(JSON.stringify(noReason.content)).toContain("reason")
+  expect(JSON.stringify((await call({ count: 2, reason: "two independent files" })).content)).toContain("spawned")
+  // third agent: above the soft limit → an ask appears (yolo policy must NOT auto-approve it)
+  const pending = call({ reason: "one more" })
+  const until = async (p: () => boolean) => {
+    for (let i = 0; i < 200 && !p(); i++) await Bun.sleep(10)
+  }
+  await until(() => rt.state.approvals.size > 0)
+  const ask = [...rt.state.approvals.values()][0]!
+  expect(ask.title).toContain("start 1 more mock agent (3 total)?")
+  await rt.resolvePermission(ask.agentId, ask.requestId, "no")
+  const declined = await pending
+  expect(declined.isError).toBe(true)
+  expect(JSON.stringify(declined.content)).toContain("declined")
+  await c.close()
+  await d.stop()
+})

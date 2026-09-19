@@ -7,6 +7,7 @@ import { listThemes, loadTheme } from "@batonsh/themes"
 import { onBlur, onFocus, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
 import { createEffect, createMemo, Match, onCleanup, Show, Switch } from "solid-js"
 import { completions, LOCAL_COMMANDS } from "./completion.ts"
+import { CostsOverlay } from "./components/Costs.tsx"
 import { type Cell, computeGrid, Grid } from "./components/Grid.tsx"
 import { HintBar } from "./components/HintBar.tsx"
 import { GuideOverlay, RecipesOverlay, WelcomeOverlay } from "./components/Learn.tsx"
@@ -293,6 +294,9 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       case "guide.open":
         ui.setOverlay("guide")
         break
+      case "costs.open":
+        ui.setOverlay("costs")
+        break
       case "recipes.open":
         ui.setOverlay("recipes")
         break
@@ -453,6 +457,9 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
         break
       case "guide":
         ui.setOverlay("guide")
+        break
+      case "costs":
+        ui.setOverlay("costs")
         break
       case "recipes":
         ui.setOverlay("recipes")
@@ -643,6 +650,9 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
             onTask={(text) => prefill(text)}
             onGuide={() => ui.setOverlay("guide")}
           />
+        </Match>
+        <Match when={ui.overlay() === "costs"}>
+          <CostsOverlay onClose={() => ui.setOverlay(null)} />
         </Match>
         <Match when={ui.overlay() === "guide"}>
           <GuideOverlay onClose={() => ui.setOverlay(null)} />

@@ -56,7 +56,21 @@ export function savePrefs(p: Partial<Prefs>): void {
   } catch {}
 }
 
-export type Overlay = null | "palette" | "inbox" | "help" | "theme" | "changes" | "diff" | "tasks" | "settings" | "peek" | "welcome" | "guide" | "recipes"
+export type Overlay =
+  | null
+  | "palette"
+  | "inbox"
+  | "help"
+  | "theme"
+  | "changes"
+  | "diff"
+  | "tasks"
+  | "settings"
+  | "peek"
+  | "welcome"
+  | "guide"
+  | "recipes"
+  | "costs"
 export type Focus = { kind: "input" } | { kind: "agent"; agentId: string }
 
 export interface Toast {

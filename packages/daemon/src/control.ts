@@ -15,6 +15,7 @@ import {
 } from "@batonsh/protocol"
 import type { Socket } from "bun"
 import { handleInput } from "./input.ts"
+import { listRecipes } from "./recipes.ts"
 import type { Runtime } from "./runtime.ts"
 
 export const DAEMON_VERSION = "0.1.0"
@@ -102,6 +103,7 @@ export function startControlServer(
     "workspace.diff": async (p) => ({ patch: await rt.collab.diff(p.agentId, p.paths ?? []) }),
     "review.request": async (p) => ({ reviewer: (await rt.collab.requestReview(p.agentId, { reviewer: p.reviewer })).reviewer }),
     "plan.decide": (p) => ({ ok: rt.collab.decidePlan(p.approved, p.notes) }),
+    "recipes.list": () => ({ recipes: listRecipes(rt.projectRoot).map(({ template: _t, ...r }) => r) }),
     "daemon.shutdown": () => {
       setTimeout(hooks.onShutdown, 10)
       return { ok: true }

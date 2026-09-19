@@ -9,6 +9,7 @@ import { createEffect, createMemo, Match, onCleanup, Show, Switch } from "solid-
 import { completions, LOCAL_COMMANDS } from "./completion.ts"
 import { type Cell, computeGrid, Grid } from "./components/Grid.tsx"
 import { HintBar } from "./components/HintBar.tsx"
+import { GuideOverlay, RecipesOverlay, WelcomeOverlay } from "./components/Learn.tsx"
 import { Orchestrator } from "./components/Orchestrator.tsx"
 import { CommandPalette, HelpOverlay, Inbox, type PaletteItem, ThemePicker, Toasts } from "./components/Overlays.tsx"
 import { PeekOverlay } from "./components/Peek.tsx"
@@ -18,6 +19,7 @@ import { ChangesOverlay, DiffOverlay, TasksOverlay } from "./components/Workspac
 import { ZoomView } from "./components/ZoomView.tsx"
 import { useUi } from "./context.ts"
 import type { KeyContext } from "./keymap.ts"
+import { loadOnboarding, saveOnboarding } from "./onboarding.ts"
 import type { Prefs } from "./state.ts"
 import { buildSystemTheme } from "./system-theme.ts"
 
@@ -70,6 +72,10 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       if (ui.theme() === initial) void applyTheme(ui.prefs.theme)
     })
   }
+
+  // first run: welcome (once per machine; /welcome reopens it)
+  if (ui.persistent && !loadOnboarding().welcomed && process.env.BATON_NO_WELCOME !== "1")
+    setTimeout(() => ui.overlay() === null && ui.setOverlay("welcome"), 300)
 
   onFocus(() => ui.setTermFocused(true))
   onBlur(() => ui.setTermFocused(false))
@@ -284,6 +290,15 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       case "settings.open":
         ui.setOverlay("settings")
         break
+      case "guide.open":
+        ui.setOverlay("guide")
+        break
+      case "recipes.open":
+        ui.setOverlay("recipes")
+        break
+      case "welcome.open":
+        ui.setOverlay("welcome")
+        break
       case "changes.open":
         ui.setOverlay("changes")
         break
@@ -435,6 +450,15 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
         break
       case "settings":
         ui.setOverlay("settings")
+        break
+      case "guide":
+        ui.setOverlay("guide")
+        break
+      case "recipes":
+        ui.setOverlay("recipes")
+        break
+      case "welcome":
+        ui.setOverlay("welcome")
         break
       case "quit":
         props.onExit({ shutdown: false })
@@ -609,6 +633,28 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
         </Match>
         <Match when={ui.overlay() === "help"}>
           <HelpOverlay onClose={() => ui.setOverlay(null)} />
+        </Match>
+        <Match when={ui.overlay() === "welcome"}>
+          <WelcomeOverlay
+            onClose={() => {
+              saveOnboarding({ ...loadOnboarding(), welcomed: true })
+              ui.setOverlay(null)
+            }}
+            onTask={(text) => prefill(text)}
+            onGuide={() => ui.setOverlay("guide")}
+          />
+        </Match>
+        <Match when={ui.overlay() === "guide"}>
+          <GuideOverlay onClose={() => ui.setOverlay(null)} />
+        </Match>
+        <Match when={ui.overlay() === "recipes"}>
+          <RecipesOverlay
+            onClose={() => ui.setOverlay(null)}
+            onPick={(name) => {
+              ui.setOverlay(null)
+              prefill(`/recipe ${name} `)
+            }}
+          />
         </Match>
         <Match when={ui.overlay() === "settings"}>
           <SettingsOverlay onClose={() => ui.setOverlay(null)} applyTheme={(n) => void applyTheme(n)} />

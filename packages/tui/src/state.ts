@@ -56,7 +56,7 @@ export function savePrefs(p: Partial<Prefs>): void {
   } catch {}
 }
 
-export type Overlay = null | "palette" | "inbox" | "help" | "theme" | "changes" | "diff" | "tasks" | "settings" | "peek"
+export type Overlay = null | "palette" | "inbox" | "help" | "theme" | "changes" | "diff" | "tasks" | "settings" | "peek" | "welcome" | "guide" | "recipes"
 export type Focus = { kind: "input" } | { kind: "agent"; agentId: string }
 
 export interface Toast {
@@ -74,6 +74,8 @@ export interface UiState {
   prefs: Prefs
   setPrefs: SetStoreFunction<Prefs>
   persistPrefs: () => void
+  /** False in tests / embedded use: nothing is written to the state dir, no first-run screens. */
+  persistent: boolean
   theme: Accessor<ResolvedTheme>
   setTheme: Setter<ResolvedTheme>
   version: Accessor<number>
@@ -186,6 +188,7 @@ export function createUiState(opts: { client?: BatonClient; run: RunState; confi
     setConfig,
     prefs,
     setPrefs,
+    persistent: opts.persist !== false,
     persistPrefs: () => {
       if (opts.persist !== false) savePrefs({ ...prefs })
     },

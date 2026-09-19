@@ -20,6 +20,9 @@ export const LOCAL_COMMANDS: Record<string, string> = {
   zoom: "/zoom <agent>",
   help: "/help — keyboard shortcuts",
   settings: "/settings — every setting, live",
+  guide: "/guide — short lessons on how Baton works",
+  recipes: "/recipes — browse workflows",
+  welcome: "/welcome — the first-run screen",
   quit: "/quit — leave (agents keep running)",
   shutdown: "/shutdown — stop the daemon and all agents",
 }
@@ -38,9 +41,20 @@ export const REMOTE_COMMANDS: Record<string, string> = {
   review: "/review <agent> [reviewer]",
   diff: "/diff <agent>",
   plan: "/plan approve|reject [notes]",
+  recipe: "/recipe <name> <task> — proven workflows",
   approve: "/approve [all]",
   deny: "/deny [all]",
 }
+
+const RECIPES: [string, string][] = [
+  ["best-of-3", "3 vendors solve it independently; best lands"],
+  ["plan-execute", "plan → your approval → parallel execution"],
+  ["research-implement", "researcher → implementer → reviewer"],
+  ["implement-review", "implement → cross-vendor review → fix"],
+  ["debug-hypotheses", "competing theories, evidence decides"],
+  ["test-first", "failing tests first, then make them pass"],
+  ["shard", "split a mechanical change by directory"],
+]
 
 const KNOWN_ADAPTERS = [
   "claude",
@@ -101,6 +115,9 @@ export function completions(input: string, run: RunState, config: BatonConfig): 
         break
       case "merge":
         options = [{ v: "all", d: "every worktree" }, ...agents()]
+        break
+      case "recipe":
+        options = RECIPES.map((r) => ({ v: r[0], d: r[1] }))
         break
       case "plan":
         options = [

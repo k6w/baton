@@ -6,6 +6,7 @@
  *   !name                  → interrupt that agent (!all for everyone)
  *   anything else          → the orchestrator
  */
+import { listRecipes, renderRecipe } from "./recipes.ts"
 import type { Runtime } from "./runtime.ts"
 
 export interface InputResult {
@@ -28,6 +29,7 @@ export const DAEMON_COMMANDS: Record<string, string> = {
   review: "/review <agent> [reviewer] — cross-vendor review of an agent's changes",
   diff: "/diff <agent> — show what an agent changed",
   plan: "/plan approve|reject [notes] — decide on the orchestrator's proposed plan",
+  recipe: "/recipe <name> <task> — run a proven multi-agent workflow (best-of-3, plan-execute, …)",
   approve: "/approve [all] — approve the oldest (or all) pending requests",
   deny: "/deny [all] — deny the oldest (or all) pending requests",
 }
@@ -184,6 +186,17 @@ async function handleCommand(rt: Runtime, text: string): Promise<InputResult> {
         command: cmd,
         output: files.length ? files.map((f) => `${f.path}  +${f.added} −${f.removed}`).join("\n") : `${t.info.name}: no unmerged changes`,
       }
+    }
+    case "recipe": {
+      const recipes = listRecipes(rt.projectRoot)
+      const name = args[0]
+      const r = recipes.find((x) => x.name === name)
+      if (!r) return { routedTo: [], command: cmd, output: recipes.map((x) => `${x.name.padEnd(20)} ${x.description}`).join("\n") }
+      const task = args.slice(1).join(" ").trim()
+      if (!task) throw new Error(`usage: /recipe ${r.name} <task>`)
+      const orch = await rt.ensureOrchestrator()
+      await rt.promptAgent(orch.info.agentId, renderRecipe(r, task), { from: "user" })
+      return { routedTo: [orch.info.name], command: cmd, output: `${r.title}: started` }
     }
     case "plan": {
       const verdict = args[0]

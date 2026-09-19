@@ -153,3 +153,18 @@ describe("collaboration", () => {
     expect(existsSync(p2)).toBe(true) // unmerged (conflicted) work is never thrown away
   })
 })
+
+describe("recipes", () => {
+  test("builtin + project recipes, /recipe sends the rendered workflow to the lead", async () => {
+    const { mkdirSync } = await import("node:fs")
+    mkdirSync(join(root, ".baton", "recipes"), { recursive: true })
+    writeFileSync(join(root, ".baton", "recipes", "ship.md"), "---\nname: ship\ndescription: our release flow\n---\nRun the release checklist for {task}.")
+    const list = await client.call("recipes.list", {})
+    expect(list.recipes.map((r) => r.name)).toEqual(expect.arrayContaining(["best-of-3", "plan-execute", "ship"]))
+    const r = await client.submit("/recipe ship v2.3")
+    expect(r.output).toContain("started")
+    const lead = d.runtime.orchestrator()!
+    await until(() => d.runtime.state.feed(lead.info.agentId).items.some((i) => i.kind === "user" && i.text.includes("Run the release checklist for v2.3")))
+    await expect(client.submit("/recipe best-of-3")).rejects.toThrow(/usage/)
+  })
+})

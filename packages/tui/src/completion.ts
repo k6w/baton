@@ -40,6 +40,7 @@ export const REMOTE_COMMANDS: Record<string, string> = {
   agents: "/agents — installed adapters + auth",
   merge: "/merge <agent|all> — land worktree changes",
   sync: "/sync <agent>",
+  undo: "/undo [agent] — undo the last merge",
   review: "/review <agent> [reviewer]",
   diff: "/diff <agent>",
   plan: "/plan approve|reject [notes]",
@@ -111,6 +112,7 @@ export function completions(input: string, run: RunState, config: BatonConfig): 
       case "rename":
       case "zoom":
       case "sync":
+      case "undo":
       case "review":
       case "diff":
         options = agents()

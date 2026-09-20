@@ -588,6 +588,7 @@ export interface WorkspaceLike {
   conflicts: { with: string; files: string[]; kind: string }[]
   review?: { status: string; reviewer: string }
   leases: { globs: string[] }[]
+  port?: number
 }
 
 /** One-line workspace state for a card: `⎇ 3 files +12 −4 · review ✓`, conflicts, merge status. */
@@ -617,6 +618,7 @@ export function workspaceLine(ws: WorkspaceLike | undefined, ctx: { theme: Resol
       { text: ` −${ws.removed}`, fg: t.error },
     )
   } else if (m?.status === "merged") segs.push({ text: "✓ merged", fg: t.success })
+  else if (m?.status === "undone") segs.push({ text: "↶ merge undone", fg: t.warning })
   else
     return ws.leases.length
       ? clipLine(
@@ -628,7 +630,17 @@ export function workspaceLine(ws: WorkspaceLike | undefined, ctx: { theme: Resol
           },
           ctx.width,
         )
-      : undefined
+      : // clean worktree: show where the agent works
+        clipLine(
+          {
+            segs: [
+              { text: "⎇ ", fg: t.textSubtle },
+              { text: ws.branch?.split("/").slice(-1)[0] ?? "worktree", fg: t.textSubtle },
+              ...(ws.port ? [{ text: ` · :${ws.port}`, fg: t.textSubtle }] : []),
+            ],
+          },
+          ctx.width,
+        )
   if (ws.review && segs.length) {
     sep()
     const r = ws.review

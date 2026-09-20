@@ -101,6 +101,7 @@ export function AgentCard(props: { agentId: string; width: number; height: numbe
         failed: "failed",
         stalled: "stuck?",
         looping: "looping?",
+        scope: "out of scope",
         conflict: "conflict",
         merge: "merge failed",
         budget: "budget",

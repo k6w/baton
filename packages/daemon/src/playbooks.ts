@@ -48,7 +48,8 @@ git worktree (your current directory); the orchestrator merges your changes when
 - \`submit_review(verdict, notes)\` — when you were asked to review someone's work.
 
 Rules: stay inside the files/area you were given; if you must touch something another agent owns, message them first.
-Do not commit or push — Baton handles that. When you finish, end with a concise summary of what you changed and how you
+Do not commit or push — Baton handles that. If you start a dev server, use $PORT (or $BATON_PORT_0/1) — other agents
+run their own servers in parallel. When you finish, end with a concise summary of what you changed and how you
 verified it; it is sent to whoever assigned the task.
 `
 

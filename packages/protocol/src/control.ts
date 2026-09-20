@@ -22,7 +22,7 @@ export interface AgentView extends AgentInfo {
   /** Timestamp of the agent's latest event (for stall detection / "last active"). */
   lastEventAt?: number
   /** Watchdog flag (stalled / looping). */
-  attention?: { reason: "stalled" | "looping"; detail?: string; ts: number }
+  attention?: { reason: "stalled" | "looping" | "scope"; detail?: string; ts: number }
   lastActivity?: string
 }
 

@@ -30,6 +30,8 @@ export interface Workspace {
   merged: boolean
   /** Latest snapshot commit of the worktree (for conflict checks). */
   snapshot?: string
+  /** Ports reserved for this worktree. */
+  ports?: number[]
 }
 
 export interface MergeOutcome {
@@ -51,6 +53,8 @@ export function worktreeRoot(projectRoot: string, cfg: Cfg): string {
 export class WorkspaceManager {
   readonly byAgent = new Map<string, Workspace>()
   private queue: Promise<unknown> = Promise.resolve()
+  /** Landed merges, newest last (for undo). */
+  private history: { agentId: string; agentName: string; before: string; after: string; prevBase?: string; files: FileStat[] }[] = []
   private repo: boolean | undefined
 
   constructor(
@@ -58,6 +62,29 @@ export class WorkspaceManager {
     private cfg: Cfg,
     private runId: string,
   ) {}
+
+  private allocatePorts(): number[] {
+    if (this.cfg.ports <= 0) return []
+    const used = new Set([...this.byAgent.values()].flatMap((w) => w.ports ?? []))
+    for (let slot = 0; slot < 500; slot++) {
+      const block = Array.from({ length: this.cfg.ports }, (_, i) => this.cfg.port_base + slot * 10 + i)
+      if (!block.some((p) => used.has(p))) return block
+    }
+    return []
+  }
+
+  /** Environment for an agent working in this workspace (ports, paths). */
+  env(agentId: string): Record<string, string> {
+    const ws = this.byAgent.get(agentId)
+    const out: Record<string, string> = {}
+    if (!ws) return out
+    ws.ports?.forEach((p, i) => {
+      out[`BATON_PORT_${i}`] = String(p)
+    })
+    if (ws.ports?.length) out.PORT = String(ws.ports[0])
+    if (ws.mode === "worktree") out.BATON_WORKTREE = ws.path
+    return out
+  }
 
   configure(cfg: Cfg) {
     this.cfg = cfg
@@ -96,7 +123,7 @@ export class WorkspaceManager {
         exclude.push(f)
       }
     }
-    const ws: Workspace = { agentId, agentName, mode: "worktree", path, branch, base, exclude, files: [], merged: false }
+    const ws: Workspace = { agentId, agentName, mode: "worktree", path, branch, base, exclude, files: [], merged: false, ports: this.allocatePorts() }
     this.byAgent.set(agentId, ws)
     if (this.cfg.setup) {
       const r = await runShell(this.cfg.setup, path, 600_000)
@@ -107,7 +134,7 @@ export class WorkspaceManager {
 
   adopt(agentId: string, agentName: string, path: string, branch?: string, base?: string): Workspace {
     const exclude = [...this.cfg.link, ...this.cfg.copy].filter((l) => existsSync(join(path, l)))
-    const ws: Workspace = { agentId, agentName, mode: "worktree", path, branch, base, exclude, files: [], merged: false }
+    const ws: Workspace = { agentId, agentName, mode: "worktree", path, branch, base, exclude, files: [], merged: false, ports: this.allocatePorts() }
     this.byAgent.set(agentId, ws)
     return ws
   }
@@ -174,6 +201,8 @@ export class WorkspaceManager {
       const applied = await applyPatch(this.projectRoot, patch)
       if (applied.code !== 0) return { status: "failed", files: ws.files, detail: applied.stderr.trim() }
       const files = ws.files
+      const afterCommit = await commitTree(this.projectRoot, merged.tree, [current], `baton merged ${ws.agentName}`)
+      this.history.push({ agentId, agentName: ws.agentName, before: current, after: afterCommit, prevBase: ws.base, files })
       ws.base = commit
       ws.files = []
       ws.snapshot = undefined
@@ -183,6 +212,39 @@ export class WorkspaceManager {
     const p = this.queue.then(run, run)
     this.queue = p.catch(() => {})
     return p.catch((e) => ({ status: "failed" as const, files: [], detail: e instanceof Error ? e.message : String(e) }))
+  }
+
+  /**
+   * Undo the most recent merge (optionally: the most recent of one agent). Three-way, so edits
+   * made after the merge are kept. The agent's changes become unmerged again in its worktree.
+   */
+  undoMerge(agentId?: string): Promise<{ ok: boolean; agentName?: string; files: string[]; detail?: string }> {
+    const run = async () => {
+      const idx = agentId ? this.history.map((h) => h.agentId).lastIndexOf(agentId) : this.history.length - 1
+      const h = this.history[idx]
+      if (!h) return { ok: false, files: [], detail: "nothing to undo" }
+      const now = await snapshotCommit(this.projectRoot, "baton undo source", undefined, this.cfg.link)
+      const r = await mergeTree(this.projectRoot, h.after, now, h.before)
+      if (!r.clean || !r.tree)
+        return {
+          ok: false,
+          agentName: h.agentName,
+          files: r.conflicts,
+          detail: `files changed since the merge conflict with the undo: ${r.conflicts.join(", ")}`,
+        }
+      const applied = await applyPatch(this.projectRoot, await diffPatch(this.projectRoot, now, r.tree))
+      if (applied.code !== 0) return { ok: false, agentName: h.agentName, files: [], detail: applied.stderr.trim() }
+      this.history.splice(idx, 1)
+      const ws = this.byAgent.get(h.agentId)
+      if (ws && h.prevBase) {
+        ws.base = h.prevBase
+        ws.merged = false
+      }
+      return { ok: true, agentName: h.agentName, files: h.files.map((f) => f.path) }
+    }
+    const p = this.queue.then(run, run)
+    this.queue = p.catch(() => {})
+    return p
   }
 
   /** Bring the project's current state into the agent's worktree (to resolve conflicts there). */

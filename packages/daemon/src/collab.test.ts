@@ -168,3 +168,20 @@ describe("recipes", () => {
     await expect(client.submit("/recipe best-of-3")).rejects.toThrow(/usage/)
   })
 })
+
+describe("scope drift", () => {
+  test("editing outside the task's files flags the agent and tells the lead", async () => {
+    d.runtime.emit({ type: "task.created", data: { taskId: "ui", title: "Fix the button", deps: [], files: ["src/ui/**"] } })
+    const w = await client.spawn({ adapter: "mock", name: "drifter", options: { speed: 0 }, taskId: "ui" })
+    const p = d.runtime.state.workspaces.get(w.agentId)!.path
+    const { mkdirSync } = await import("node:fs")
+    mkdirSync(join(p, "src", "ui"), { recursive: true })
+    writeFileSync(join(p, "src", "ui", "button.ts"), "export {}\n")
+    await d.runtime.collab.refresh(w.agentId)
+    expect(d.runtime.state.agents.get(w.agentId)?.attention).toBeUndefined()
+    writeFileSync(join(p, "package.json"), "{}\n")
+    await d.runtime.collab.refresh(w.agentId)
+    expect(d.runtime.state.agents.get(w.agentId)?.attention?.reason).toBe("scope")
+    expect(d.runtime.state.bus.some((m) => m.body.includes("outside its task scope"))).toBe(true)
+  })
+})

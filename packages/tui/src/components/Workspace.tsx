@@ -58,6 +58,7 @@ export function ChangesOverlay(props: { onClose: () => void }) {
         r.clean ? `${cur.agent!.name} is up to date` : `conflicts in ${r.conflicts.join(", ")} — agent asked to resolve`,
       )
     else if (ks === "r") void act(ui, ui.client?.call("review.request", { agentId: cur.agentId }), (r) => `${r.reviewer} is reviewing ${cur.agent!.name}`)
+    else if (ks === "u") void act(ui, ui.client?.submit(`/undo ${cur.agent!.name}`), (r) => r.output)
   })
   const detail = createMemo<Line[]>(() => {
     const t = ui.theme()
@@ -98,7 +99,7 @@ export function ChangesOverlay(props: { onClose: () => void }) {
     return w.files.length ? "unmerged" : "clean"
   }
   return (
-    <Modal title="Changes" width={96} height={26} hint="enter diff · m merge · s sync · r review · esc">
+    <Modal title="Changes" width={96} height={26} hint="enter diff · m merge · u undo merge · s sync · r review · esc">
       <ListView
         items={rows().map((r) => {
           const look = agentLook(ui, r.agent!)

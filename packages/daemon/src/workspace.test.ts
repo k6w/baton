@@ -103,6 +103,31 @@ describe("WorkspaceManager", () => {
     expect(readFileSync(join(root, "a.ts"), "utf8")).toContain("one and two")
   })
 
+  test("undo a merge three-way: later edits survive, the agent's work is unmerged again", async () => {
+    const wm = new WorkspaceManager(root, cfg(), "run_x")
+    const ws = await wm.create("a1", "codex-1", "worktree")
+    writeFileSync(join(ws.path, "a.ts"), "export const a = 'agent'\nexport const b = 2\nexport const c = 3\n")
+    expect((await wm.merge("a1")).status).toBe("merged")
+    // the user edits another line after the merge
+    writeFileSync(join(root, "a.ts"), "export const a = 'agent'\nexport const b = 2\nexport const c = 'mine'\n")
+    const u = await wm.undoMerge()
+    expect(u.ok).toBe(true)
+    expect(readFileSync(join(root, "a.ts"), "utf8")).toBe("export const a = 1\nexport const b = 2\nexport const c = 'mine'\n")
+    expect((await wm.refresh("a1"))?.files.map((f) => f.path)).toEqual(["a.ts"])
+    expect((await wm.undoMerge()).ok).toBe(false)
+  })
+
+  test("each worktree gets its own port block", async () => {
+    const wm = new WorkspaceManager(root, cfg({ ports: 2, port_base: 5000 }), "run_x")
+    await wm.create("a1", "codex-1", "worktree")
+    await wm.create("a2", "codex-2", "worktree")
+    expect(wm.env("a1")).toMatchObject({ PORT: "5000", BATON_PORT_0: "5000", BATON_PORT_1: "5001" })
+    expect(wm.env("a2")).toMatchObject({ PORT: "5010", BATON_PORT_1: "5011" })
+    await wm.remove("a1")
+    await wm.create("a3", "codex-3", "worktree")
+    expect(wm.env("a3").PORT).toBe("5000") // freed block is reused
+  })
+
   test("verify command gates the merge", async () => {
     const wm = new WorkspaceManager(root, cfg({ verify: "grep -q ok status.txt" }), "run_x")
     const ws = await wm.create("a1", "codex-1", "worktree")

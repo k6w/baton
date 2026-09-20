@@ -47,6 +47,7 @@ export const DEFAULT_COMMANDS: CommandDef[] = [
   { id: "pane.peek", title: "Peek at focused agent (and reply)", context: "grid", keys: ["space"] },
   { id: "pane.zoom", title: "Zoom focused agent", context: "grid", keys: ["z", "enter", "return"] },
   { id: "pane.message", title: "Message focused agent", context: "grid", keys: ["m"] },
+  { id: "pane.copyPath", title: "Copy focused agent's worktree path", context: "grid", keys: ["o"] },
   { id: "pane.interrupt", title: "Interrupt focused agent", context: "grid", keys: ["x"] },
   { id: "pane.kill", title: "Kill focused agent", context: "grid", keys: ["shift+x"] },
   { id: "zoom.close", title: "Close zoom", context: "zoom", keys: ["escape", "q", "z"] },

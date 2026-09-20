@@ -187,6 +187,10 @@ export const BatonConfig = z.object({
       reviewer: z.string().optional(),
       /** What happens to a worktree when its agent is removed. */
       cleanup: z.enum(["merged", "always", "never"]).default("merged"),
+      /** Ports reserved per worktree: BATON_PORT_0..N-1 (and PORT = the first) so dev servers don't collide. */
+      ports: z.number().int().min(0).max(20).default(2),
+      /** First port handed out; each worker gets a block of 10. */
+      port_base: z.number().int().min(1024).max(60000).default(4100),
       /** Predict merge conflicts between workers as they edit. */
       conflict_check: z.boolean().default(true),
     })
@@ -196,6 +200,8 @@ export const BatonConfig = z.object({
       copy: [".env", ".env.local", ".env.development.local"],
       review: "suggested",
       cleanup: "merged",
+      ports: 2,
+      port_base: 4100,
       conflict_check: true,
     }),
   daemon: z

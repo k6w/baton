@@ -218,6 +218,7 @@ const KIND_STYLE: Record<AttentionKind, { glyph: string; token: "warning" | "err
   budget: { glyph: "$", token: "error" },
   stalled: { glyph: "⏸", token: "warning" },
   looping: { glyph: "↻", token: "warning" },
+  scope: { glyph: "⤴", token: "warning" },
   ready: { glyph: "✓", token: "success" },
 }
 
@@ -288,6 +289,7 @@ export function Inbox(props: { onClose: () => void; onJump: (item: AttentionItem
       merge: "enter: open changes",
       stalled: "enter: peek — nudge it, interrupt (x) or reassign",
       looping: "enter: peek — nudge it or interrupt (x)",
+      scope: "enter: check its diff before merging",
       budget: "raise the budget in settings (ctrl+s) to continue",
       ready: "enter: review the diff, m to merge",
     }

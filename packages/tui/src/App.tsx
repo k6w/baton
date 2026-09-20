@@ -6,6 +6,7 @@ import { type AttentionItem, attentionItems, configDir, projectBatonDir, urgentC
 import { listThemes, loadTheme } from "@batonsh/themes"
 import { onBlur, onFocus, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
 import { createEffect, createMemo, Match, onCleanup, Show, Switch } from "solid-js"
+import { copyText } from "./clipboard.ts"
 import { completions, LOCAL_COMMANDS } from "./completion.ts"
 import { CostsOverlay } from "./components/Costs.tsx"
 import { type Cell, computeGrid, Grid } from "./components/Grid.tsx"
@@ -209,9 +210,9 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       .filter((c) => c.kind === "agent")
       .findIndex((c) => c.kind === "agent" && c.agentId === it.agentId)
     if (idx >= 0) focusAgentAt(idx)
-    if (it.kind === "ready" || it.kind === "conflict" || it.kind === "merge") {
+    if (it.kind === "ready" || it.kind === "conflict" || it.kind === "merge" || it.kind === "scope") {
       ui.setDiffAgent(it.agentId)
-      ui.setOverlay(it.kind === "ready" ? "diff" : "changes")
+      ui.setOverlay(it.kind === "ready" || it.kind === "scope" ? "diff" : "changes")
     } else {
       ui.setPeekAgent(it.agentId)
       ui.setOverlay("peek")
@@ -379,6 +380,12 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       case "pane.message": {
         const a = focusedAgent()
         if (a) prefill(`@${a.name} `)
+        break
+      }
+      case "pane.copyPath": {
+        const a = focusedAgent()
+        const ws = a ? ui.run.workspaces.get(a.agentId) : undefined
+        if (ws) ui.toast(`${ws.path} — copied via ${copyText(renderer, ws.path)}`)
         break
       }
       case "pane.interrupt": {

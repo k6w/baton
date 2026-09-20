@@ -25,6 +25,7 @@ export const DAEMON_COMMANDS: Record<string, string> = {
   rename: "/rename <name> <new-name>",
   agents: "/agents — list agents and installed adapters",
   merge: "/merge <agent|all> — merge worktree changes into the project",
+  undo: "/undo [agent] — undo the last merge (three-way: later edits are kept)",
   sync: "/sync <agent> — bring the project's latest state into an agent's worktree",
   review: "/review <agent> [reviewer] — cross-vendor review of an agent's changes",
   diff: "/diff <agent> — show what an agent changed",
@@ -162,6 +163,16 @@ async function handleCommand(rt: Runtime, text: string): Promise<InputResult> {
         )
       }
       return { routedTo: targets.map((t) => t.info.name), command: cmd, output: lines.join("\n") || "no worktrees" }
+    }
+    case "undo": {
+      const t = args[0] ? byName(args[0]) : undefined
+      const r = await rt.collab.undoMerge(t?.info.agentId)
+      if (!r.ok) throw new Error(`undo failed: ${r.detail ?? ""}`)
+      return {
+        routedTo: r.agentName ? [r.agentName] : [],
+        command: cmd,
+        output: `undid ${r.agentName}'s merge (${r.files.join(", ")}) — its changes are unmerged again`,
+      }
     }
     case "sync": {
       const t = byName(args[0])

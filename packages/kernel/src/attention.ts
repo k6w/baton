@@ -4,7 +4,7 @@
  */
 import type { RunState } from "./projection.ts"
 
-export type AttentionKind = "approval" | "plan" | "failed" | "conflict" | "merge" | "stalled" | "looping" | "budget" | "ready"
+export type AttentionKind = "approval" | "plan" | "failed" | "conflict" | "merge" | "stalled" | "looping" | "scope" | "budget" | "ready"
 
 export interface AttentionItem {
   kind: AttentionKind
@@ -16,7 +16,7 @@ export interface AttentionItem {
   ts: number
 }
 
-const ORDER: AttentionKind[] = ["approval", "plan", "failed", "conflict", "merge", "budget", "stalled", "looping", "ready"]
+const ORDER: AttentionKind[] = ["approval", "plan", "failed", "conflict", "merge", "budget", "stalled", "looping", "scope", "ready"]
 
 export function attentionItems(run: RunState): AttentionItem[] {
   const out: AttentionItem[] = []
@@ -28,7 +28,9 @@ export function attentionItems(run: RunState): AttentionItem[] {
   for (const a of run.agents.values()) {
     if (a.status === "error" || (a.status === "exited" && a.statusDetail && !/^(closed|killed|shutdown)$/.test(a.statusDetail)))
       out.push({ kind: "failed", agentId: a.agentId, title: `${a.name} failed`, detail: a.statusDetail, ts: a.lastEventAt ?? a.startedAt })
-    if (a.attention && a.status === "busy")
+    if (a.attention?.reason === "scope" && a.status !== "exited")
+      out.push({ kind: "scope", agentId: a.agentId, title: `${a.name} edited files outside its task`, detail: a.attention.detail, ts: a.attention.ts })
+    else if (a.attention && a.status === "busy")
       out.push({
         kind: a.attention.reason,
         agentId: a.agentId,

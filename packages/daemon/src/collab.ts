@@ -76,7 +76,7 @@ export class Collaboration {
       )
       ws = await this.workspaces.create(agent.info.agentId, agent.info.name, "shared")
     }
-    this.rt.emit({ type: "workspace.created", data: { path: ws.path, branch: ws.branch, base: ws.base, mode: ws.mode } }, agent.info.agentId)
+    this.rt.emit({ type: "workspace.created", data: { path: ws.path, branch: ws.branch, base: ws.base, mode: ws.mode, ports: ws.ports } }, agent.info.agentId)
     return ws.path
   }
 
@@ -142,9 +142,32 @@ export class Collaboration {
       const added = ws.files.reduce((n, f) => n + f.added, 0)
       const removed = ws.files.reduce((n, f) => n + f.removed, 0)
       this.rt.emit({ type: "workspace.changed", data: { files: ws.files, added, removed } }, agentId)
+      this.checkScope(
+        agentId,
+        ws.files.map((f) => f.path),
+      )
       if (this.rt.config.workspace.conflict_check) await this.checkConflicts(agentId)
     }
     return ws
+  }
+
+  private scopeSeen = new Map<string, string>()
+
+  /** Files changed outside the agent's task scope (task.files globs) → flag once per new set. */
+  private checkScope(agentId: string, paths: string[]) {
+    const taskId = this.taskOwners.get(agentId) ?? [...this.rt.state.tasks.values()].find((t) => t.owner === agentId)?.taskId
+    if (!taskId) return
+    const created = this.rt.store.query({ types: ["task.created"] }).find((e) => e.type === "task.created" && e.data.taskId === taskId)
+    const globs = created?.type === "task.created" ? created.data.files : undefined
+    if (!globs?.length) return
+    const outside = paths.filter((p) => !globs.some((g) => matchGlob(g, p)))
+    if (!outside.length) return
+    const sig = [...outside].sort().join(",")
+    if (this.scopeSeen.get(agentId) === sig) return
+    this.scopeSeen.set(agentId, sig)
+    const name = this.rt.agents.get(agentId)?.info.name ?? "agent"
+    this.rt.emit({ type: "agent.attention", data: { reason: "scope", detail: `outside ${globs.join(", ")}: ${outside.join(", ")}` } }, agentId)
+    this.notifyLead(`${name} changed files outside its task scope (${globs.join(", ")}): ${outside.join(", ")}. Check whether that's intended before merging.`)
   }
 
   private async checkConflicts(agentId: string) {
@@ -210,6 +233,16 @@ export class Collaboration {
         agentId,
       )
       if (requester !== this.rt.orchestrator()?.info.agentId) this.notifyLead(`Merge of ${agent.info.name} ${r.status}: ${r.detail ?? ""}`)
+    }
+    return r
+  }
+
+  async undoMerge(agentId?: string) {
+    const r = await this.workspaces.undoMerge(agentId)
+    const target = r.agentName ? this.rt.findAgent(r.agentName) : undefined
+    if (r.ok && target) {
+      this.rt.emit({ type: "workspace.merge", data: { status: "undone", files: r.files } }, target.info.agentId)
+      this.scheduleRefresh(target.info.agentId, 0)
     }
     return r
   }

@@ -131,7 +131,7 @@ export const EventSchemas = {
   "agent.status": z.object({ status: AgentStatus, detail: z.string().optional() }),
   "agent.updated": AgentInfo.partial(),
   /** Watchdog findings: an agent may need a nudge. Cleared by its next turn/tool activity. */
-  "agent.attention": z.object({ reason: z.enum(["stalled", "looping", "clear"]), detail: z.string().optional() }),
+  "agent.attention": z.object({ reason: z.enum(["stalled", "looping", "scope", "clear"]), detail: z.string().optional() }),
   "agent.exited": z.object({ code: z.number().nullable().optional(), reason: z.string().optional() }),
   "agent.session": z.object({ sessionId: z.string() }), // native resume id
 
@@ -247,6 +247,7 @@ export const EventSchemas = {
     branch: z.string().optional(),
     base: z.string().optional(),
     mode: z.enum(["worktree", "shared"]),
+    ports: z.array(z.number()).optional(),
   }),
   "workspace.changed": z.object({
     files: z.array(z.object({ path: z.string(), added: z.number(), removed: z.number() })),
@@ -259,7 +260,7 @@ export const EventSchemas = {
     kind: z.enum(["merge", "lease"]),
   }),
   "workspace.merge": z.object({
-    status: z.enum(["queued", "verifying", "merged", "failed", "conflict"]),
+    status: z.enum(["queued", "verifying", "merged", "failed", "conflict", "undone"]),
     commit: z.string().optional(),
     files: z.array(z.string()).optional(),
     added: z.number().optional(),

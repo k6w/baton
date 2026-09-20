@@ -35,10 +35,11 @@ export interface WorkspaceView {
   files: { path: string; added: number; removed: number }[]
   added: number
   removed: number
-  merge?: { status: "queued" | "verifying" | "merged" | "failed" | "conflict"; detail?: string; files?: string[]; ts: number }
+  merge?: { status: "queued" | "verifying" | "merged" | "failed" | "conflict" | "undone"; detail?: string; files?: string[]; ts: number }
   conflicts: { with: string; files: string[]; kind: "merge" | "lease" }[]
   review?: { status: "requested" | "approve" | "changes_requested"; reviewer: string; notes?: string }
   leases: { leaseId: string; globs: string[]; exclusive: boolean }[]
+  port?: number
 }
 
 export interface AgentFeed {
@@ -125,7 +126,11 @@ export class RunState {
     const agent = aid ? this.agents.get(aid) : undefined
     if (agent && e.type !== "agent.attention") {
       agent.lastEventAt = e.ts
-      if (agent.attention && (e.type === "tool.call" || e.type === "turn.started" || e.type === "turn.completed" || e.type === "message.delta")) {
+      if (
+        agent.attention &&
+        agent.attention.reason !== "scope" &&
+        (e.type === "tool.call" || e.type === "turn.started" || e.type === "turn.completed" || e.type === "message.delta")
+      ) {
         if (!(agent.attention.reason === "looping" && e.type === "tool.call")) agent.attention = undefined
       }
     }
@@ -374,7 +379,17 @@ export class RunState {
         break
       case "workspace.created":
         if (aid) {
-          this.workspaces.set(aid, { mode: e.data.mode, path: e.data.path, branch: e.data.branch, files: [], added: 0, removed: 0, conflicts: [], leases: [] })
+          this.workspaces.set(aid, {
+            mode: e.data.mode,
+            path: e.data.path,
+            branch: e.data.branch,
+            files: [],
+            added: 0,
+            removed: 0,
+            conflicts: [],
+            leases: [],
+            port: e.data.ports?.[0],
+          })
           if (agent) agent.cwd = e.data.path
         }
         break
@@ -413,6 +428,8 @@ export class RunState {
           w.merge = { status: e.data.status, detail: e.data.detail, files: e.data.files, ts: e.ts }
           if (e.data.status === "merged") w.conflicts = []
         }
+        if (aid && e.data.status === "undone")
+          this.push(aid, { kind: "note", id: `m_${e.id}`, text: `merge undone — ${e.data.files?.join(", ") ?? ""} unmerged again`, ts: e.ts })
         if (aid && (e.data.status === "merged" || e.data.status === "failed" || e.data.status === "conflict")) {
           const text =
             e.data.status === "merged"

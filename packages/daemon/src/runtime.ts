@@ -261,7 +261,7 @@ export class Runtime {
           systemPrompt,
           mcpServers: this.mcpBaseUrl && rt.caps.mcp ? [{ name: "baton", url: `${this.mcpBaseUrl}/mcp/${rt.token}` }] : [],
           approval,
-          env: { ...profile?.env, BATON_AGENT: name, BATON_AGENT_ID: agentId, BATON_PROJECT_ROOT: this.projectRoot },
+          env: { ...this.collab.workspaces.env(agentId), ...profile?.env, BATON_AGENT: name, BATON_AGENT_ID: agentId, BATON_PROJECT_ROOT: this.projectRoot },
           command: profile?.command,
           args: profile?.args,
           resumeId: params.resumeId,

@@ -146,7 +146,15 @@ export class Runtime {
     return { adapterId: ref }
   }
 
-  async spawn(params: SpawnParams & { isOrchestrator?: boolean }): Promise<AgentInfo> {
+  async spawn(
+    params: SpawnParams & {
+      isOrchestrator?: boolean
+      /** Native session id to resume (history → resume). */
+      resumeId?: string
+      /** Re-attach an existing worktree instead of creating one. */
+      adoptWorkspace?: { path: string; branch?: string; base?: string }
+    },
+  ): Promise<AgentInfo> {
     const { adapterId, profile } = this.resolveProfile(params.adapter)
     const adapter = this.registry.get(adapterId)
     if (!adapter)
@@ -236,7 +244,8 @@ export class Runtime {
 
     // workers get their own git worktree; the orchestrator (and explicit cwd) work in place
     const isolation = params.isolation ?? (params.isOrchestrator || params.cwd ? "shared" : this.config.workspace.isolation)
-    if (isolation === "worktree") info.cwd = await this.collab.prepare(rt, "worktree")
+    if (params.adoptWorkspace) info.cwd = this.collab.adopt(rt, params.adoptWorkspace)
+    else if (isolation === "worktree") info.cwd = await this.collab.prepare(rt, "worktree")
     else this.emit({ type: "workspace.created", data: { path: info.cwd, mode: "shared" } }, agentId)
     if (params.taskId) this.collab.assignTask(params.taskId, agentId)
 
@@ -255,6 +264,7 @@ export class Runtime {
           env: { ...profile?.env, BATON_AGENT: name, BATON_AGENT_ID: agentId, BATON_PROJECT_ROOT: this.projectRoot },
           command: profile?.command,
           args: profile?.args,
+          resumeId: params.resumeId,
           // the lead's directory also receives merges — don't attribute those to its own commands
           options: { ...(params.isOrchestrator ? { shellDiffs: false } : {}), ...profile?.options, ...params.options },
         },

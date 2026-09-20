@@ -1,12 +1,17 @@
 /** Full-size view of one agent with its complete, scrollable history. */
+import { mkdirSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import type { ScrollBoxRenderable } from "@opentui/core"
-import { createMemo } from "solid-js"
+import { useKeyboard, useRenderer } from "@opentui/solid"
+import { createMemo, createSignal, onCleanup, Show } from "solid-js"
 import { agentLook, whoFn } from "../agent-style.ts"
+import { copyText } from "../clipboard.ts"
 import { useUi } from "../context.ts"
 import { identityLines, renderFeed, statusLine } from "../lines.ts"
 import { Frame, innerSize } from "../ui/Frame.tsx"
 import { segs, toStyled } from "../ui/styled.ts"
 import { Txt } from "../ui/Txt.tsx"
+import { findMatches, highlight, lineText } from "../zoom-text.ts"
 
 export function ZoomView(props: { agentId: string; width: number; height: number }) {
   const ui = useUi()
@@ -57,7 +62,97 @@ export function ZoomView(props: { agentId: string; width: number; height: number
       { text: "  esc to close", fg: t.textSubtle },
     ]
   }
-  let _scroll: ScrollBoxRenderable | undefined
+  let scroll: ScrollBoxRenderable | undefined
+  const renderer = useRenderer()
+  const [searching, setSearchingSig] = createSignal(false)
+  const setSearching = (v: boolean) => {
+    setSearchingSig(v)
+    ui.setCapturing(v)
+  }
+  const [query, setQuery] = createSignal("")
+  const [hit, setHit] = createSignal(0)
+  const matches = createMemo(() => findMatches(lines(), query()))
+  const shown = createMemo(() => {
+    const q = query()
+    if (!q) return lines()
+    const t = ui.theme()
+    const cur = matches()[hit()]
+    return lines().map((l, i) => (i === cur ? highlight(l, q, { fg: t.background, bg: t.warning }) : highlight(l, q, { fg: t.text, bg: t.selection })))
+  })
+  const jump = (i: number) => {
+    const m = matches()
+    if (!m.length || !scroll) return
+    const idx = ((i % m.length) + m.length) % m.length
+    setHit(idx)
+    scroll.stickyScroll = false
+    scroll.scrollTo(Math.max(0, (m[idx] as number) - 3))
+  }
+  const transcript = () => lines().map(lineText).join("\n")
+  const lastMessage = () => {
+    const items = ui.run.feed(props.agentId).items
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i]!
+      if (it.kind === "message" && it.role === "assistant" && it.text.trim()) return it.text
+    }
+    return ""
+  }
+  // keymap-driven actions (rebindable: zoom.search, zoom.copy, …)
+  ui.setZoomAction((id) => {
+    switch (id) {
+      case "zoom.search":
+        setTimeout(() => setSearching(true), 0)
+        break
+      case "zoom.next":
+        jump(hit() + 1)
+        break
+      case "zoom.prev":
+        jump(hit() - 1)
+        break
+      case "zoom.top":
+        if (scroll) {
+          scroll.stickyScroll = false
+          scroll.scrollTo(0)
+        }
+        break
+      case "zoom.bottom":
+        if (scroll) {
+          scroll.scrollTo(Number.MAX_SAFE_INTEGER)
+          scroll.stickyScroll = true
+        }
+        break
+      case "zoom.copy": {
+        const text = lastMessage()
+        if (!text) {
+          ui.toast("no message to copy", "warn")
+          break
+        }
+        ui.toast(`copied the last message via ${copyText(renderer, text)}`)
+        break
+      }
+      case "zoom.copyAll":
+        ui.toast(`copied the transcript via ${copyText(renderer, transcript())}`)
+        break
+      case "zoom.save": {
+        const a = agent()
+        const dir = join(ui.run.projectRoot || process.cwd(), ".baton", "transcripts")
+        mkdirSync(dir, { recursive: true })
+        const path = join(dir, `${a?.name ?? "agent"}-${new Date().toISOString().replace(/[:.]/g, "-")}.md`)
+        writeFileSync(path, `# ${a?.name ?? "agent"}${a?.label ? ` — ${a.label}` : ""}\n\n\`\`\`\n${transcript()}\n\`\`\`\n`)
+        ui.toast(`saved ${path}`)
+        break
+      }
+    }
+  })
+  onCleanup(() => {
+    ui.setZoomAction(undefined)
+    ui.setCapturing(false)
+  })
+  useKeyboard((k) => {
+    if (searching() && k.name === "escape") {
+      setSearching(false)
+      setQuery("")
+    }
+  })
   return (
     <Frame
       width={props.width}
@@ -74,18 +169,37 @@ export function ZoomView(props: { agentId: string; width: number; height: number
     >
       <scrollbox
         ref={(r: ScrollBoxRenderable) => {
-          _scroll = r
+          scroll = r
         }}
         flexGrow={1}
         stickyScroll
         stickyStart="bottom"
-        focused={ui.overlay() === null}
+        focused={ui.overlay() === null && !searching()}
         scrollY
       >
-        <Txt wrapMode="none" value={toStyled(lines(), inner().width - 1)} />
+        <Txt value={toStyled(shown(), inner().width - 1)} />
       </scrollbox>
-      <Txt wrapMode="none" value={toStyled(status(), inner().width)} />
-      <Txt wrapMode="none" height={0} value={segs({ text: "", fg: ui.theme().textMuted })} />
+      <Show when={searching()} fallback={<Txt value={toStyled(status(), inner().width)} />}>
+        <box height={1} flexDirection="row">
+          <Txt value={segs({ text: "/ ", fg: ui.theme().primary, bold: true })} />
+          <input
+            flexGrow={1}
+            focused
+            backgroundColor="transparent"
+            focusedBackgroundColor="transparent"
+            textColor={ui.theme().text}
+            focusedTextColor={ui.theme().text}
+            placeholder="search this agent's history · enter next · esc close"
+            onInput={(v: string) => {
+              setQuery(v)
+              setHit(0)
+              queueMicrotask(() => jump(0))
+            }}
+            onSubmit={(() => jump(hit() + 1)) as never}
+          />
+          <Txt value={segs({ text: query() ? ` ${matches().length ? hit() + 1 : 0}/${matches().length}` : "", fg: ui.theme().textMuted })} />
+        </box>
+      </Show>
     </Frame>
   )
 }

@@ -14,6 +14,7 @@ import {
   newId,
 } from "@batonsh/protocol"
 import type { Socket } from "bun"
+import { exportRun, listRunSummaries, resumeRun } from "./history.ts"
 import { handleInput } from "./input.ts"
 import { listRecipes } from "./recipes.ts"
 import type { Runtime } from "./runtime.ts"
@@ -103,6 +104,9 @@ export function startControlServer(
     "workspace.diff": async (p) => ({ patch: await rt.collab.diff(p.agentId, p.paths ?? []) }),
     "review.request": async (p) => ({ reviewer: (await rt.collab.requestReview(p.agentId, { reviewer: p.reviewer })).reviewer }),
     "plan.decide": (p) => ({ ok: rt.collab.decidePlan(p.approved, p.notes) }),
+    "runs.list": (p) => ({ runs: listRunSummaries(rt, p?.limit ?? 30) }),
+    "run.export": (p) => ({ text: exportRun(rt, p.runId, p.format) }),
+    "run.resume": async (p) => ({ agents: await resumeRun(rt, p.runId) }),
     "recipes.list": () => ({ recipes: listRecipes(rt.projectRoot).map(({ template: _t, ...r }) => r) }),
     "daemon.shutdown": () => {
       setTimeout(hooks.onShutdown, 10)

@@ -12,6 +12,8 @@
  *   baton config …         get <key> | explain <key> | path | schema
  *   baton theme …          list | set <name>
  *   baton trust            allow this project's plugins to run (--revoke to undo)
+ *   baton history          past runs of this project (resume them from the TUI: ctrl+r)
+ *   baton export <run>     a run as Markdown (--format jsonl for raw events)
  *   baton daemon           run the daemon in the foreground (normally started automatically)
  */
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs"
@@ -24,6 +26,8 @@ import { listThemes, loadTheme } from "@batonsh/themes"
 import { runHeadless } from "./headless.ts"
 import { detectAgents, initProject, isInitialized } from "./init.ts"
 import { c } from "./style.ts"
+
+const c_ = c
 
 const VERSION = "0.1.0"
 
@@ -303,6 +307,31 @@ async function cmdTrust(args: Args) {
   console.log(c.green("trusted — they load the next time the daemon starts (baton stop && baton)"))
 }
 
+async function daemonClient(): Promise<BatonClient> {
+  const root = findProjectRoot(process.cwd())
+  return connect({ cwd: root, daemonCommand: (r) => [...selfCommand(), "daemon", "--root", r], clientName: "cli" })
+}
+
+async function cmdHistory() {
+  const c = await daemonClient()
+  const { runs } = await c.call("runs.list", { limit: 50 })
+  for (const r of runs)
+    console.log(
+      `${r.current ? c_.green("●") : " "} ${c_.dim(r.runId)}  ${new Date(r.startedAt).toLocaleString().padEnd(22)} ${String(r.agents).padStart(2)} agents  ${`+${r.added} −${r.removed}`.padEnd(12)} ${r.title}`,
+    )
+  if (!runs.length) console.log(c_.dim("no runs yet"))
+  c.close()
+}
+
+async function cmdExport(args: Args) {
+  const runId = args._[0]
+  if (!runId) throw new Error("usage: baton export <run-id> [--format md|jsonl]   (ids: baton history)")
+  const c = await daemonClient()
+  const format = args.flags.format === "jsonl" ? "jsonl" : "md"
+  process.stdout.write((await c.call("run.export", { runId, format })).text)
+  c.close()
+}
+
 function help() {
   const src = readFileSync(new URL(import.meta.url), "utf8")
   const block = /\/\*\*([\s\S]*?)\*\//.exec(src)?.[1] ?? ""
@@ -342,6 +371,10 @@ async function main() {
       return cmdTheme(sub)
     case "trust":
       return cmdTrust(sub)
+    case "history":
+      return cmdHistory()
+    case "export":
+      return cmdExport(sub)
     case "attach":
       return cmdStart(sub)
     case "help":

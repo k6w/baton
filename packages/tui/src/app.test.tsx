@@ -307,4 +307,29 @@ describe("TUI", () => {
     expect(f).toContain("❯ /recipe best-of-3 ")
     m.dispose()
   })
+
+  test("zoom: / searches the agent history, y copies, w saves a transcript", async () => {
+    const m = await mount(140, 44)
+    await m.frame()
+    const w = live.state.workers()[0]!
+    m.ui.setZoomed(w.agentId)
+    let f = await m.frame()
+    m.t.mockInput.pressKey("/")
+    await Bun.sleep(30)
+    await m.frame()
+    expect(m.ui.capturing()).toBe(true)
+    await m.t.mockInput.typeText("Read")
+    f = await m.frame()
+    expect(f).toMatch(/\d+\/\d+/) // "1/3"-style match counter
+    m.t.mockInput.pressEscape()
+    await m.frame()
+    expect(m.ui.capturing()).toBe(false)
+    expect(m.ui.zoomed()).toBe(w.agentId) // escape closed the search, not the zoom
+    m.t.mockInput.pressKey("w")
+    f = await m.frame()
+    expect(f).toContain("saved")
+    expect(f).toContain(".baton/transcripts")
+    m.t.mockInput.pressEscape()
+    m.dispose()
+  })
 })

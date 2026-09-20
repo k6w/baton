@@ -80,6 +80,14 @@ export class Collaboration {
     return ws.path
   }
 
+  /** Re-attach a worktree left behind by an earlier run (resume). */
+  adopt(agent: AgentRuntime, ws: { path: string; branch?: string; base?: string }): string {
+    const w = this.workspaces.adopt(agent.info.agentId, agent.info.name, ws.path, ws.branch, ws.base)
+    this.rt.emit({ type: "workspace.created", data: { path: w.path, branch: w.branch, base: w.base, mode: "worktree" } }, agent.info.agentId)
+    this.scheduleRefresh(agent.info.agentId, 200)
+    return w.path
+  }
+
   onEvent(agent: AgentRuntime, e: BatonEvent): void {
     const id = agent.info.agentId
     switch (e.type) {

@@ -1,6 +1,7 @@
 export * from "./control.ts"
 export * from "./daemon.ts"
 export { attachDemoDirector } from "./demo.ts"
+export * from "./history.ts"
 export * from "./input.ts"
 export * from "./mcp.ts"
 export * from "./playbooks.ts"

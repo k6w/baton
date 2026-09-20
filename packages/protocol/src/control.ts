@@ -133,6 +133,27 @@ export interface ControlMethods {
     params: Record<string, never> | undefined
     result: { recipes: { name: string; title: string; description: string; agents: string; source: string }[] }
   }
+  "runs.list": {
+    params: { limit?: number } | undefined
+    result: {
+      runs: {
+        runId: string
+        startedAt: number
+        endedAt?: number
+        title: string
+        agents: number
+        adapters: string[]
+        costUsd: number
+        toolCalls: number
+        added: number
+        removed: number
+        merged: number
+        current: boolean
+      }[]
+    }
+  }
+  "run.export": { params: { runId: string; format: "md" | "jsonl" }; result: { text: string } }
+  "run.resume": { params: { runId: string }; result: { agents: string[] } }
   "plan.decide": { params: { approved: boolean; notes?: string }; result: { ok: boolean } }
   "config.get": { params: { key?: string } | undefined; result: { config: unknown; provenance?: Record<string, string> } }
   /** Re-read config files (after the settings screen wrote them). */

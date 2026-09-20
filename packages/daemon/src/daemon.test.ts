@@ -92,7 +92,10 @@ describe("daemon", () => {
     await mcp.connect(new StreamableHTTPClientTransport(new URL(`${daemon.runtime.mcpBaseUrl}/mcp/${orch.token}`)))
     const names = (await mcp.listTools()).tools.map((t) => t.name)
     expect(names).toEqual(expect.arrayContaining(["spawn_agent", "wait_for_results", "kill_agent", "interrupt_agent"]))
-    const spawned = await mcp.callTool({ name: "spawn_agent", arguments: { adapter: "mock", count: 2, label: "typo hunt", task: "pong", reason: "independent checks" } })
+    const spawned = await mcp.callTool({
+      name: "spawn_agent",
+      arguments: { adapter: "mock", count: 2, label: "typo hunt", task: "pong", reason: "independent checks" },
+    })
     expect(JSON.stringify(spawned.content)).toContain("mock-")
     const res = await mcp.callTool({ name: "wait_for_results", arguments: { timeout_s: 10 } })
     expect(JSON.stringify(res.content)).toContain("result ok")

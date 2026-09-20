@@ -10,6 +10,7 @@ import { completions, LOCAL_COMMANDS } from "./completion.ts"
 import { CostsOverlay } from "./components/Costs.tsx"
 import { type Cell, computeGrid, Grid } from "./components/Grid.tsx"
 import { HintBar } from "./components/HintBar.tsx"
+import { HistoryOverlay } from "./components/History.tsx"
 import { GuideOverlay, RecipesOverlay, WelcomeOverlay } from "./components/Learn.tsx"
 import { Orchestrator } from "./components/Orchestrator.tsx"
 import { CommandPalette, HelpOverlay, Inbox, type PaletteItem, ThemePicker, Toasts } from "./components/Overlays.tsx"
@@ -297,6 +298,9 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       case "costs.open":
         ui.setOverlay("costs")
         break
+      case "history.open":
+        ui.setOverlay("history")
+        break
       case "recipes.open":
         ui.setOverlay("recipes")
         break
@@ -361,6 +365,16 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       }
       case "zoom.close":
         ui.setZoomed(null)
+        break
+      case "zoom.search":
+      case "zoom.next":
+      case "zoom.prev":
+      case "zoom.top":
+      case "zoom.bottom":
+      case "zoom.copy":
+      case "zoom.copyAll":
+      case "zoom.save":
+        ui.zoomAction()?.(id)
         break
       case "pane.message": {
         const a = focusedAgent()
@@ -461,6 +475,9 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       case "costs":
         ui.setOverlay("costs")
         break
+      case "history":
+        ui.setOverlay("history")
+        break
       case "recipes":
         ui.setOverlay("recipes")
         break
@@ -494,6 +511,7 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
         debugKeys,
         `${Date.now()} key=${key.name} seq=${JSON.stringify(key.sequence)} overlay=${ui.overlay()} focus=${ui.focus().kind} zoom=${ui.zoomed()}\n`,
       )
+    if (ui.capturing()) return // an in-pane text box owns the keyboard (it handles its own escape)
     if (ui.overlay()) {
       if (key.ctrl && key.name === "c") ui.setOverlay(null)
       return
@@ -650,6 +668,9 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
             onTask={(text) => prefill(text)}
             onGuide={() => ui.setOverlay("guide")}
           />
+        </Match>
+        <Match when={ui.overlay() === "history"}>
+          <HistoryOverlay onClose={() => ui.setOverlay(null)} />
         </Match>
         <Match when={ui.overlay() === "costs"}>
           <CostsOverlay onClose={() => ui.setOverlay(null)} />

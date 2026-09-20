@@ -59,6 +59,7 @@ export function savePrefs(p: Partial<Prefs>): void {
 export type Overlay =
   | null
   | "palette"
+  | "history"
   | "inbox"
   | "help"
   | "theme"
@@ -102,6 +103,12 @@ export interface UiState {
   setZoomed: Setter<string | null>
   overlay: Accessor<Overlay>
   setOverlay: Setter<Overlay>
+  /** True while an in-pane text box (e.g. zoom search) owns the keyboard. */
+  capturing: Accessor<boolean>
+  setCapturing: Setter<boolean>
+  /** Set by the zoom view: runs zoom.* keymap commands (search, copy, …). */
+  zoomAction: Accessor<((id: string) => void) | undefined>
+  setZoomAction: (fn: ((id: string) => void) | undefined) => void
   /** Agent shown in the peek overlay. */
   peekAgent: Accessor<string | null>
   setPeekAgent: Setter<string | null>
@@ -153,6 +160,8 @@ export function createUiState(opts: { client?: BatonClient; run: RunState; confi
   const [page, setPage] = createSignal(0)
   const [diffAgent, setDiffAgent] = createSignal<string | null>(null)
   const [peekAgent, setPeekAgent] = createSignal<string | null>(null)
+  const [capturing, setCapturing] = createSignal(false)
+  const [zoomAction, setZoomActionSig] = createSignal<((id: string) => void) | undefined>(undefined)
   const [toasts, setToasts] = createSignal<Toast[]>([])
   const [input, setInput] = createSignal("")
   const [imageSupport, setImageSupport] = createSignal(false)
@@ -227,6 +236,10 @@ export function createUiState(opts: { client?: BatonClient; run: RunState; confi
     setDiffAgent,
     peekAgent,
     setPeekAgent,
+    capturing,
+    setCapturing,
+    zoomAction,
+    setZoomAction: (fn) => setZoomActionSig(() => fn),
     toasts,
     toast,
     input,

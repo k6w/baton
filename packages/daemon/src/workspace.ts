@@ -105,6 +105,13 @@ export class WorkspaceManager {
     return ws
   }
 
+  adopt(agentId: string, agentName: string, path: string, branch?: string, base?: string): Workspace {
+    const exclude = [...this.cfg.link, ...this.cfg.copy].filter((l) => existsSync(join(path, l)))
+    const ws: Workspace = { agentId, agentName, mode: "worktree", path, branch, base, exclude, files: [], merged: false }
+    this.byAgent.set(agentId, ws)
+    return ws
+  }
+
   /** Recompute the agent's changes (files, +/-) and refresh its snapshot commit. */
   async refresh(agentId: string): Promise<Workspace | undefined> {
     const ws = this.byAgent.get(agentId)

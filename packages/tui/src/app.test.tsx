@@ -115,7 +115,7 @@ describe("TUI", () => {
   })
 
   test("every layout renders", async () => {
-    for (const layout of ["grid", "focus", "swarm", "wide"]) {
+    for (const layout of ["grid", "list", "focus", "swarm", "wide"]) {
       const m = await mount(150, 40, { layout })
       const f = await m.frame()
       if (process.env.BATON_PRINT) console.log(`--- ${layout}\n${f}`)

@@ -60,7 +60,7 @@ export const AgentStyle = z.object({
 export const UiConfig = z.object({
   theme: z.string().default("baton"),
   appearance: z.enum(["auto", "dark", "light"]).default("auto"),
-  layout: z.enum(["grid", "focus", "swarm", "wide"]).default("grid"),
+  layout: z.enum(["grid", "list", "focus", "swarm", "wide"]).default("grid"),
   icons: z.enum(["auto", "unicode", "nerd", "ascii"]).default("auto"),
   border: z.enum(["rounded", "single", "heavy", "double", "ascii", "none"]).default("rounded"),
   density: z.enum(["comfy", "compact"]).default("comfy"),

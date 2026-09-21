@@ -11,7 +11,7 @@ export interface Completion {
 
 export const LOCAL_COMMANDS: Record<string, string> = {
   theme: "/theme <name> — switch theme (ctrl+t for the picker)",
-  layout: "/layout <grid|focus|swarm|wide>",
+  layout: "/layout <grid|list|focus|swarm|wide>",
   icons: "/icons <auto|unicode|nerd|ascii>",
   border: "/border <rounded|single|heavy|double|ascii|none>",
   look: "/look <native|unified>",
@@ -134,7 +134,7 @@ export function completions(input: string, run: RunState, config: BatonConfig): 
         options = themeNames.map((v) => ({ v, d: "" }))
         break
       case "layout":
-        options = ["grid", "focus", "swarm", "wide"].map((v) => ({ v, d: "" }))
+        options = ["grid", "list", "focus", "swarm", "wide"].map((v) => ({ v, d: "" }))
         break
       case "icons":
         options = ["auto", "unicode", "nerd", "ascii"].map((v) => ({ v, d: "" }))

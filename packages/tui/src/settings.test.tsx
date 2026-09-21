@@ -71,7 +71,7 @@ test("settings: browse, toggle, cycle, edit, scope — written to the config fil
   for (let i = 0; i < 6; i++) t.mockInput.pressArrow("up")
   t.mockInput.pressArrow("right")
   await frame()
-  expect(ui.prefs.layout).toBe("focus")
+  expect(ui.prefs.layout).toBe("list")
 
   // search for "reviews", change it → daemon reloads config
   t.mockInput.pressKey("/")

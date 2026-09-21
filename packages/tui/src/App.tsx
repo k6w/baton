@@ -8,6 +8,7 @@ import { onBlur, onFocus, useKeyboard, useRenderer, useTerminalDimensions } from
 import { createEffect, createMemo, Match, onCleanup, Show, Switch } from "solid-js"
 import { copyText } from "./clipboard.ts"
 import { completions, LOCAL_COMMANDS } from "./completion.ts"
+import { AgentList } from "./components/AgentList.tsx"
 import { CostsOverlay } from "./components/Costs.tsx"
 import { type Cell, computeGrid, Grid } from "./components/Grid.tsx"
 import { HintBar } from "./components/HintBar.tsx"
@@ -28,7 +29,7 @@ import { buildSystemTheme } from "./system-theme.ts"
 
 const debugKeys = process.env.BATON_DEBUG_KEYS
 
-const LAYOUTS: Prefs["layout"][] = ["grid", "focus", "swarm", "wide"]
+const LAYOUTS: Prefs["layout"][] = ["grid", "list", "focus", "swarm", "wide"]
 const ICON_MODES: Prefs["icons"][] = ["auto", "unicode", "nerd", "ascii"]
 const BORDERS: Prefs["border"][] = ["rounded", "single", "heavy", "double", "ascii", "none"]
 
@@ -141,6 +142,10 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
     }
     if (layout === "swarm" && hasWorkers) return { orch: { w: W, h: 2 }, grid: { w: W, h: H - 2 }, direction: "column" as const, slim: true }
     if (!hasWorkers) return { orch: { w: W, h: H }, grid: { w: W, h: 0 }, direction: "column" as const }
+    if (layout === "list") {
+      const listH = Math.min(workers().length + 2, Math.max(6, Math.round(H * 0.45)))
+      return { orch: { w: W, h: H - listH }, grid: { w: W, h: listH }, direction: "column" as const }
+    }
     const orchH = layout === "focus" ? Math.min(10, Math.round(H * 0.3)) : Math.max(8, Math.min(H - ui.config.ui.min_card_height, Math.round(H * 0.34)))
     return { orch: { w: W, h: orchH }, grid: { w: W, h: H - orchH }, direction: "column" as const }
   })
@@ -348,10 +353,10 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
         focusAgentAt(focusedIndex() + 1)
         break
       case "grid.up":
-        focusAgentAt(focusedIndex() - gridCols())
+        focusAgentAt(focusedIndex() - (ui.prefs.layout === "list" ? 1 : gridCols()))
         break
       case "grid.down":
-        focusAgentAt(focusedIndex() + gridCols())
+        focusAgentAt(focusedIndex() + (ui.prefs.layout === "list" ? 1 : gridCols()))
         break
       case "grid.pageDown":
         ui.setPage((p) => p + 1)
@@ -615,6 +620,15 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
           <Switch>
             <Match when={zoomTarget()}>
               <ZoomView agentId={zoomTarget()!} width={frame().grid.w} height={frame().grid.h} />
+            </Match>
+            <Match when={!zoomTarget() && ui.prefs.layout === "list"}>
+              <AgentList
+                width={frame().grid.w}
+                height={frame().grid.h}
+                agentIds={cells()
+                  .filter((c) => c.kind === "agent")
+                  .map((c) => (c as { agentId: string }).agentId)}
+              />
             </Match>
             <Match when={!zoomTarget()}>
               <Grid

@@ -45,8 +45,8 @@ export const SETTINGS: SettingDef[] = [
     key: "ui.layout",
     section: "Appearance",
     label: "Layout",
-    help: "grid: lead on top, agents below · focus: one agent zoomed · swarm: dense grid · wide: lead column on the left",
-    type: e("grid", "focus", "swarm", "wide"),
+    help: "grid: lead on top, agent cards below · list: one row per agent (many agents) · focus: one agent zoomed · swarm: dense grid · wide: lead column on the left",
+    type: e("grid", "list", "focus", "swarm", "wide"),
     ui: true,
   },
   {

@@ -333,10 +333,41 @@ async function cmdExport(args: Args) {
 }
 
 function help() {
-  const src = readFileSync(new URL(import.meta.url), "utf8")
-  const block = /\/\*\*([\s\S]*?)\*\//.exec(src)?.[1] ?? ""
-  console.log(block.replace(/^\s*\* ?/gm, "").trim())
-  console.log(`\nflags: --theme <name> --layout <grid|focus|swarm|wide> --orchestrator <adapter> -y/--yes`)
+  const b = (x: string) => c.bold(x)
+  const d = (x: string) => c.dim(x)
+  console.log(`${b("baton")} ${d(VERSION)} — one terminal for all your coding agents
+
+${b("Examples")}
+  baton                                   ${d("start (or re-attach) in this project; sets it up on first run")}
+  baton "add tests for src/auth.ts"       ${d("start with a task for the orchestrator")}
+  baton demo                              ${d("see it work with simulated agents (no tokens)")}
+  baton run "update the changelog" --approve all --json   ${d("headless, for scripts/CI")}
+
+${b("Commands")}
+  baton [task]          start or attach                    baton doctor          check terminal, agents, auth
+  baton demo [task]     simulated agents                   baton agents          installed agent CLIs
+  baton run "<task>"    headless run (--json)              baton history         past runs (resume: ctrl+r)
+  baton init            re-run project setup               baton export <run>    run as Markdown (--format jsonl)
+  baton ps | stop       daemon status / stop everything    baton trust           allow project plugins
+  baton config get|explain|path|schema|defaults            baton theme list|set <name>
+
+${b("Flags")}
+  --theme <name>  --layout <grid|list|focus|swarm|wide>  --orchestrator <adapter>  -y/--yes  --help  --version
+
+${b("In the app")}
+  @name talk to an agent · / commands · ctrl+a inbox · ctrl+d changes · ctrl+s settings · ? all keys · /guide lessons
+
+Docs: README.md and docs/ in the Baton repository.`)
+}
+
+/** A next step for common failures. */
+function hintFor(msg: string): string {
+  if (/no baton daemon|daemon/i.test(msg)) return "run `baton` in the project to start it, or `baton doctor` to see what's wrong"
+  if (/unknown adapter/i.test(msg)) return "`baton agents` lists what's installed; custom agents go in [agents.<name>] (docs/agents.md)"
+  if (/not logged in|auth/i.test(msg)) return "log in with the agent's own CLI (claude → /login, codex login, opencode auth login)"
+  if (/config/i.test(msg)) return "`baton config explain <key>` shows where a value comes from"
+  if (/usage:/i.test(msg)) return "`baton --help` has examples"
+  return "`baton doctor` checks your setup"
 }
 
 async function main() {
@@ -386,6 +417,8 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error(c.red(`baton: ${e instanceof Error ? e.message : String(e)}`))
+  const msg = e instanceof Error ? e.message : String(e)
+  console.error(c.red(`baton: ${msg}`))
+  console.error(c.dim(`hint: ${hintFor(msg)}`))
   process.exit(1)
 })

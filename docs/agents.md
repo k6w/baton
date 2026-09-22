@@ -72,6 +72,21 @@ Each adapter translates the provider into whatever its agent understands:
 Secrets can be `env:VAR`, `cmd:pass show openrouter`, `keychain:<service>` (macOS), or a literal value. They're
 resolved when the agent starts and never written to the event log.
 
+## Recipes
+
+Recipes are reusable orchestration workflows: `/recipe <name> <task>`, the gallery (`/recipes`), or `baton run "/recipe best-of-3 …"`.
+Built in: `best-of-3`, `plan-execute`, `research-implement`, `implement-review`, `debug-hypotheses`, `test-first`, `shard`.
+Add your own as Markdown in `.baton/recipes/` or `~/.config/baton/recipes/`:
+
+```md
+---
+name: release
+description: Our release checklist
+agents: 2 workers
+---
+Prepare release {task}: bump versions, update CHANGELOG.md, run the full test suite, and have a second agent review.
+```
+
 ## Writing an adapter plugin
 
 ```ts

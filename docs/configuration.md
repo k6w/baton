@@ -12,6 +12,9 @@ Baton reads TOML config in layers. Later layers win; tables are deep-merged, arr
 | 6 | CLI flags | `--theme`, `--layout`, `--orchestrator` |
 | 7 | runtime prefs | choices you make inside the TUI (theme, layout, icons, …) are stored in `~/.local/state/baton/ui.json`. They are **never** written back into your config files |
 
+Most of this is also in the **settings screen** (`ctrl+s`): search, change values with live preview, and choose
+whether they're written to the project or global file (comments are preserved).
+
 `baton config explain ui.theme` tells you which layer set a value. An invalid value is reported and ignored
 on its own: every other setting still applies. `baton config schema` prints a JSON Schema you can use for
 editor autocompletion.
@@ -64,6 +67,7 @@ prompt = "Review diffs from other agents. Be specific; run the tests before appr
 run_usd = 10                      # interrupt everything at $10 (warn at warn_at × limit)
 per_agent_usd = 3
 max_agents = 16
+soft_max_agents = 4               # above this, the orchestrator must get your OK to spawn more
 max_depth = 2                     # how deep agents may spawn agents
 warn_at = 0.8
 
@@ -87,6 +91,18 @@ review = "suggested"              # off | suggested | required (merge refuses wi
 reviewer = "codex"                # adapter for reviews (default: a different vendor than the author)
 cleanup = "merged"                # merged (keep worktrees with unmerged work) | always | never
 conflict_check = true             # predict conflicts between workers while they edit
+ports = 2                         # BATON_PORT_0..1 and PORT per worktree (blocks of 10 from port_base)
+port_base = 4100
+
+[watchdog]
+stall_s = 300                     # flag a busy agent with no activity for 5 minutes (0 = off)
+loop_repeats = 4                  # flag the same tool call 4× in a row (0 = off)
+
+[notify]
+desktop = true                    # via the terminal (OSC 9/777); only when Baton isn't focused…
+when_focused = false              # …unless this is on
+bell = false
+events = ["approval", "done", "error"]   # + "merge"
 
 [bus]
 heartbeat_s = 15                  # worker → lead heartbeats/progress in the bus log (0 = off)
@@ -96,7 +112,9 @@ max_body = 8000
 [ui]
 theme = "baton"                   # see themes.md; "system" = your terminal's palette
 appearance = "auto"               # auto | dark | light — picks a theme's light/dark counterpart
-layout = "grid"                   # grid | focus | swarm | wide
+layout = "grid"                   # grid | list | focus | swarm | wide
+hints = true                      # key-hint bar
+tab_title = true                  # "⚑2 baton · project" in the terminal tab
 icons = "auto"                    # auto (logos if the terminal supports images) | unicode | nerd | ascii
 border = "rounded"                # rounded | single | heavy | double | ascii | none
 density = "comfy"                 # comfy | compact

@@ -50,15 +50,42 @@ Then type what you want. The orchestrator decides how many agents to use, which 
 | `@all stop and commit` · `@role:reviewer …` | broadcasts to every agent, or to every agent with that role |
 | `!codex-3` · `!all` | interrupts an agent (or everyone) |
 | `/spawn codex 3 typo hunt` | starts three Codex agents labelled "typo hunt" |
-| `/merge <agent\|all>` · `/sync` · `/review <agent> [reviewer]` · `/diff` · `/plan approve\|reject` | land worker branches, resolve conflicts, cross-vendor review, approve plans |
+| `/merge <agent\|all>` · `/undo` · `/sync` · `/review <agent> [reviewer]` · `/diff` · `/plan approve\|reject` | land worker branches, undo a merge, resolve conflicts, cross-vendor review, approve plans |
+| `/recipe <name> <task>` · `/settings` · `/guide` · `/history` · `/costs` | workflows, settings, lessons, past runs, spend |
 | `/kill`, `/interrupt`, `/model`, `/label`, `/rename`, `/mode`, `/agents`, `/approve`, `/deny` | daemon commands; Tab completes names and arguments |
 | `/theme`, `/layout`, `/icons`, `/border`, `/look`, `/bus`, `/thoughts`, `/zoom` | UI commands |
 
-Keys: `ctrl+p` command palette · `ctrl+t` theme picker with live preview · `ctrl+a` approvals inbox ·
-`ctrl+d` changes and diffs · `ctrl+g` task plan ·
-`ctrl+y` approve the oldest request · `tab` focus the agent grid (then `hjkl`/arrows, `z` zoom, `m` message,
-`x` interrupt) · `ctrl+l` cycle layouts · `?` all shortcuts. Every binding can be changed
+Keys: `ctrl+p` command palette · `ctrl+a` **inbox** of everything that needs you (`ctrl+n` jumps to the next) ·
+`ctrl+s` settings · `ctrl+t` theme picker with live preview · `ctrl+d` changes and diffs · `ctrl+g` task plan ·
+`ctrl+r` history · `ctrl+e` costs ·
+`ctrl+y` approve the oldest request · `tab` focus the agent grid (then `hjkl`/arrows, `space` peek & reply, `z` zoom,
+`m` message, `d` diff, `x` interrupt) · `ctrl+l` cycle layouts · `?` all shortcuts · `/guide` short lessons. Every binding can be changed
 ([docs/keybindings.md](docs/keybindings.md)).
+
+## Built for running many agents
+
+- **One place for everything that needs you.**
+  - Approvals, proposed plans, failed or stuck agents (a watchdog flags silence and loops), conflicts, files edited outside a task's scope, budget stops, and finished work waiting to merge.
+  - They show as ⚑ in the status bar and the terminal tab title.
+  - `ctrl+n` takes you to the next one. `space` peeks at an agent and lets you answer it in place.
+  - Desktop notifications and/or the terminal bell fire when Baton isn't focused.
+- **Teaching built in.**
+  - A first-run welcome lists your installed agents and suggests starter tasks drawn from your repo.
+  - A hint bar shows the keys that matter right now, `/guide` has short lessons, and `?` lists every key.
+- **Recipes.** `/recipe best-of-3 <task>` and others:
+  - `plan-execute`: plan, your approval, parallel execution.
+  - `research-implement`, `implement-review`, `debug-hypotheses`, `test-first`, `shard`.
+  - Add your own as Markdown in `.baton/recipes/`.
+- **Settings screen** (`ctrl+s`) for every option, with search and live preview. Changes are written to the project or global config without losing its comments.
+- **Visibility.**
+  - Costs per agent and per vendor, plus budget gauges (`ctrl+e`).
+  - Run history: resume a past run with the agents' own sessions, or export it as Markdown or JSONL (`ctrl+r`).
+  - Search, copy (OSC 52 / native clipboard) and save transcripts from the zoom view.
+- **Guard rails.**
+  - Parallel spawns need a stated reason, and more agents than your soft limit need your OK.
+  - A YOLO warning appears whenever the policy is lax.
+  - Merges can be undone three-way (`/undo`), and each worker gets its own ports.
+  - Colour-blind-safe themes are included.
 
 ## What's inside
 
@@ -104,7 +131,7 @@ Keys: `ctrl+p` command palette · `ctrl+t` theme picker with live preview · `ct
 baton [task]            start or attach in this project (sets the project up on the first run)
 baton demo [task]       simulated agents, no tokens         --workers 8 --speed 2
 baton run "<task>"      headless; streams progress          --json  --approve all|none  --timeout 600
-baton init | doctor | agents | ps | stop | trust
+baton init | doctor | agents | ps | stop | trust | history | export <run>
 baton config get|explain|path|schema|defaults
 baton theme list|set <name>
 flags: --theme <name> --layout <grid|focus|swarm|wide> --orchestrator <adapter> -y
@@ -113,7 +140,7 @@ flags: --theme <name> --layout <grid|focus|swarm|wide> --orchestrator <adapter> 
 ## Development
 
 ```sh
-bun test                        # ~220 tests: protocol, kernel, daemon, adapters (replayed fixtures), TUI frames
+bun test                        # ~240 tests: protocol, kernel, daemon, adapters (replayed fixtures), TUI frames
 BATON_LIVE=1 bun test packages/adapters/codex    # contract tests against the real CLI (uses your account)
 bunx tsc -p tsconfig.json --noEmit && bunx biome check .
 ```

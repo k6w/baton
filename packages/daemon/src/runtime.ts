@@ -111,6 +111,8 @@ export class Runtime {
 
   async init(): Promise<void> {
     await this.registry.loadBuiltins()
+    // warm the detect cache in the background (welcome screen, /agents, spawn defaults)
+    void this.registry.detectAll().catch(() => {})
     for (const err of this.registry.loadErrors) this.emit({ type: "log", data: { level: "warn", message: `adapter load: ${err}` } })
   }
 

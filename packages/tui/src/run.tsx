@@ -1,14 +1,13 @@
 /** Entry point: mount the TUI against a connected Baton client. */
 
 import { join } from "node:path"
-import { type BatonConfig, configDir, projectBatonDir } from "@batonsh/kernel"
+import { type BatonConfig, configDir, noticeFor, projectBatonDir, shouldNotify } from "@batonsh/kernel"
 import type { BatonClient, LiveRun } from "@batonsh/sdk"
 import { loadTheme } from "@batonsh/themes"
 import { createCliRenderer } from "@opentui/core"
 import { render } from "@opentui/solid"
 import { App } from "./App.tsx"
 import { UiContext } from "./context.ts"
-import { noticeFor, shouldNotify } from "./notify.ts"
 import { createUiState, notableEvent } from "./state.ts"
 
 export interface RunTuiOptions {

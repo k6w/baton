@@ -4,8 +4,9 @@
  * a small dispatcher, so it's testable.
  */
 
-import type { BatonConfig, RunState } from "@batonsh/kernel"
 import type { BatonEvent } from "@batonsh/protocol"
+import type { BatonConfig } from "./config.ts"
+import type { RunState } from "./projection.ts"
 
 export type NotifyKind = "approval" | "done" | "error" | "merge"
 

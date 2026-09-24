@@ -165,8 +165,14 @@ export const BatonConfig = z.object({
       when_focused: z.boolean().default(false),
       /** approval = an agent needs you · done = the orchestrator finished · error = an agent failed · merge = a merge landed or failed */
       events: z.array(z.enum(["approval", "done", "error", "merge"])).default(["approval", "done", "error"]),
+      /** POST notifications here even when no TUI is attached (phone, chat). */
+      webhook: z.string().optional(),
+      /** json: {title, body, kind, …} · ntfy: ntfy.sh-style text + headers · slack: {text} */
+      webhook_format: z.enum(["json", "ntfy", "slack"]).default("json"),
+      /** Shell command run per notification; receives JSON on stdin and BATON_TITLE/BATON_BODY env vars. */
+      command: z.string().optional(),
     })
-    .default({ desktop: true, bell: false, when_focused: false, events: ["approval", "done", "error"] }),
+    .default({ desktop: true, bell: false, when_focused: false, events: ["approval", "done", "error"], webhook_format: "json" }),
   workspace: z
     .object({
       /** worktree: every worker gets its own git worktree; shared: everyone edits the project directly. */

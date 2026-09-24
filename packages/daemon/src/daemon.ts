@@ -11,6 +11,7 @@ import { type ControlServer, startControlServer } from "./control.ts"
 import { attachDemoDirector } from "./demo.ts"
 import { type McpHttpServer, startMcpServer } from "./mcp.ts"
 import { loadPlugins } from "./plugins.ts"
+import { attachRemoteNotify } from "./remote-notify.ts"
 import { Runtime } from "./runtime.ts"
 
 export interface DaemonOptions {
@@ -62,6 +63,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   for (const err of loaded.errors) runtime.emit({ type: "log", data: { level: "warn", message: err } })
   await runtime.init()
   await loadPlugins(runtime, loaded.layers)
+  attachRemoteNotify(runtime)
 
   const mcp = startMcpServer(runtime, config.daemon.mcp_port)
   runtime.mcpBaseUrl = mcp.url

@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { BatonConfig, EventStore, RunState } from "@batonsh/kernel"
-import { noticeFor, shouldNotify } from "./notify.ts"
+import { BatonConfig, EventStore, noticeFor, RunState, shouldNotify } from "./index.ts"
 
 describe("notifications", () => {
   test("approvals, lead completion only when everyone is idle, fatal errors, merges", () => {

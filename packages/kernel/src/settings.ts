@@ -302,6 +302,27 @@ export const SETTINGS: SettingDef[] = [
     type: { kind: "list", options: ["approval", "done", "error", "merge"] },
     ui: true,
   },
+  {
+    key: "notify.webhook",
+    section: "Notifications",
+    label: "Webhook URL",
+    help: "POST every notification here, even with no TUI attached — e.g. https://ntfy.sh/<topic> for phone push, or a Slack webhook.",
+    type: { kind: "string", optional: true, placeholder: "none" },
+  },
+  {
+    key: "notify.webhook_format",
+    section: "Notifications",
+    label: "Webhook format",
+    help: "json · ntfy (ntfy.sh push) · slack (incoming webhook).",
+    type: e("json", "ntfy", "slack"),
+  },
+  {
+    key: "notify.command",
+    section: "Notifications",
+    label: "Notify command",
+    help: "Shell command per notification (JSON on stdin, $BATON_TITLE / $BATON_BODY).",
+    type: { kind: "string", optional: true, placeholder: "none" },
+  },
   // Bus
   {
     key: "bus.heartbeat_s",

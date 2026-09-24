@@ -1,6 +1,7 @@
 export * from "./attention.ts"
 export * from "./config.ts"
 export * from "./format.ts"
+export * from "./notify.ts"
 export * from "./project.ts"
 export * from "./projection.ts"
 export * from "./settings.ts"

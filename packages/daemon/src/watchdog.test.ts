@@ -61,3 +61,28 @@ test("spawn guard: parallel spawns need a reason; above the soft limit the user 
   await c.close()
   await d.stop()
 })
+
+test("remote notify: webhook receives approvals even with no TUI attached", async () => {
+  const got: unknown[] = []
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      got.push(await req.json())
+      return new Response("ok")
+    },
+  })
+  const root = mkdtempSync(join(tmpdir(), "baton-hook-"))
+  const d = await startDaemon({
+    projectRoot: root,
+    ephemeral: true,
+    socketPath: join(root, "s.sock"),
+    overrides: { bus: { heartbeat_s: 0 }, notify: { webhook: `http://127.0.0.1:${server.port}/hook` } },
+  })
+  const w = await d.runtime.spawn({ adapter: "mock", name: "asker", approval: "ask", options: { speed: 0, steps: ["exec"] } })
+  await d.runtime.promptAgent(w.agentId, "risky")
+  for (let i = 0; i < 300 && got.length === 0; i++) await Bun.sleep(10)
+  expect(got[0]).toMatchObject({ kind: "approval", title: "Baton — approval needed" })
+  expect(String((got[0] as { body: string }).body)).toContain("asker")
+  await d.stop()
+  server.stop(true)
+})

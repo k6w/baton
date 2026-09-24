@@ -18,7 +18,8 @@
     "@batonsh/adapter-mock": "workspace:*",
     "@modelcontextprotocol/sdk": "1.32.1",
     "zod": "4.6.5",
-    "@batonsh/adapter-stream-json": "workspace:*"
+    "@batonsh/adapter-stream-json": "workspace:*",
+    "@batonsh/adapter-exec": "workspace:*"
   },
   "devDependencies": {
     "@batonsh/sdk": "workspace:*"

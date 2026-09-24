@@ -36,6 +36,16 @@
         "@batonsh/protocol": "workspace:*",
       },
     },
+    "packages/adapters/exec": {
+      "name": "@batonsh/adapter-exec",
+      "version": "0.1.0",
+      "dependencies": {
+        "@batonsh/protocol": "workspace:*",
+      },
+      "devDependencies": {
+        "@batonsh/adapter-testkit": "workspace:*",
+      },
+    },
     "packages/adapters/mock": {
       "name": "@batonsh/adapter-mock",
       "version": "0.1.0",
@@ -89,6 +99,7 @@
         "@batonsh/adapter-acp": "workspace:*",
         "@batonsh/adapter-claude": "workspace:*",
         "@batonsh/adapter-codex": "workspace:*",
+        "@batonsh/adapter-exec": "workspace:*",
         "@batonsh/adapter-mock": "workspace:*",
         "@batonsh/adapter-opencode": "workspace:*",
         "@batonsh/adapter-stream-json": "workspace:*",
@@ -241,6 +252,8 @@
     "@batonsh/adapter-claude": ["@batonsh/adapter-claude@workspace:packages/adapters/claude"],
 
     "@batonsh/adapter-codex": ["@batonsh/adapter-codex@workspace:packages/adapters/codex"],
+
+    "@batonsh/adapter-exec": ["@batonsh/adapter-exec@workspace:packages/adapters/exec"],
 
     "@batonsh/adapter-mock": ["@batonsh/adapter-mock@workspace:packages/adapters/mock"],
 

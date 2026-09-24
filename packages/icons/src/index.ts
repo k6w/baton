@@ -51,6 +51,9 @@ export const ICONS: Record<string, AgentIcon> = {
   kimi: I("kimi", "Kimi", "☾", "", "KM", "agentDefault", "kimi"),
   junie: I("junie", "Junie", "❖", "", "JU", "agentDefault", "junie"),
   "mistral-vibe": I("mistral-vibe", "Mistral Vibe", "▚", "", "MV", "agentDefault", "mistral-vibe"),
+  aider: I("aider", "Aider", "◧", "\uf044", "AI", "agentDefault"),
+  crush: I("crush", "Crush", "♥", "\uf004", "CR", "agentAmp"),
+  exec: I("exec", "Command", "$", "\uf120", "$_", "agentDefault"),
   openhands: I("openhands", "OpenHands", "✋", "", "OH", "agentDefault", "openhands"),
   orchestrator: I("orchestrator", "Orchestrator", "✱", "", "OR", "primary"),
   user: I("user", "You", "❯", "", "ME", "accent"),
@@ -72,6 +75,8 @@ const ALIASES: Record<string, string> = {
   "qwen-code": "qwen",
   "kiro-cli": "kiro",
   factory: "droid",
+  agy: "gemini",
+  antigravity: "gemini",
 }
 
 /**

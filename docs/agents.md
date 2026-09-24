@@ -11,6 +11,8 @@ Run `baton agents` to see what's installed and logged in on your machine.
 | `opencode` | OpenCode | `opencode serve` (HTTP + server-sent events) + `@opencode-ai/sdk` | queued | ✓ |
 | `gemini`, `cursor`, `copilot`, `goose`, `qwen`, `kiro`, `droid`, `cline`, `auggie`, `kimi`, `kilo`, `mistral-vibe`, `junie`, `opencode-acp`, `claude-acp`, `codex-acp` | ACP agents | Agent Client Protocol over stdio (Baton is the client and provides `fs/*` and `terminal/*`) | queued | ✓ |
 | `claude-cli`, `amp`, `qwen-stream` | stream-json CLIs | NDJSON in and out | ✓ where the CLI supports it | decided by the CLI's own permission mode |
+| `aider`, `crush`, `agy` | prompt-taking CLIs | one process per turn in a pseudo-terminal; changes detected with a git snapshot and shown as diffs | queued | decided by the CLI |
+| `exec` | any CLI | `command` + `args` with `{prompt}` / `{model}` placeholders | queued | decided by the CLI |
 | `acp` | any ACP agent | `command` / `args` from config | queued | ✓ |
 | `mock` | simulated | in-process | ✓ | ✓ |
 
@@ -45,6 +47,15 @@ env = { MY_AGENT_TELEMETRY = "0" }
 Then `/spawn my-agent`, or let the orchestrator use it with `spawn_agent(adapter: "my-agent")`.
 Profiles can wrap built-in adapters too (`adapter = "codex"` with a different model, role, approval mode
 or provider).
+
+Any CLI that takes a prompt as an argument works the same way:
+
+```toml
+[agents.mytool]
+adapter = "exec"
+command = "mytool"
+args = ["run", "--quiet", "{prompt}"]     # {prompt} {model} {cwd}
+```
 
 ## Model providers
 

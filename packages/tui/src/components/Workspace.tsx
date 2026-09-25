@@ -2,8 +2,9 @@
 
 import type { WorkspaceView } from "@batonsh/kernel"
 import { parseUnifiedDiff } from "@batonsh/protocol"
+import type { InputRenderable, ScrollBoxRenderable } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
-import { createMemo, createResource, createSignal, For, Show } from "solid-js"
+import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js"
 import { agentLook, whoFn } from "../agent-style.ts"
 import { useUi } from "../context.ts"
 import { keyString } from "../keymap.ts"
@@ -124,59 +125,172 @@ export function ChangesOverlay(props: { onClose: () => void }) {
   )
 }
 
+interface DiffRow {
+  line: Line
+  /** Commentable target (diff lines only). */
+  target?: { path: string; line: number; text: string }
+}
+
+/**
+ * Diff review: cursor over the diff (j/k), `c` comments on a line, `C` sends every comment to the
+ * author agent as one request, `m` merges. Comments render inline under their line.
+ */
 export function DiffOverlay(props: { onClose: () => void }) {
   const ui = useUi()
   const dims = useTerminalDimensions()
   const agentId = ui.diffAgent()
   const name = agentId ? (ui.run.agents.get(agentId)?.name ?? "agent") : "agent"
   const [patch] = createResource(async () => (agentId && ui.client ? (await ui.client.call("workspace.diff", { agentId })).patch : ""))
-  useKeyboard((k) => {
-    if (k.name === "escape" || k.name === "q") props.onClose()
-    else if (keyString(k) === "m" && agentId)
-      void act(ui, ui.client?.call("workspace.merge", { agentId }), (r) => (r.status === "merged" ? `merged ${name}` : `${r.status}: ${r.detail ?? ""}`))
-  })
+  const [cursor, setCursor] = createSignal(0)
+  const [comments, setComments] = createSignal<{ path: string; line: number; snippet: string; text: string }[]>([])
+  const [editing, setEditing] = createSignal(false)
+  let scroll: ScrollBoxRenderable | undefined
+  let inputRef: InputRenderable | undefined
   const w = () => Math.max(40, dims().width - 4)
-  const lines = createMemo<Line[]>(() => {
+  const viewH = () => dims().height - 2 - 4
+
+  const rows = createMemo<DiffRow[]>(() => {
     const t = ui.theme()
     const p = patch()
-    if (patch.loading) return [{ segs: [{ text: "loading diff…", fg: t.textMuted }] }]
-    if (!p?.trim()) return [{ segs: [{ text: `${name} has no unmerged changes.`, fg: t.textMuted }] }]
-    const out: Line[] = []
+    if (patch.loading) return [{ line: { segs: [{ text: "loading diff…", fg: t.textMuted }] } }]
+    if (!p?.trim()) return [{ line: { segs: [{ text: `${name} has no unmerged changes.`, fg: t.textMuted }] } }]
+    const out: DiffRow[] = []
     const width = w() - 4
     for (const f of parseUnifiedDiff(p)) {
       const added = f.lines.filter((l) => l.kind === "add").length
       const removed = f.lines.filter((l) => l.kind === "del").length
       out.push({
-        segs: [
-          { text: "▸ ", fg: t.accent },
-          { text: f.path ?? "?", fg: t.text, bold: true },
-          { text: `  +${added}`, fg: t.success },
-          { text: ` −${removed}`, fg: t.error },
-        ],
+        line: {
+          segs: [
+            { text: "▸ ", fg: t.accent },
+            { text: f.path ?? "?", fg: t.text, bold: true },
+            { text: `  +${added}`, fg: t.success },
+            { text: ` −${removed}`, fg: t.error },
+          ],
+        },
       })
       const numW = Math.max(3, String(Math.max(0, ...f.lines.map((l) => l.newLine ?? l.oldLine ?? 0))).length)
       for (const l of f.lines) {
         const bg = l.kind === "add" ? t.diffAddedBg : l.kind === "del" ? t.diffRemovedBg : undefined
         const fg = l.kind === "add" ? t.diffAdded : l.kind === "del" ? t.diffRemoved : t.diffContext
-        const ln = String(l.kind === "del" ? (l.oldLine ?? "") : (l.newLine ?? "")).padStart(numW)
+        const n = l.kind === "del" ? (l.oldLine ?? 0) : (l.newLine ?? 0)
+        const ln = String(n || "").padStart(numW)
         const sign = l.kind === "add" ? "+" : l.kind === "del" ? "-" : " "
         out.push({
-          bg,
-          segs: [
-            { text: `${ln} ${sign} `, fg: l.kind === "ctx" ? t.diffLineNumber : fg, bg },
-            { text: clip(l.text, width - numW - 3), fg, bg },
-          ],
+          line: { bg, segs: [{ text: `${ln} ${sign} `, fg: l.kind === "ctx" ? t.diffLineNumber : fg, bg }, { text: clip(l.text, width - numW - 5), fg, bg }] },
+          target: { path: f.path ?? "?", line: n, text: l.text },
         })
+        for (const c of comments().filter((x) => x.path === f.path && x.line === n && x.snippet === l.text))
+          out.push({ line: { segs: [{ text: `${" ".repeat(numW)}   ✎ `, fg: t.accent }, { text: clip(c.text, width - numW - 8), fg: t.text, bold: true }] } })
       }
-      out.push({ segs: [] })
+      out.push({ line: { segs: [] } })
     }
     return out
   })
+
+  const view = createMemo<Line[]>(() => {
+    const t = ui.theme()
+    return rows().map((r, i) =>
+      i === cursor() && r.target ? { ...r.line, segs: [{ text: "▎", fg: t.primary, bg: r.line.bg }, ...r.line.segs.map((s, k) => (k === 0 ? { ...s, text: s.text.slice(1) } : s))] } : r.line,
+    )
+  })
+
+  const move = (d: number) => {
+    const list = rows()
+    let i = cursor()
+    for (let step = 0; step < list.length; step++) {
+      i = Math.max(0, Math.min(list.length - 1, i + d))
+      if (list[i]?.target || i === 0 || i === list.length - 1) break
+    }
+    setCursor(i)
+    if (scroll) {
+      const top = scroll.scrollTop
+      if (i < top + 2) scroll.scrollTo(Math.max(0, i - 2))
+      else if (i > top + viewH() - 3) scroll.scrollTo(i - viewH() + 3)
+    }
+  }
+
+  const send = async () => {
+    const list = comments()
+    if (!list.length || !agentId || !ui.client) return ui.toast("no comments yet — c on a line adds one", "warn")
+    const body = `Review comments on your changes — please address each, then report:\n${list.map((c) => `- ${c.path}:${c.line} (\`${c.snippet.trim().slice(0, 60)}\`): ${c.text}`).join("\n")}`
+    try {
+      await ui.client.call("bus.send", { to: agentId, body, kind: "request", delivery: "queue" })
+      ui.toast(`sent ${list.length} comment${list.length === 1 ? "" : "s"} to ${name}`)
+      setComments([])
+    } catch (e) {
+      ui.toast(e instanceof Error ? e.message : String(e), "error")
+    }
+  }
+
+  useKeyboard((k) => {
+    if (editing()) {
+      if (k.name === "escape") setEditing(false)
+      return
+    }
+    const ks = keyString(k)
+    if (k.name === "escape" || ks === "q") props.onClose()
+    else if (k.name === "down" || ks === "j") move(1)
+    else if (k.name === "up" || ks === "k") move(-1)
+    else if (k.name === "pagedown" || ks === "ctrl+d") move(viewH() - 2)
+    else if (k.name === "pageup" || ks === "ctrl+u") move(-(viewH() - 2))
+    else if (ks === "c") {
+      if (rows()[cursor()]?.target) setTimeout(() => setEditing(true), 0)
+      else ui.toast("move to a diff line first (j/k)", "warn")
+    } else if (ks === "shift+c") void send()
+    else if (ks === "m" && agentId) void act(ui, ui.client?.call("workspace.merge", { agentId }), (r) => (r.status === "merged" ? `merged ${name}` : `${r.status}: ${r.detail ?? ""}`))
+  })
+
+  // start on the first diff line once loaded
+  createEffect(() => {
+    const list = rows()
+    if (cursor() === 0 && !list[0]?.target) {
+      const first = list.findIndex((r) => r.target)
+      if (first > 0) setCursor(first)
+    }
+  })
+
   return (
-    <Modal title={`Diff · ${name}`} width={w()} height={dims().height - 2} hint="↑↓ scroll · m merge · esc back">
-      <scrollbox flexGrow={1} focused scrollY>
-        <Txt wrapMode="none" value={toStyled(lines(), w() - 4)} />
+    <Modal
+      title={`Diff · ${name}${comments().length ? ` · ${comments().length} comment${comments().length === 1 ? "" : "s"}` : ""}`}
+      width={w()}
+      height={dims().height - 2}
+      hint={editing() ? "enter save comment · esc cancel" : "j/k move · c comment · C send comments · m merge · esc back"}
+    >
+      <scrollbox
+        ref={(r: ScrollBoxRenderable) => {
+          scroll = r
+        }}
+        flexGrow={1}
+        scrollY
+      >
+        <Txt value={toStyled(view(), w() - 4)} />
       </scrollbox>
+      <Show when={editing()}>
+        <box height={1} flexDirection="row">
+          <Txt value={segs({ text: `✎ ${rows()[cursor()]?.target?.path}:${rows()[cursor()]?.target?.line} `, fg: ui.theme().accent })} />
+          <input
+            ref={(r: InputRenderable) => {
+              inputRef = r
+            }}
+            flexGrow={1}
+            focused
+            backgroundColor="transparent"
+            focusedBackgroundColor="transparent"
+            textColor={ui.theme().text}
+            focusedTextColor={ui.theme().text}
+            placeholder="what should change here?"
+            onSubmit={
+              ((v: unknown) => {
+                const text = (typeof v === "string" ? v : (inputRef?.value ?? "")).trim()
+                const tgt = rows()[cursor()]?.target
+                setEditing(false)
+                if (text && tgt) setComments((cs) => [...cs, { path: tgt.path, line: tgt.line, snippet: tgt.text, text }])
+              }) as never
+            }
+          />
+        </box>
+      </Show>
     </Modal>
   )
 }

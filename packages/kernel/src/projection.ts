@@ -469,6 +469,14 @@ export class RunState {
           })
         break
       }
+      case "task.updated": {
+        const t = this.tasks.get(e.data.taskId)
+        if (t) {
+          if (e.data.title) t.title = e.data.title
+          if (e.data.description) t.note = e.data.description
+        }
+        break
+      }
       case "task.plan":
         this.plan = { planId: e.data.planId, status: e.data.status, notes: e.data.notes }
         break

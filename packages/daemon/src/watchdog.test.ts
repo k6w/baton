@@ -86,3 +86,26 @@ test("remote notify: webhook receives approvals even with no TUI attached", asyn
   await d.stop()
   server.stop(true)
 })
+
+test("routing tiers pick the model; task.edit renames/cancels plan tasks", async () => {
+  const root = mkdtempSync(join(tmpdir(), "baton-tier-"))
+  const d = await startDaemon({
+    projectRoot: root,
+    ephemeral: true,
+    socketPath: join(root, "s.sock"),
+    overrides: { bus: { heartbeat_s: 0 }, routing: { mock: { small: "mock-mini", large: "mock-max" } } },
+  })
+  const a = await d.runtime.spawn({ adapter: "mock", tier: "small", options: { speed: 0 } })
+  expect(a.model).toBe("mock-mini")
+  const b = await d.runtime.spawn({ adapter: "mock", tier: "large", model: "explicit", options: { speed: 0 } })
+  expect(b.model).toBe("explicit")
+  const { BatonClient } = await import("@batonsh/sdk")
+  const c = await BatonClient.open(d.socketPath)
+  d.runtime.emit({ type: "task.created", data: { taskId: "t1", title: "Old title", deps: [] } })
+  await c.call("task.edit", { taskId: "t1", title: "New title" })
+  expect(d.runtime.state.tasks.get("t1")?.title).toBe("New title")
+  await c.call("task.edit", { taskId: "t1", cancel: true })
+  expect(d.runtime.state.tasks.get("t1")?.state).toBe("canceled")
+  c.close()
+  await d.stop()
+})

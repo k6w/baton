@@ -147,6 +147,10 @@ export const BatonConfig = z.object({
    * Project-level plugins only load after `baton trust` (they run code from the repo).
    */
   plugins: z.array(z.string()).default([]),
+  /** Model per difficulty tier, per adapter: spawn_agent(tier: "small") picks routing.<adapter>.small. */
+  routing: z.record(z.string(), z.object({ small: z.string().optional(), medium: z.string().optional(), large: z.string().optional() })).default({
+    claude: { small: "haiku", medium: "sonnet", large: "opus" },
+  }),
   watchdog: z
     .object({
       /** Flag a busy agent with no activity for this long (seconds, 0 = off). */

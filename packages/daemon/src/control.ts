@@ -104,6 +104,12 @@ export function startControlServer(
     "workspace.diff": async (p) => ({ patch: await rt.collab.diff(p.agentId, p.paths ?? []) }),
     "review.request": async (p) => ({ reviewer: (await rt.collab.requestReview(p.agentId, { reviewer: p.reviewer })).reviewer }),
     "plan.decide": (p) => ({ ok: rt.collab.decidePlan(p.approved, p.notes) }),
+    "task.edit": (p) => {
+      if (!rt.state.tasks.has(p.taskId)) throw new Error(`no task ${p.taskId}`)
+      if (p.title) rt.emit({ type: "task.updated", data: { taskId: p.taskId, title: p.title } })
+      if (p.cancel) rt.emit({ type: "task.state", data: { taskId: p.taskId, state: "canceled", note: "removed by the user" } })
+      return { ok: true }
+    },
     "runs.list": (p) => ({ runs: listRunSummaries(rt, p?.limit ?? 30) }),
     "run.export": (p) => ({ text: exportRun(rt, p.runId, p.format) }),
     "run.resume": async (p) => ({ agents: await resumeRun(rt, p.runId) }),

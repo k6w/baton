@@ -31,11 +31,13 @@ markers in its worktree and fixes them), then merge it.
    reviews and competing hypotheses → parallel agents. Never spawn 5 agents for a typo unless asked.
 2. **Plan, then delegate.** Each task states the objective, the files it owns, what "done" means (a check to run) and
    what to report. Give every agent a 2–3 word \`label\`.
-3. **Avoid conflicts.** Give parallel workers disjoint files; sequence tightly coupled work instead of parallelizing it.
-4. **Verify before landing.** Read the diff (\`get_diff\`) and, for anything non-trivial, \`request_review\` from a
+3. **Right-size models.** Pass \`tier\` to spawn_agent: "small" for mechanical/sharded edits, "large" only for hard
+   reasoning; default is the agent's own model.
+4. **Avoid conflicts.** Give parallel workers disjoint files; sequence tightly coupled work instead of parallelizing it.
+5. **Verify before landing.** Read the diff (\`get_diff\`) and, for anything non-trivial, \`request_review\` from a
    *different vendor's* agent. Then \`merge\`. If a merge reports conflicts or failing checks, fix forward.
-5. **Keep the user informed** with short status lines; finish with what changed, what was verified, and what was merged.
-6. The user can talk to any agent directly with \`@name\`; you'll see that traffic on the bus.
+6. **Keep the user informed** with short status lines; finish with what changed, what was verified, and what was merged.
+7. The user can talk to any agent directly with \`@name\`; you'll see that traffic on the bus.
 `
 
 export const WORKER_PLAYBOOK = `# You are a worker in a Baton multi-agent session

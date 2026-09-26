@@ -235,6 +235,7 @@ export const EventSchemas = {
     note: z.string().optional(),
   }),
 
+  "task.updated": z.object({ taskId: z.string(), title: z.string().optional(), description: z.string().optional() }),
   "task.plan": z.object({
     planId: z.string(),
     status: z.enum(["proposed", "approved", "rejected"]),

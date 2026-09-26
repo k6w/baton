@@ -185,7 +185,8 @@ export class Runtime {
     const name = params.isOrchestrator ? "orchestrator" : this.allocateName(adapterId, params.name ?? (profile ? params.adapter : undefined))
     const detected = await this.registry.detect(adapterId)
     const approval = params.approval ?? profile?.approval ?? (params.isOrchestrator ? this.config.orchestrator.approval : this.config.defaults.approval)
-    const model = params.model ?? profile?.model ?? (params.isOrchestrator ? this.config.orchestrator.model : undefined)
+    const tierModel = params.tier ? this.config.routing[adapterId]?.[params.tier] : undefined
+    const model = params.model ?? profile?.model ?? tierModel ?? (params.isOrchestrator ? this.config.orchestrator.model : undefined)
     const info: AgentInfo = {
       agentId,
       name,

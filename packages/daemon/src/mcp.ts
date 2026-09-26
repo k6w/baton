@@ -160,6 +160,10 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime): McpServer {
           role: z.string().optional(),
           count: z.number().int().min(1).max(10).optional().describe("Spawn several identical agents"),
           task_id: z.string().optional().describe("Plan task this agent works on (from plan_tasks)"),
+          tier: z
+            .enum(["small", "medium", "large"])
+            .optional()
+            .describe("Task difficulty → model via [routing]: small for mechanical edits, large for hard reasoning"),
           reason: z.string().optional().describe("Required when count > 1: why parallel agents help here (e.g. '3 independent modules, no shared files')"),
           isolation: z
             .enum(["worktree", "shared"])
@@ -194,6 +198,7 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime): McpServer {
               parentId: me,
               prompt: a.task,
               taskId: a.task_id,
+              tier: a.tier,
               isolation: a.isolation,
             })
             names.push(info.name)

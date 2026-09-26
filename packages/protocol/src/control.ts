@@ -94,6 +94,8 @@ export interface SpawnParams {
   isolation?: "worktree" | "shared"
   /** Plan task this agent is assigned to. */
   taskId?: string
+  /** Difficulty tier → model via [routing] (ignored when model is set). */
+  tier?: "small" | "medium" | "large"
 }
 
 export interface ControlMethods {
@@ -155,6 +157,7 @@ export interface ControlMethods {
   "run.export": { params: { runId: string; format: "md" | "jsonl" }; result: { text: string } }
   "run.resume": { params: { runId: string }; result: { agents: string[] } }
   "plan.decide": { params: { approved: boolean; notes?: string }; result: { ok: boolean } }
+  "task.edit": { params: { taskId: string; title?: string; cancel?: boolean }; result: { ok: true } }
   "config.get": { params: { key?: string } | undefined; result: { config: unknown; provenance?: Record<string, string> } }
   /** Re-read config files (after the settings screen wrote them). */
   "config.reload": { params: Record<string, never> | undefined; result: { errors: string[] } }

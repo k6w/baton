@@ -177,11 +177,24 @@ export function DiffOverlay(props: { onClose: () => void }) {
         const ln = String(n || "").padStart(numW)
         const sign = l.kind === "add" ? "+" : l.kind === "del" ? "-" : " "
         out.push({
-          line: { bg, segs: [{ text: `${ln} ${sign} `, fg: l.kind === "ctx" ? t.diffLineNumber : fg, bg }, { text: clip(l.text, width - numW - 5), fg, bg }] },
+          line: {
+            bg,
+            segs: [
+              { text: `${ln} ${sign} `, fg: l.kind === "ctx" ? t.diffLineNumber : fg, bg },
+              { text: clip(l.text, width - numW - 5), fg, bg },
+            ],
+          },
           target: { path: f.path ?? "?", line: n, text: l.text },
         })
         for (const c of comments().filter((x) => x.path === f.path && x.line === n && x.snippet === l.text))
-          out.push({ line: { segs: [{ text: `${" ".repeat(numW)}   ✎ `, fg: t.accent }, { text: clip(c.text, width - numW - 8), fg: t.text, bold: true }] } })
+          out.push({
+            line: {
+              segs: [
+                { text: `${" ".repeat(numW)}   ✎ `, fg: t.accent },
+                { text: clip(c.text, width - numW - 8), fg: t.text, bold: true },
+              ],
+            },
+          })
       }
       out.push({ line: { segs: [] } })
     }
@@ -191,7 +204,9 @@ export function DiffOverlay(props: { onClose: () => void }) {
   const view = createMemo<Line[]>(() => {
     const t = ui.theme()
     return rows().map((r, i) =>
-      i === cursor() && r.target ? { ...r.line, segs: [{ text: "▎", fg: t.primary, bg: r.line.bg }, ...r.line.segs.map((s, k) => (k === 0 ? { ...s, text: s.text.slice(1) } : s))] } : r.line,
+      i === cursor() && r.target
+        ? { ...r.line, segs: [{ text: "▎", fg: t.primary, bg: r.line.bg }, ...r.line.segs.map((s, k) => (k === 0 ? { ...s, text: s.text.slice(1) } : s))] }
+        : r.line,
     )
   })
 
@@ -238,7 +253,8 @@ export function DiffOverlay(props: { onClose: () => void }) {
       if (rows()[cursor()]?.target) setTimeout(() => setEditing(true), 0)
       else ui.toast("move to a diff line first (j/k)", "warn")
     } else if (ks === "shift+c") void send()
-    else if (ks === "m" && agentId) void act(ui, ui.client?.call("workspace.merge", { agentId }), (r) => (r.status === "merged" ? `merged ${name}` : `${r.status}: ${r.detail ?? ""}`))
+    else if (ks === "m" && agentId)
+      void act(ui, ui.client?.call("workspace.merge", { agentId }), (r) => (r.status === "merged" ? `merged ${name}` : `${r.status}: ${r.detail ?? ""}`))
   })
 
   // start on the first diff line once loaded
@@ -313,17 +329,33 @@ export function TasksOverlay(props: { onClose: () => void; onPrefill: (text: str
     ui.version()
     return [...ui.run.tasks.values()]
   })
+  // edits made here travel with the approval, so the orchestrator follows the edited plan
+  const [edits, setEdits] = createSignal<string[]>([])
+  const [renaming, setRenaming] = createSignal(false)
+  let renameRef: InputRenderable | undefined
+  const proposed = () => ui.run.plan?.status === "proposed"
   useKeyboard((k) => {
+    if (renaming()) {
+      if (k.name === "escape") setRenaming(false)
+      return
+    }
     const n = tasks().length
     const ks = keyString(k)
+    const cur = tasks()[sel()]
     if (k.name === "escape" || ks === "q") props.onClose()
     else if (k.name === "down" || ks === "j") setSel((s) => (n ? (s + 1) % n : 0))
     else if (k.name === "up" || ks === "k") setSel((s) => (n ? (s - 1 + n) % n : 0))
-    else if (ks === "a" && ui.run.plan?.status === "proposed") void act(ui, ui.client?.submit("/plan approve"), (r) => r.output)
-    else if (ks === "x" && ui.run.plan?.status === "proposed") {
+    else if (ks === "a" && proposed()) {
+      const notes = edits().length ? `The user edited the plan: ${edits().join("; ")}. Follow the edited plan.` : undefined
+      void act(ui, ui.client?.call("plan.decide", { approved: true, notes }), () => "plan approved")
+      setEdits([])
+    } else if (ks === "r" && proposed()) {
       props.onClose()
       props.onPrefill("/plan reject ")
-    }
+    } else if (ks === "x" && cur && cur.state !== "canceled" && cur.state !== "completed") {
+      void act(ui, ui.client?.call("task.edit", { taskId: cur.taskId, cancel: true }), () => `removed ${cur.taskId}`)
+      setEdits((e) => [...e, `removed task ${cur.taskId} ("${cur.title}")`])
+    } else if (ks === "e" && cur) setTimeout(() => setRenaming(true), 0)
   })
   const color = (state: string) => {
     const t = ui.theme()
@@ -345,11 +377,11 @@ export function TasksOverlay(props: { onClose: () => void; onPrefill: (text: str
     return [
       { text: `${done}/${all.length} done`, fg: t.text, bold: true },
       ...(plan ? [{ text: `  ·  plan ${plan.status}`, fg: plan.status === "proposed" ? t.warning : plan.status === "approved" ? t.success : t.error }] : []),
-      ...(plan?.status === "proposed" ? [{ text: "  a approve · x reject", fg: t.textMuted }] : []),
+      ...(plan?.status === "proposed" ? [{ text: "  a approve · r reject · e rename · x remove", fg: t.textMuted }] : []),
     ]
   }
   return (
-    <Modal title="Task plan" width={96} height={24} hint="↑↓ select · esc close">
+    <Modal title="Task plan" width={96} height={24} hint="↑↓ select · e rename · x remove · a approve · esc">
       <Txt wrapMode="none" value={segs(...header())} />
       <Txt wrapMode="none" value={segs({ text: "─".repeat(92), fg: ui.theme().borderSubtle })} />
       <Show
@@ -376,6 +408,36 @@ export function TasksOverlay(props: { onClose: () => void; onPrefill: (text: str
         <For each={[tasks()[sel()]?.note].filter(Boolean) as string[]}>
           {(n) => <Txt wrapMode="word" value={segs({ text: n, fg: ui.theme().textMuted })} />}
         </For>
+        <Show when={renaming()}>
+          <box height={1} flexDirection="row">
+            <Txt value={segs({ text: `rename ${tasks()[sel()]?.taskId}: `, fg: ui.theme().accent })} />
+            <input
+              ref={(r: InputRenderable) => {
+                renameRef = r
+                r.value = tasks()[sel()]?.title ?? ""
+              }}
+              flexGrow={1}
+              focused
+              backgroundColor="transparent"
+              focusedBackgroundColor="transparent"
+              textColor={ui.theme().text}
+              focusedTextColor={ui.theme().text}
+              onSubmit={
+                ((v: unknown) => {
+                  const title = (typeof v === "string" ? v : (renameRef?.value ?? "")).trim()
+                  const cur = tasks()[sel()]
+                  setRenaming(false)
+                  if (!title || !cur || title === cur.title) return
+                  void act(ui, ui.client?.call("task.edit", { taskId: cur.taskId, title }), () => `renamed ${cur.taskId}`)
+                  setEdits((e) => [...e, `task ${cur.taskId} is now "${title}"`])
+                }) as never
+              }
+            />
+          </box>
+        </Show>
+        <Show when={edits().length > 0}>
+          <Txt value={segs({ text: `${edits().length} edit${edits().length === 1 ? "" : "s"} will be sent with your approval`, fg: ui.theme().warning })} />
+        </Show>
       </Show>
     </Modal>
   )

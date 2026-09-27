@@ -103,6 +103,17 @@ desktop = true                    # via the terminal (OSC 9/777); only when Bato
 when_focused = false              # …unless this is on
 bell = false
 events = ["approval", "done", "error"]   # + "merge"
+# webhook = "https://ntfy.sh/my-baton"     # reach you when no TUI is attached (phone push via ntfy)
+# webhook_format = "ntfy"                 # json | ntfy | slack
+# command = "say \"$BATON_TITLE\""         # any command; JSON on stdin
+
+[telemetry]
+# otlp_endpoint = "http://localhost:4318"   # OpenTelemetry traces: invoke_agent / execute_tool spans (no content)
+# headers = { "x-honeycomb-team" = "…" }
+
+[routing]                         # spawn_agent(tier: …) → model
+claude = { small = "haiku", medium = "sonnet", large = "opus" }
+# codex = { small = "…", large = "…" }
 
 [bus]
 heartbeat_s = 15                  # worker → lead heartbeats/progress in the bus log (0 = off)

@@ -109,3 +109,34 @@ test("routing tiers pick the model; task.edit renames/cancels plan tasks", async
   c.close()
   await d.stop()
 })
+
+test("telemetry: OTLP spans for agent turns and tool calls, nested, no content", async () => {
+  const bodies: any[] = []
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      bodies.push(await req.json())
+      return new Response("{}")
+    },
+  })
+  const root = mkdtempSync(join(tmpdir(), "baton-otel-"))
+  const d = await startDaemon({
+    projectRoot: root,
+    ephemeral: true,
+    socketPath: join(root, "s.sock"),
+    overrides: { bus: { heartbeat_s: 0 }, telemetry: { otlp_endpoint: `http://127.0.0.1:${server.port}` } },
+  })
+  const w = await d.runtime.spawn({ adapter: "mock", name: "traced", approval: "auto", options: { speed: 0, steps: ["read", "edit"] } })
+  await d.runtime.promptAgent(w.agentId, "secret prompt text")
+  for (let i = 0; i < 300 && !d.runtime.store.query({ types: ["turn.completed"], agentId: w.agentId }).length; i++) await Bun.sleep(10)
+  await d.stop()
+  server.stop(true)
+  const spans = bodies.flatMap((b) => b.resourceSpans[0].scopeSpans[0].spans)
+  const turn = spans.find((s: any) => s.name === "invoke_agent traced")
+  expect(turn).toBeTruthy()
+  const tools = spans.filter((s: any) => s.name.startsWith("execute_tool"))
+  expect(tools.length).toBe(2)
+  expect(tools.every((t: any) => t.parentSpanId === turn.spanId && t.traceId === turn.traceId)).toBe(true)
+  expect(turn.attributes.find((a: any) => a.key === "gen_ai.system").value.stringValue).toBe("mock")
+  expect(JSON.stringify(bodies)).not.toContain("secret prompt text")
+})

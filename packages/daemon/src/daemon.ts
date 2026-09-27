@@ -13,6 +13,7 @@ import { type McpHttpServer, startMcpServer } from "./mcp.ts"
 import { loadPlugins } from "./plugins.ts"
 import { attachRemoteNotify } from "./remote-notify.ts"
 import { Runtime } from "./runtime.ts"
+import { TelemetryExporter } from "./telemetry.ts"
 
 export interface DaemonOptions {
   projectRoot: string
@@ -64,6 +65,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   await runtime.init()
   await loadPlugins(runtime, loaded.layers)
   attachRemoteNotify(runtime)
+  const telemetry = config.telemetry.otlp_endpoint ? new TelemetryExporter(runtime, config.telemetry.otlp_endpoint) : undefined
 
   const mcp = startMcpServer(runtime, config.daemon.mcp_port)
   runtime.mcpBaseUrl = mcp.url
@@ -81,6 +83,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       stopDemo?.()
       daemon.control.stop()
       await runtime.close()
+      await telemetry?.stop()
       mcp.stop()
       if (!opts.ephemeral) {
         try {

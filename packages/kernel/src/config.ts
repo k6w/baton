@@ -151,6 +151,14 @@ export const BatonConfig = z.object({
   routing: z.record(z.string(), z.object({ small: z.string().optional(), medium: z.string().optional(), large: z.string().optional() })).default({
     claude: { small: "haiku", medium: "sonnet", large: "opus" },
   }),
+  telemetry: z
+    .object({
+      /** OTLP/HTTP base URL (e.g. http://localhost:4318). Empty = off. */
+      otlp_endpoint: z.string().optional(),
+      headers: z.record(z.string(), z.string()).default({}),
+      service_name: z.string().default("baton"),
+    })
+    .default({ headers: {}, service_name: "baton" }),
   watchdog: z
     .object({
       /** Flag a busy agent with no activity for this long (seconds, 0 = off). */

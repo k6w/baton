@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { type Daemon, startDaemon } from "@batonsh/daemon"
@@ -124,6 +124,47 @@ test("worktree badge, changes overlay, diff viewer, merge from the UI, task plan
   expect(f).toContain("Fix greeting typo")
   t.mockInput.pressEscape()
 
+  off()
+  ui.dispose()
+  t.renderer.destroy()
+})
+
+test("compare: two candidates side by side, picking one merges it and stops the other", async () => {
+  const a = await client.spawn({ adapter: "mock", name: "cand-a", label: "candidate A", options: { speed: 0 } })
+  const b = await client.spawn({ adapter: "mock", name: "cand-b", label: "candidate B", options: { speed: 0 } })
+  writeFileSync(join(live.state.workspaces.get(a.agentId)!.path, "pick.txt"), "A\n")
+  writeFileSync(join(live.state.workspaces.get(b.agentId)!.path, "pick.txt"), "B\n")
+  await d.runtime.collab.refresh(a.agentId)
+  await d.runtime.collab.refresh(b.agentId)
+  await until(() => (live.state.workspaces.get(b.agentId)?.files.length ?? 0) === 1)
+  const config = (await client.call("config.get", {})).config as never
+  const ui = createUiState({ client, run: live.state, config, theme: loadTheme("baton"), persist: false })
+  const off = live.onEvent(() => ui.bump())
+  const t = await testRender(
+    () => (
+      <UiContext.Provider value={ui}>
+        <App onExit={() => {}} />
+      </UiContext.Provider>
+    ),
+    { width: 130, height: 40 },
+  )
+  const frame = async () => {
+    await Bun.sleep(40)
+    await t.renderOnce()
+    return t.captureCharFrame()
+  }
+  ui.setOverlay("compare")
+  let f = await frame()
+  expect(f).toContain("Compare (2)")
+  expect(f).toContain("cand-a")
+  expect(f).toContain("cand-b")
+  t.mockInput.pressArrow("right")
+  t.mockInput.pressKey("p")
+  f = await frame()
+  expect(f).toContain("Merge cand-b and stop the other 1?")
+  t.mockInput.pressKey("y")
+  await until(() => existsSync(join(root, "pick.txt")) && readFileSync(join(root, "pick.txt"), "utf8") === "B\n")
+  await until(() => live.state.agents.get(a.agentId)?.status === "exited")
   off()
   ui.dispose()
   t.renderer.destroy()

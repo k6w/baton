@@ -9,6 +9,7 @@ import { createEffect, createMemo, Match, onCleanup, Show, Switch } from "solid-
 import { copyText } from "./clipboard.ts"
 import { completions, LOCAL_COMMANDS } from "./completion.ts"
 import { AgentList } from "./components/AgentList.tsx"
+import { CompareOverlay } from "./components/Compare.tsx"
 import { CostsOverlay } from "./components/Costs.tsx"
 import { type Cell, computeGrid, Grid } from "./components/Grid.tsx"
 import { HintBar } from "./components/HintBar.tsx"
@@ -307,6 +308,9 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       case "history.open":
         ui.setOverlay("history")
         break
+      case "compare.open":
+        ui.setOverlay("compare")
+        break
       case "recipes.open":
         ui.setOverlay("recipes")
         break
@@ -489,6 +493,9 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
         break
       case "history":
         ui.setOverlay("history")
+        break
+      case "compare":
+        ui.setOverlay("compare")
         break
       case "recipes":
         ui.setOverlay("recipes")
@@ -688,6 +695,15 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
             }}
             onTask={(text) => prefill(text)}
             onGuide={() => ui.setOverlay("guide")}
+          />
+        </Match>
+        <Match when={ui.overlay() === "compare"}>
+          <CompareOverlay
+            onClose={() => ui.setOverlay(null)}
+            onDiff={(id) => {
+              ui.setDiffAgent(id)
+              ui.setOverlay("diff")
+            }}
           />
         </Match>
         <Match when={ui.overlay() === "history"}>

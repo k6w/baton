@@ -60,6 +60,7 @@ export type Overlay =
   | null
   | "palette"
   | "history"
+  | "compare"
   | "inbox"
   | "help"
   | "theme"

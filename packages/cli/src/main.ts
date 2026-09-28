@@ -404,6 +404,13 @@ async function main() {
       return cmdTrust(sub)
     case "history":
       return cmdHistory()
+    case "watch": {
+      const { runWatch } = await import("./watch.ts")
+      const client = await daemonClient()
+      await runWatch(client)
+      client.close()
+      return
+    }
     case "export":
       return cmdExport(sub)
     case "attach":

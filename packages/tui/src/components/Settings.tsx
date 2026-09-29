@@ -151,7 +151,7 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
         return write(s, next)
       }
       default:
-        setEditing(s)
+        setTimeout(() => setEditing(s), 0)
     }
   }
 
@@ -200,7 +200,12 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
       }, 0)
       return
     }
-    if (k.name === "tab") return setScope((s) => (s === "project" ? "global" : "project"))
+    // tab: sections ⇄ settings · s: which file changes are written to
+    if (k.name === "tab") {
+      setPane((p) => (p === "sections" ? "settings" : "sections"))
+      return
+    }
+    if (ks === "s") return setScope((s) => (s === "project" ? "global" : "project"))
     if (pane() === "sections" && filter() === null) {
       if (k.name === "down" || ks === "j") setSection((i) => (i + 1) % SETTING_SECTIONS.length)
       else if (k.name === "up" || ks === "k") setSection((i) => (i - 1 + SETTING_SECTIONS.length) % SETTING_SECTIONS.length)
@@ -226,7 +231,7 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
       if (s.type.kind === "theme") {
         props.onClose()
         ui.setOverlay("theme")
-      } else if (s.type.kind === "string" || s.type.kind === "number" || s.type.kind === "list") setEditing(s)
+      } else if (s.type.kind === "string" || s.type.kind === "number" || s.type.kind === "list") setTimeout(() => setEditing(s), 0)
       else cycle(s, 1)
     } else if (ks === "r") write(s, undefined)
   })
@@ -324,7 +329,7 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
   }
 
   return (
-    <Modal title="Settings" width={W()} height={H()} hint="↑↓ select · ←→ change · enter edit · / search · tab scope · r reset · esc">
+    <Modal title="Settings" width={W()} height={H()} hint="↑↓ select · ←→ change · enter edit · / search · tab sections · s scope · r reset · esc">
       <Show when={filter() !== null} fallback={<Txt value={toStyled(header(), W() - 4)} />}>
         <box height={1} flexDirection="row">
           <Txt value={toStyled([{ segs: [{ text: "/ ", fg: ui.theme().primary }] }], 2)} />
@@ -349,14 +354,14 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
                 // Enter in the search box acts on the highlighted result
                 const s = current()
                 if (!s) return
-                if (s.type.kind === "string" || s.type.kind === "number" || s.type.kind === "list") setEditing(s)
+                if (s.type.kind === "string" || s.type.kind === "number" || s.type.kind === "list") setTimeout(() => setEditing(s), 0)
                 else cycle(s, 1)
               }) as never
             }
           />
         </box>
       </Show>
-      <Txt value={toStyled([{ segs: [{ text: "─".repeat(W() - 4), fg: ui.theme().borderSubtle }] }], W() - 4)} />
+      <Txt value={toStyled([{ segs: [{ text: "─".repeat(Math.max(0, W() - 4)), fg: ui.theme().borderSubtle }] }], W() - 4)} />
       <box flexDirection="row" height={H() - 8}>
         <box width={leftW} flexDirection="column">
           <Txt value={toStyled(sectionLines(), leftW, H() - 8)} />
@@ -371,7 +376,7 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
           <Txt value={toStyled(settingLines(), rightW(), H() - 8)} />
         </box>
       </box>
-      <Txt value={toStyled([{ segs: [{ text: "─".repeat(W() - 4), fg: ui.theme().borderSubtle }] }], W() - 4)} />
+      <Txt value={toStyled([{ segs: [{ text: "─".repeat(Math.max(0, W() - 4)), fg: ui.theme().borderSubtle }] }], W() - 4)} />
       <Show when={editing()} fallback={<Txt value={toStyled(helpLines(), W() - 4, 3)} height={3} />}>
         <box height={1} flexDirection="row">
           <Txt value={toStyled([{ segs: [{ text: `${editing()!.label}: `, fg: ui.theme().primary, bold: true }] }], editing()!.label.length + 2)} />

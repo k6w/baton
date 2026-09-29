@@ -45,6 +45,30 @@ export interface RenderCtx {
 
 export const width = (s: string): number => Bun.stringWidth(s)
 
+const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[PX^_][^\x1b]*\x1b\\|\x1b[@-Z\\-_]/g
+
+/**
+ * Make agent-supplied text safe for a single terminal row: strip escape sequences, apply
+ * carriage returns (keep what follows the last \r), turn newlines/tabs into spaces and drop
+ * other control characters. Raw codes would otherwise be drawn literally or break rows.
+ */
+export function sanitize(s: string): string {
+  if (!/[\x00-\x1f\x7f]/.test(s)) return s
+  let t = s.replace(ANSI_RE, "")
+  if (t.includes("\r"))
+    t = t
+      .split("\n")
+      .map(
+        (l) =>
+          l
+            .split("\r")
+            .filter((x) => x.length)
+            .pop() ?? "",
+      )
+      .join("\n")
+  return t.replace(/[\n\t]/g, " ").replace(/[\x00-\x1f\x7f]/g, "")
+}
+
 /** Truncate to a display width, adding an ellipsis. */
 export function clip(s: string, w: number): string {
   if (w <= 0) return ""
@@ -62,6 +86,12 @@ export function clip(s: string, w: number): string {
 
 /** Word-wrap one paragraph to `w` display columns (hard-breaks long words). */
 export function wrap(text: string, w: number): string[] {
+  // keep line structure, but clean each line (escape codes, \r progress rewrites)
+  text = text
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((l) => sanitize(l))
+    .join("\n")
   if (w <= 1) return [text]
   const out: string[] = []
   for (const para of text.replace(/\t/g, "  ").split("\n")) {

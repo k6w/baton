@@ -43,7 +43,7 @@ export function AgentCard(props: { agentId: string; width: number; height: numbe
     if (!a || !l) return []
     const v = ver()
     const { width, height } = inner()
-    const key = `${v}|${width}|${height}|${ui.theme().name}|${ui.prefs.render_style}|${ui.prefs.show_thoughts}|${ui.prefs.density}`
+    const key = `${v}|${width}|${height}|${ui.theme().name}|${ui.theme().background}|${ui.prefs.render_style}|${ui.prefs.show_thoughts}|${ui.prefs.density}|${ui.prefs.icons}|${ui.config.ui.card_fields.join(",")}`
     if (key === cacheKey) return cached
     const feed = ui.run.feed(props.agentId).items
     const compact = ui.prefs.density === "compact"
@@ -88,12 +88,17 @@ export function AgentCard(props: { agentId: string; width: number; height: numbe
     return t.border
   }
 
+  const attention = createMemo(() => {
+    ui.version()
+    return attentionItems(ui.run).find((x) => x.agentId === props.agentId && x.kind !== "ready")
+  })
+
   const label = () => {
     const a = agent()
     if (!a) return []
     const t = ui.theme()
     // attention chip first: the thing you need to know about this agent
-    const it = attentionItems(ui.run).find((x) => x.agentId === props.agentId && x.kind !== "ready")
+    const it = attention()
     if (it) {
       const st = attentionGlyph(it.kind)
       const words: Record<string, string> = {

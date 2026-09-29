@@ -172,15 +172,23 @@ export function ZoomView(props: { agentId: string; width: number; height: number
           scroll = r
         }}
         flexGrow={1}
+        minHeight={0}
         stickyScroll
         stickyStart="bottom"
-        focused={ui.overlay() === null && !searching()}
+        focused={ui.overlay() === null && !searching() && ui.zoomed() === props.agentId}
         scrollY
       >
         <Txt value={toStyled(shown(), inner().width - 1)} />
       </scrollbox>
-      <Show when={searching()} fallback={<Txt value={toStyled(status(), inner().width)} />}>
-        <box height={1} flexDirection="row">
+      <Show
+        when={searching()}
+        fallback={
+          <box height={1} flexShrink={0}>
+            <Txt height={1} value={toStyled(status(), inner().width, 1)} />
+          </box>
+        }
+      >
+        <box height={1} flexShrink={0} flexDirection="row">
           <Txt value={segs({ text: "/ ", fg: ui.theme().primary, bold: true })} />
           <input
             flexGrow={1}

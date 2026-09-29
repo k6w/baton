@@ -9,7 +9,7 @@ import { createMemo } from "solid-js"
 import { agentLook } from "../agent-style.ts"
 import { useUi } from "../context.ts"
 import { type Seg, width as sw } from "../lines.ts"
-import { segs } from "../ui/styled.ts"
+import { segs, toStyled } from "../ui/styled.ts"
 import { Txt } from "../ui/Txt.tsx"
 
 const SPARK = "▁▂▃▄▅▆▇█"
@@ -93,7 +93,7 @@ export function StatusBar(props: { width: number }) {
     const lw = left.reduce((n, s) => n + sw(s.text), 0)
     const rw = right.reduce((n, s) => n + sw(s.text), 0)
     const gap = Math.max(1, props.width - lw - rw - 2)
-    return segs({ text: " " }, ...left, { text: " ".repeat(gap) }, ...right, { text: " " })
+    return toStyled([{ segs: [{ text: " " }, ...left, { text: " ".repeat(gap) }, ...right, { text: " " }] }], props.width)
   })
   return (
     <box height={1} width={props.width} backgroundColor={ui.theme().statusBar}>

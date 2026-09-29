@@ -65,7 +65,8 @@ export function HintBar(props: { width: number }) {
       fitted.push(s)
       w += sw(s.text)
     }
-    return segs(...fitted, { text: " ".repeat(Math.max(0, props.width - w)) })
+    const used = fitted.reduce((n, x) => n + sw(x.text), 0)
+    return segs(...fitted, { text: " ".repeat(Math.max(0, props.width - used)) })
   })
   return (
     <box height={1} width={props.width} backgroundColor={ui.theme().background}>

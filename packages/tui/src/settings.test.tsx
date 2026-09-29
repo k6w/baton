@@ -88,12 +88,45 @@ test("settings: browse, toggle, cycle, edit, scope — written to the config fil
   // scope: tab → global; editing a number writes the global file
   t.mockInput.pressEscape()
   await frame()
-  t.mockInput.pressTab()
+  t.mockInput.pressKey("s")
   f = await frame()
   expect(f).toContain("▸global")
   t.mockInput.pressEscape()
   await frame()
   expect(ui.overlay()).toBeNull()
+  ui.dispose()
+  t.renderer.destroy()
+})
+
+test("settings: enter on a text setting opens the editor (doesn't commit an empty value)", async () => {
+  const config = (await client.call("config.get", {})).config as never
+  const ui = createUiState({ client, run: live.state, config, theme: loadTheme("baton"), persist: false })
+  const t = await testRender(
+    () => (
+      <UiContext.Provider value={ui}>
+        <App onExit={() => {}} />
+      </UiContext.Provider>
+    ),
+    { width: 130, height: 40 },
+  )
+  const frame = async () => {
+    await Bun.sleep(40)
+    await t.renderOnce()
+    return t.captureCharFrame()
+  }
+  await frame()
+  const before = readFileSync(join(root, ".baton", "config.toml"), "utf8")
+  ui.setOverlay("settings")
+  await frame()
+  t.mockInput.pressKey("/")
+  await Bun.sleep(30)
+  await t.mockInput.typeText("lead model")
+  await frame()
+  t.mockInput.pressEnter()
+  const f = await frame()
+  expect(f).toContain("enter save · empty = unset")
+  expect(readFileSync(join(root, ".baton", "config.toml"), "utf8")).toBe(before)
+  t.mockInput.pressEscape()
   ui.dispose()
   t.renderer.destroy()
 })

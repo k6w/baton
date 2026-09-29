@@ -69,7 +69,9 @@ export function Frame(props: FrameProps) {
     const rightText = (props.right ?? []).map((s) => s.text).join("")
     const fixed = sw(left) + iconW() + (iconW() ? 1 : 0) + sw(rightCap) + 1
     let titleBudget = Math.max(4, w - fixed - (rightText ? sw(rightText) + 2 : 0))
-    let rightSegs = props.right ?? []
+    // a right label that alone is too wide is clipped, not allowed to push the frame
+    const rightMax = Math.max(0, Math.floor(w / 2) - 4)
+    let rightSegs = sw(rightText) > rightMax ? [{ ...(props.right?.[0] ?? {}), text: clip(rightText, rightMax) }] : (props.right ?? [])
     if (sw(titleText) > titleBudget && rightText) {
       // drop the right label before truncating the name
       rightSegs = []

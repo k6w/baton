@@ -18,7 +18,8 @@ export interface CommandDef {
 
 export const DEFAULT_COMMANDS: CommandDef[] = [
   { id: "app.palette", title: "Command palette", context: "global", keys: ["ctrl+p", "ctrl+k"] },
-  { id: "app.help", title: "Keyboard shortcuts", context: "grid", keys: ["?", "f1"] },
+  { id: "app.help", title: "Keyboard shortcuts", context: "grid", keys: ["?"] },
+  { id: "app.help", title: "Keyboard shortcuts", context: "global", keys: ["f1"], hidden: true },
   { id: "app.quit", title: "Quit (agents keep running in the daemon)", context: "global", keys: ["ctrl+c"] },
   { id: "app.shutdown", title: "Quit and stop all agents", context: "global", keys: ["ctrl+q"] },
   { id: "inbox.open", title: "Inbox: everything that needs you", context: "global", keys: ["ctrl+a"] },

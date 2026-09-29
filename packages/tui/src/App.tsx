@@ -128,27 +128,33 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       }
       return c
     })
+    if (cellCache.size > ws.length * 2 + 16) for (const id of [...cellCache.keys()]) if (!ws.some((w) => w.agentId === id)) cellCache.delete(id)
     if (ui.prefs.show_bus && ws.length > 0 && ui.prefs.layout !== "swarm") out.push(busCell)
     return out
   })
 
   const frame = createMemo(() => {
-    const W = dims().width
-    const H = dims().height - chromeH() // status bar (+ hint bar)
+    const W = Math.max(1, dims().width)
+    const H = Math.max(1, dims().height - chromeH()) // status bar (+ hint bar)
     const layout = ui.prefs.layout
     const hasWorkers = workers().length > 0
-    if (layout === "wide" && hasWorkers) {
-      const orchW = Math.max(40, Math.round(W * 0.38))
-      return { orch: { w: orchW, h: H }, grid: { w: W - orchW, h: H }, direction: "row" as const }
+    const minOrch = Math.min(H, 5) // the lead pane always keeps room for its input
+    // too small to split: the orchestrator alone (agents stay reachable via peek/zoom/list)
+    if (!hasWorkers || H < 12 || W < 30) return { orch: { w: W, h: H }, grid: { w: W, h: 0 }, direction: "column" as const }
+    if (layout === "wide") {
+      const orchW = Math.min(W - 20, Math.max(40, Math.round(W * 0.38)))
+      if (orchW >= 30) return { orch: { w: orchW, h: H }, grid: { w: W - orchW, h: H }, direction: "row" as const }
     }
-    if (layout === "swarm" && hasWorkers) return { orch: { w: W, h: 2 }, grid: { w: W, h: H - 2 }, direction: "column" as const, slim: true }
-    if (!hasWorkers) return { orch: { w: W, h: H }, grid: { w: W, h: 0 }, direction: "column" as const }
+    if (layout === "swarm") return { orch: { w: W, h: 2 }, grid: { w: W, h: H - 2 }, direction: "column" as const, slim: true }
     if (layout === "list") {
-      const listH = Math.min(workers().length + 2, Math.max(6, Math.round(H * 0.45)))
+      const listH = Math.max(3, Math.min(workers().length + 2, Math.max(6, Math.round(H * 0.45)), H - minOrch))
       return { orch: { w: W, h: H - listH }, grid: { w: W, h: listH }, direction: "column" as const }
     }
-    const orchH = layout === "focus" ? Math.min(10, Math.round(H * 0.3)) : Math.max(8, Math.min(H - ui.config.ui.min_card_height, Math.round(H * 0.34)))
-    return { orch: { w: W, h: orchH }, grid: { w: W, h: H - orchH }, direction: "column" as const }
+    const orchH =
+      layout === "focus"
+        ? Math.max(minOrch, Math.min(10, Math.round(H * 0.3)))
+        : Math.max(minOrch, Math.min(H - Math.min(ui.config.ui.min_card_height, H - minOrch), Math.round(H * 0.34)))
+    return { orch: { w: W, h: orchH }, grid: { w: W, h: Math.max(0, H - orchH) }, direction: "column" as const }
   })
 
   const gridCols = () =>
@@ -226,6 +232,7 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
   }
 
   // terminal tab title: "⚑ 2 baton · project"
+  let lastTitle = ""
   createEffect(() => {
     ui.version()
     if (!ui.config.ui.tab_title) return
@@ -241,8 +248,6 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       }, 0)
     }
   })
-  let lastTitle = ""
-
   const prefill = (text: string) => {
     // next tick: the key that triggered this must not land in the freshly focused input
     setTimeout(() => {
@@ -362,9 +367,15 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       case "grid.down":
         focusAgentAt(focusedIndex() + (ui.prefs.layout === "list" ? 1 : gridCols()))
         break
-      case "grid.pageDown":
-        ui.setPage((p) => p + 1)
+      case "grid.pageDown": {
+        const g = computeGrid(cells().length, frame().grid.w, frame().grid.h, {
+          minW: ui.config.ui.min_card_width,
+          minH: ui.config.ui.min_card_height,
+          maxCols: ui.config.ui.max_columns,
+        })
+        ui.setPage((p) => Math.min(Math.max(0, g.pages - 1), p + 1))
         break
+      }
       case "grid.pageUp":
         ui.setPage((p) => Math.max(0, p - 1))
         break
@@ -530,7 +541,11 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
         debugKeys,
         `${Date.now()} key=${key.name} seq=${JSON.stringify(key.sequence)} overlay=${ui.overlay()} focus=${ui.focus().kind} zoom=${ui.zoomed()}\n`,
       )
-    if (ui.capturing()) return // an in-pane text box owns the keyboard (it handles its own escape)
+    if (ui.capturing()) {
+      // an in-pane text box owns the keyboard (it handles its own escape); ctrl+c still gets you out
+      if (!(key.ctrl && key.name === "c")) return
+      ui.setCapturing(false)
+    }
     if (ui.overlay()) {
       if (key.ctrl && key.name === "c") ui.setOverlay(null)
       return
@@ -547,7 +562,7 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
     if (!id) return
     // while typing, only fire global commands bound to modifier / special keys
     if (typing && contexts[0] === "input" && id !== "orch.interrupt") {
-      const special = key.ctrl || key.meta || key.option || ["tab", "pageup", "pagedown", "f1", "escape"].includes(key.name)
+      const special = key.ctrl || key.meta || key.option || ["tab", "pageup", "pagedown", "f1", "f2", "escape"].includes(key.name)
       if (!special) return
     }
     if (id === "app.quit" && !ui.input()) {

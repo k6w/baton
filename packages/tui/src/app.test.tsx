@@ -332,4 +332,49 @@ describe("TUI", () => {
     m.t.mockInput.pressEscape()
     m.dispose()
   })
+
+  test("regressions: closing keys and Enter never leak into the draft; small terminals; agent text with escape codes", async () => {
+    const m = await mount(140, 44)
+    await m.frame()
+    await m.t.mockInput.typeText("hello")
+    await m.frame()
+    m.t.mockInput.pressKey("e", { ctrl: true }) // costs
+    await m.frame()
+    m.t.mockInput.pressKey("q")
+    await m.frame()
+    await Bun.sleep(20)
+    expect(m.ui.input()).toBe("hello")
+    m.t.mockInput.pressKey("t", { ctrl: true }) // theme picker
+    await m.frame()
+    m.t.mockInput.pressEnter()
+    await Bun.sleep(30)
+    await m.frame()
+    expect(m.ui.input()).toBe("hello") // the draft was not sent
+    m.dispose()
+    // tiny terminals render without crashing
+    for (const [w, h] of [
+      [36, 20],
+      [80, 8],
+      [6, 4],
+    ] as const) {
+      for (const layout of ["grid", "list", "wide", "swarm", "focus"]) {
+        const t = await mount(w, h, { layout })
+        const f = await t.frame()
+        expect(f.split("\n").every((l) => Bun.stringWidth(l) <= w)).toBe(true)
+        t.dispose()
+      }
+    }
+    // escape codes / carriage returns from agents never reach the screen raw
+    const w = live.state.workers()[0]!
+    daemon.runtime.emit(
+      { type: "message.completed", data: { messageId: "ansi", role: "assistant", text: "progress 50%\rprogress 100% \x1b[31mred\x1b[0m done" } },
+      w.agentId,
+    )
+    const m2 = await mount(140, 44)
+    m2.ui.setZoomed(w.agentId)
+    const f2 = await m2.frame()
+    expect(f2).toContain("progress 100% red done")
+    expect(f2).not.toContain("[31m")
+    m2.dispose()
+  })
 })

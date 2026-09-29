@@ -103,7 +103,9 @@ export interface UiState {
   zoomed: Accessor<string | null>
   setZoomed: Setter<string | null>
   overlay: Accessor<Overlay>
-  setOverlay: Setter<Overlay>
+  setOverlay: (o: Overlay) => void
+  /** True for one tick after an overlay closes: the closing key must not reach the main input. */
+  overlayClosing: Accessor<boolean>
   /** True while an in-pane text box (e.g. zoom search) owns the keyboard. */
   capturing: Accessor<boolean>
   setCapturing: Setter<boolean>
@@ -157,7 +159,15 @@ export function createUiState(opts: { client?: BatonClient; run: RunState; confi
   const [now, setNow] = createSignal(Date.now())
   const [focus, setFocus] = createSignal<Focus>({ kind: "input" })
   const [zoomed, setZoomed] = createSignal<string | null>(null)
-  const [overlay, setOverlay] = createSignal<Overlay>(null)
+  const [overlay, setOverlaySig] = createSignal<Overlay>(null)
+  const [overlayClosing, setOverlayClosing] = createSignal(false)
+  const setOverlay = (o: Overlay) => {
+    if (o === null && overlay() !== null) {
+      setOverlayClosing(true)
+      setTimeout(() => setOverlayClosing(false), 0)
+    }
+    setOverlaySig(() => o)
+  }
   const [page, setPage] = createSignal(0)
   const [diffAgent, setDiffAgent] = createSignal<string | null>(null)
   const [peekAgent, setPeekAgent] = createSignal<string | null>(null)
@@ -199,10 +209,18 @@ export function createUiState(opts: { client?: BatonClient; run: RunState; confi
   }, 1000)
 
   let toastId = 0
+  const toastTimers = new Set<ReturnType<typeof setTimeout>>()
   const toast = (text: string, level: Toast["level"] = "info") => {
     const id = ++toastId
     setToasts((t) => [...t.slice(-3), { id, text, level }])
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), level === "error" ? 6000 : 3500)
+    const timer = setTimeout(
+      () => {
+        toastTimers.delete(timer)
+        setToasts((t) => t.filter((x) => x.id !== id))
+      },
+      level === "error" ? 6000 : 3500,
+    )
+    toastTimers.add(timer)
   }
 
   return {
@@ -231,6 +249,7 @@ export function createUiState(opts: { client?: BatonClient; run: RunState; confi
     setZoomed,
     overlay,
     setOverlay,
+    overlayClosing,
     page,
     setPage,
     diffAgent,
@@ -257,6 +276,7 @@ export function createUiState(opts: { client?: BatonClient; run: RunState; confi
       clearInterval(clock)
       if (animTimer) clearInterval(animTimer)
       if (scheduled) clearTimeout(scheduled)
+      for (const t of toastTimers) clearTimeout(t)
     },
   }
 }

@@ -32,8 +32,14 @@ export function Orchestrator(props: OrchestratorProps) {
   let historyIdx = -1
   let inputRef: InputRenderable | undefined
 
-  const orch = createMemo(() => {
+  // only "changes" when the lead's own events change (not on every worker event)
+  const orchVer = createMemo(() => {
     ui.version()
+    const id = ui.run.orchestratorId
+    return `${id}|${id ? (ui.run.agentVersions.get(id) ?? 0) : 0}`
+  })
+  const orch = createMemo(() => {
+    orchVer()
     const id = ui.run.orchestratorId
     const a = id ? ui.run.agents.get(id) : undefined
     return a && a.status !== "exited" ? { ...a } : undefined
@@ -223,6 +229,7 @@ export function Orchestrator(props: OrchestratorProps) {
     const text = value.trim()
     if (!text) return
     history.unshift(text)
+    if (history.length > 200) history.length = 200
     historyIdx = -1
     ui.setInput("")
     if (inputRef) inputRef.value = ""
@@ -266,7 +273,7 @@ export function Orchestrator(props: OrchestratorProps) {
     return segs({ text: "❯ ", fg: props.focused ? t.primary : t.textMuted, bold: true })
   }
 
-  const inputEl = (
+  const inputEl = () => (
     <box height={1} flexDirection="row">
       <Txt value={prompt()} />
       <input
@@ -274,7 +281,7 @@ export function Orchestrator(props: OrchestratorProps) {
           inputRef = r
         }}
         flexGrow={1}
-        focused={props.focused && ui.overlay() === null}
+        focused={props.focused && ui.overlay() === null && !ui.overlayClosing()}
         placeholder={orch() ? "message the orchestrator · @agent · /command" : "what should we build? · @agent · /spawn codex 3"}
         backgroundColor="transparent"
         focusedBackgroundColor="transparent"
@@ -334,7 +341,7 @@ export function Orchestrator(props: OrchestratorProps) {
     const barW = Math.max(6, Math.min(24, Math.floor(props.width / 6)))
     const filled = Math.round((pct / 100) * barW)
     const head = clip(task, Math.max(10, props.width - barW - right.length - 8))
-    const gap = Math.max(1, props.width - 2 - head.length - barW - right.length - 3)
+    const gap = Math.max(1, props.width - 2 - sw(head) - barW - right.length - 3)
     return toStyled(
       [
         {
@@ -352,35 +359,36 @@ export function Orchestrator(props: OrchestratorProps) {
     )
   }
 
-  if (props.slim) {
-    return (
-      <box height={2 + Math.min(6, suggestions().length)} width={props.width} flexDirection="column" backgroundColor={ui.theme().background}>
-        <Txt height={1} value={swarmHeader()} />
-        {suggestionBox()}
-        {inputEl}
-      </box>
-    )
-  }
-
-  return (
-    <Frame
-      width={props.width}
-      height={props.height}
-      border={ui.prefs.border}
-      borderColor={ui.config.policy.preset === "yolo" ? ui.theme().error : props.focused ? ui.theme().borderActive : ui.theme().border}
-      icon={{ text: orch() ? agentLook(ui, orch()!).glyph : "✱", fg: ui.theme().primary, bold: true }}
-      logo={orch() ? agentLook(ui, orch()!).logo : undefined}
-      title={[{ text: "orchestrator", fg: ui.theme().text, bold: true }]}
-      right={headerRight()}
-    >
-      <box height={bodyRows()} overflow="hidden">
-        <Txt height={bodyRows()} wrapMode="none" value={toStyled(body(), inner().width)} />
-      </box>
-      <Show when={status().length > 0}>
-        <Txt height={status().length} wrapMode="none" value={toStyled(status(), inner().width)} />
-      </Show>
+  const slim = () => (
+    <box height={2 + Math.min(6, suggestions().length)} width={props.width} flexDirection="column" backgroundColor={ui.theme().background}>
+      <Txt height={1} value={swarmHeader()} />
       {suggestionBox()}
-      {inputEl}
-    </Frame>
+      {inputEl()}
+    </box>
+  )
+
+  // reactive: switching to/from the swarm layout at runtime swaps the pane
+  return (
+    <Show when={!props.slim} fallback={slim()}>
+      <Frame
+        width={props.width}
+        height={props.height}
+        border={ui.prefs.border}
+        borderColor={ui.config.policy.preset === "yolo" ? ui.theme().error : props.focused ? ui.theme().borderActive : ui.theme().border}
+        icon={{ text: orch() ? agentLook(ui, orch()!).glyph : "✱", fg: ui.theme().primary, bold: true }}
+        logo={orch() ? agentLook(ui, orch()!).logo : undefined}
+        title={[{ text: "orchestrator", fg: ui.theme().text, bold: true }]}
+        right={headerRight()}
+      >
+        <box height={bodyRows()} overflow="hidden">
+          <Txt height={bodyRows()} wrapMode="none" value={toStyled(body(), inner().width)} />
+        </box>
+        <Show when={status().length > 0}>
+          <Txt height={status().length} wrapMode="none" value={toStyled(status(), inner().width)} />
+        </Show>
+        {suggestionBox()}
+        {inputEl()}
+      </Frame>
+    </Show>
   )
 }

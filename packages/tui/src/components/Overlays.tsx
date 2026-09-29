@@ -238,6 +238,7 @@ export function Inbox(props: { onClose: () => void; onJump: (item: AttentionItem
     return attentionItems(ui.run)
   })
   const current = () => items()[Math.min(sel(), items().length - 1)]
+  const selClamped = () => Math.max(0, Math.min(sel(), items().length - 1))
   const respond = async (kind: "allow_once" | "allow_always" | "reject_once" | "reject_always") => {
     const it = current()
     if (!it || it.kind !== "approval" || !ui.client) return
@@ -249,7 +250,8 @@ export function Inbox(props: { onClose: () => void; onJump: (item: AttentionItem
     } catch (e) {
       ui.toast(e instanceof Error ? e.message : String(e), "error")
     }
-    if (items().length <= 1) props.onClose()
+    // only close if the inbox is still what's open (the user may have moved on meanwhile)
+    if (items().length <= 1 && ui.overlay() === "inbox") props.onClose()
   }
   useKeyboard((k) => {
     const n = items().length
@@ -313,7 +315,7 @@ export function Inbox(props: { onClose: () => void; onJump: (item: AttentionItem
               right: it.kind,
             }
           })}
-          selected={sel()}
+          selected={selClamped()}
           width={84}
           height={Math.min(12, Math.max(1, items().length))}
         />

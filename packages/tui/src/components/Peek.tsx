@@ -111,7 +111,7 @@ export function PeekOverlay(props: { agentId: string; onClose: () => void; onZoo
   return (
     <Modal title={title()} width={W()} height={H()} hint={replying() ? "enter send · esc back" : "r reply · z zoom · v diff · x interrupt · esc close"}>
       <Txt value={toStyled(lines(), W() - 4, H() - 9)} height={H() - 9} />
-      <Txt value={segs({ text: "─".repeat(W() - 4), fg: ui.theme().borderSubtle })} />
+      <Txt value={segs({ text: "─".repeat(Math.max(0, W() - 4)), fg: ui.theme().borderSubtle })} />
       <Txt value={toStyled(footer(), W() - 4, 3)} height={3} />
       <Show when={replying()} fallback={<Txt value={segs({ text: approval() ? "r to reply instead" : "r to reply", fg: ui.theme().textSubtle })} />}>
         <box height={1} flexDirection="row">

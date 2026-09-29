@@ -1,6 +1,6 @@
 /** Convert our pure `Line`s into OpenTUI StyledText (one text node per pane = fast). */
 import { RGBA, StyledText, TextAttributes, type TextChunk } from "@opentui/core"
-import { type Line, lineWidth, type Seg } from "../lines.ts"
+import { clipLine, type Line, lineWidth, type Seg, sanitize } from "../lines.ts"
 
 const cache = new Map<string, RGBA>()
 
@@ -32,7 +32,10 @@ export function toStyled(lines: readonly Line[], width: number, height?: number)
   const chunks: TextChunk[] = []
   // Pad to `height` rows too, for the same reason as the width padding below.
   const all = height !== undefined && lines.length < height ? [...lines, ...Array.from({ length: height - lines.length }, () => ({ segs: [] }) as Line)] : lines
-  all.forEach((l, i) => {
+  all.forEach((raw, i) => {
+    // never draw past the pane: overflow corrupts neighbouring panes
+    const clean = raw.segs.some((s) => /[\x00-\x1f\x7f]/.test(s.text)) ? { ...raw, segs: raw.segs.map((s) => ({ ...s, text: sanitize(s.text) })) } : raw
+    const l = width > 0 && lineWidth(clean) > width ? clipLine(clean, width) : clean
     for (const s of l.segs) if (s.text) chunks.push(chunk(s.text, s))
     // Pad every row to the full width: text nodes only repaint cells they cover, so a
     // shorter line would otherwise leave the previous frame's characters behind.

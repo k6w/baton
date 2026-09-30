@@ -111,6 +111,11 @@ describe("collaboration", () => {
     await rm.callTool({ name: "submit_review", arguments: { verdict: "approve", notes: "LGTM" } })
     await rm.close()
     await until(() => d.runtime.state.workspaces.get(w1.info.agentId)?.review?.status === "approve")
+    // an edit after the approval (same +/- counts) invalidates it
+    writeFileSync(join(p1, "a.ts"), "export const a = 'w9'\n")
+    const stale = await lead.callTool({ name: "merge", arguments: { agent: "w1" } })
+    expect(text(stale)).toContain("review")
+    writeFileSync(join(p1, "a.ts"), "export const a = 'w1'\n")
     const merged = await lead.callTool({ name: "merge", arguments: { agent: "w1" } })
     expect(text(merged)).toContain("merged w1")
     expect(readFileSync(join(root, "a.ts"), "utf8")).toBe("export const a = 'w1'\n")

@@ -19,10 +19,34 @@ whether they're written to the project or global file (comments are preserved).
 on its own: every other setting still applies. `baton config schema` prints a JSON Schema you can use for
 editor autocompletion.
 
+## Trusting a project
+
+Cloning a repository must never be enough to run its commands. Project config (`.baton/config.toml` and
+`config.local.toml`) is applied normally, **except** for settings that execute code or widen what agents may do.
+Those are held back until you run `baton trust` in the project:
+
+| Held back until trusted | Why |
+|---|---|
+| `plugins` (pinned by file content) | runs code from the repo |
+| `agents.<name>.command` / `args` / `env` / `options.command` … | chooses what binary runs |
+| `workspace.setup`, `workspace.verify`, `workspace.dir` | shell commands, file locations |
+| `notify.command`, `notify.webhook`, `telemetry.otlp_endpoint` / `headers` | runs commands / sends run data elsewhere |
+| `providers.<name>.base_url` / `api_key` / `headers` | `cmd:` secrets run commands; a repo endpoint could receive your key |
+| `approval = "auto"` / `"yolo"`, `policy.preset = "yolo"`, `[[policy.rules]]` with `action = "allow"` | widen permissions |
+
+`baton trust` lists exactly what it would allow and asks first (`-y` to skip the question). Trust is pinned to the
+values: when one of them changes (or a plugin file is edited), that entry is held back again. `baton doctor`
+and the daemon log say what is held back; `baton config explain <key>` marks it; `baton trust --revoke` undoes
+everything. Values you set yourself in the settings screen are trusted automatically. Your global config is
+always trusted.
+
+A config file that fails to parse while the daemon is running (a half-saved edit) doesn't reset anything: the
+previous settings stay active until the file is valid again (`baton config reload` re-reads it).
+
 ## Full reference
 
 ```toml
-plugins = []                      # adapter plugins, see agents.md (project plugins need `baton trust`)
+plugins = []                      # adapter plugins, see agents.md (project plugins need `baton trust`, see above)
 
 [project]
 name = "portfolio"                # shown in the status bar (default: folder name)

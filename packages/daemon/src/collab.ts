@@ -41,8 +41,9 @@ function vendorOf(adapter: string): string {
   return adapter.replace(/-(acp|cli|stream)$/, "")
 }
 
+/** Identity of the reviewed content: the snapshot's git tree hash (exact bytes, not just +/- counts). */
 function signature(ws: Workspace | undefined): string {
-  return (ws?.files ?? []).map((f) => `${f.path}:${f.added}:${f.removed}`).join("|")
+  return ws?.tree ?? `files:${(ws?.files ?? []).map((f) => `${f.path}:${f.added}:${f.removed}`).join("|")}`
 }
 
 export class Collaboration {
@@ -62,20 +63,13 @@ export class Collaboration {
   // ───────────────────────────── workspaces ─────────────────────────────
 
   /** Create the agent's workspace; returns the directory the agent should work in. */
+  /**
+   * Create the agent's workspace; returns the directory the agent should work in. A failing
+   * worktree (or setup command) fails the spawn — silently letting the agent edit the project
+   * directly would bypass review and merge.
+   */
   async prepare(agent: AgentRuntime, isolation: "worktree" | "shared"): Promise<string> {
-    let ws: Workspace
-    try {
-      ws = await this.workspaces.create(agent.info.agentId, agent.info.name, isolation)
-    } catch (e) {
-      this.rt.emit(
-        {
-          type: "orch.note",
-          data: { level: "warn", text: `worktree for ${agent.info.name} failed (${e instanceof Error ? e.message : e}); using the project directly` },
-        },
-        agent.info.agentId,
-      )
-      ws = await this.workspaces.create(agent.info.agentId, agent.info.name, "shared")
-    }
+    const ws = await this.workspaces.create(agent.info.agentId, agent.info.name, isolation)
     this.rt.emit({ type: "workspace.created", data: { path: ws.path, branch: ws.branch, base: ws.base, mode: ws.mode, ports: ws.ports } }, agent.info.agentId)
     return ws.path
   }
@@ -157,7 +151,9 @@ export class Collaboration {
   private checkScope(agentId: string, paths: string[]) {
     const taskId = this.taskOwners.get(agentId) ?? [...this.rt.state.tasks.values()].find((t) => t.owner === agentId)?.taskId
     if (!taskId) return
-    const created = this.rt.store.query({ types: ["task.created"] }).find((e) => e.type === "task.created" && e.data.taskId === taskId)
+    const created = this.rt.store
+      .query({ runId: this.rt.runId, types: ["task.created"] })
+      .findLast((e) => e.type === "task.created" && e.data.taskId === taskId)
     const globs = created?.type === "task.created" ? created.data.files : undefined
     if (!globs?.length) return
     const outside = paths.filter((p) => !globs.some((g) => matchGlob(g, p)))
@@ -202,21 +198,19 @@ export class Collaboration {
   async merge(agentId: string, requester?: string): Promise<MergeOutcome> {
     const agent = this.rt.agents.get(agentId)
     if (!agent) throw new Error("no such agent")
-    const ws = await this.refresh(agentId)
-    if (this.rt.config.workspace.review === "required" && ws?.files.length) {
-      const approved = [...this.reviews.values()].some((r) => r.author === agentId && r.verdict === "approve" && r.signature === signature(ws))
-      if (!approved) {
-        const out: MergeOutcome = {
-          status: "failed",
-          files: ws.files,
-          detail: "workspace.review = required: get an approving review of the current changes first (request_review)",
-        }
-        this.rt.emit({ type: "workspace.merge", data: { status: "failed", detail: out.detail } }, agentId)
-        return out
-      }
-    }
     this.rt.emit({ type: "workspace.merge", data: { status: "queued" } }, agentId)
-    const r = await this.workspaces.merge(agentId, () => this.rt.emit({ type: "workspace.merge", data: { status: "verifying" } }, agentId))
+    // the review gate runs inside the merge queue against the exact tree being merged, so edits
+    // made after the approval (or while queued) can't slip through
+    const gate = (ws: Workspace): string | undefined => {
+      if (this.rt.config.workspace.review !== "required" || !ws.files.length) return undefined
+      const sig = signature(ws)
+      const approved = [...this.reviews.values()].some((r) => r.author === agentId && r.verdict === "approve" && r.signature === sig)
+      return approved ? undefined : "workspace.review = required: get an approving review of the current changes first (request_review)"
+    }
+    const r = await this.workspaces.merge(agentId, {
+      onStage: () => this.rt.emit({ type: "workspace.merge", data: { status: "verifying" } }, agentId),
+      gate,
+    })
     const added = r.files.reduce((n, f) => n + f.added, 0)
     const removed = r.files.reduce((n, f) => n + f.removed, 0)
     const files = r.files.map((f) => f.path)
@@ -309,6 +303,7 @@ export class Collaboration {
     const l = this.leases.get(id)
     if (!l) return
     this.leases.delete(id)
+    for (const k of [...this.leaseWarned]) if (k.includes(`|${id}|`)) this.leaseWarned.delete(k)
     this.rt.emit({ type: "lease.released", data: { leaseId: id } }, l.agentId)
   }
 
@@ -318,12 +313,16 @@ export class Collaboration {
   }
 
   /** An agent edited files someone else holds an exclusive lease on. */
+  private leaseWarned = new Set<string>()
+
   private checkLeases(agent: AgentRuntime, paths: string[]) {
     this.expire()
     for (const l of this.leases.values()) {
       if (l.agentId === agent.info.agentId || !l.exclusive) continue
-      const hit = paths.filter((p) => l.globs.some((g) => matchGlob(g, p)))
+      // warn once per (agent, lease, file) — every further edit of the same file would otherwise re-steer
+      const hit = paths.filter((p) => l.globs.some((g) => matchGlob(g, p))).filter((p) => !this.leaseWarned.has(`${agent.info.agentId}|${l.leaseId}|${p}`))
       if (!hit.length) continue
+      for (const p of hit) this.leaseWarned.add(`${agent.info.agentId}|${l.leaseId}|${p}`)
       const holder = this.rt.agents.get(l.agentId)?.info.name ?? "another agent"
       this.rt.emit({ type: "workspace.conflict", data: { with: l.agentId, files: hit, kind: "lease" } }, agent.info.agentId)
       try {
@@ -413,7 +412,7 @@ When done, call the baton tool submit_review with verdict "approve" or "changes_
 
   // ───────────────────────────── tasks ─────────────────────────────
 
-  async plan(tasks: PlanTask[], timeoutMs = 15 * 60_000): Promise<{ approved: boolean; notes?: string; ids: string[] }> {
+  async plan(tasks: PlanTask[], timeoutMs = 15 * 60_000, signal?: AbortSignal): Promise<{ approved: boolean; notes?: string; ids: string[] }> {
     const ids: string[] = []
     for (const t of tasks) {
       const taskId = t.id ?? `t${this.rt.state.tasks.size + ids.length + 1}`
@@ -424,20 +423,34 @@ When done, call the baton tool submit_review with verdict "approve" or "changes_
       })
     }
     if (!this.rt.config.orchestrator.plan_approval) return { approved: true, ids }
-    this.planId = newId("plan")
-    this.planWaiter = deferred()
-    this.rt.emit({ type: "task.plan", data: { planId: this.planId, status: "proposed" } })
-    const t = setTimeout(() => this.planWaiter?.resolve({ approved: false, notes: "no answer from the user (timed out)" }), timeoutMs)
-    const r = await this.planWaiter.promise
+    // a newer plan supersedes one still waiting for the user
+    if (this.planWaiter && this.planId) this.settlePlan(this.planId, false, "superseded by a newer plan")
+    const planId = newId("plan")
+    const waiter = deferred<{ approved: boolean; notes?: string }>()
+    this.planId = planId
+    this.planWaiter = waiter
+    this.rt.emit({ type: "task.plan", data: { planId, status: "proposed" } })
+    const t = setTimeout(() => this.settlePlan(planId, false, "no answer from the user (timed out)"), timeoutMs)
+    const onAbort = () => this.settlePlan(planId, false, "the requesting agent disconnected")
+    signal?.addEventListener("abort", onAbort, { once: true })
+    const r = await waiter.promise
     clearTimeout(t)
-    this.planWaiter = undefined
+    signal?.removeEventListener("abort", onAbort)
     return { ...r, ids }
   }
 
   decidePlan(approved: boolean, notes?: string): boolean {
     if (!this.planWaiter || !this.planId) return false
-    this.rt.emit({ type: "task.plan", data: { planId: this.planId, status: approved ? "approved" : "rejected", notes } })
-    this.planWaiter.resolve({ approved, notes })
+    return this.settlePlan(this.planId, approved, notes)
+  }
+
+  private settlePlan(planId: string, approved: boolean, notes?: string): boolean {
+    if (this.planId !== planId || !this.planWaiter) return false
+    const w = this.planWaiter
+    this.planWaiter = undefined
+    this.planId = undefined
+    this.rt.emit({ type: "task.plan", data: { planId, status: approved ? "approved" : "rejected", notes } })
+    w.resolve({ approved, notes })
     return true
   }
 

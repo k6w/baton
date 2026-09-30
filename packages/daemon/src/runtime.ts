@@ -49,6 +49,16 @@ export interface AgentRuntime {
   busy: boolean
   closing: boolean
   budgetWarned: boolean
+  /** Per-agent budget exceeded: no new prompts until the budget is raised. */
+  budgetStopped?: boolean
+  /** Blocking baton tool calls in flight (wait_for_results, plan_tasks, asks) — not a stall. */
+  blocked: number
+  /** Tool calls started but not finished (long commands aren't stalls either). */
+  openTools: Set<string>
+  /** Retry timer for messages held back by the delivery rate limit. */
+  flushTimer?: ReturnType<typeof setTimeout>
+  /** agent.exited side effects (results, tasks, workspace) — started once, awaited by kill(). */
+  exitHandled?: Promise<void>
 }
 
 export interface InboxMessage {
@@ -83,6 +93,8 @@ export class Runtime {
   private heartbeatTimer?: ReturnType<typeof setInterval>
   private watchdogTimer?: ReturnType<typeof setInterval>
   private runWarned = false
+  /** Run budget exceeded: no new prompts or auto-deliveries until the budget is raised. */
+  private runStopped = false
   private closed = false
   readonly projectRoot: string
   readonly collab: Collaboration
@@ -122,10 +134,13 @@ export class Runtime {
 
   // ───────────────────────────── agents ─────────────────────────────
 
-  private allocateName(adapter: string, requested?: string): string {
-    const taken = new Set([...this.agents.values()].filter((a) => !a.closing).map((a) => a.info.name.toLowerCase()))
+  private allocateName(adapter: string, requested?: string, self?: AgentRuntime): string {
+    const taken = new Set([...this.agents.values()].filter((a) => !a.closing && a !== self).map((a) => a.info.name.toLowerCase()))
+    // reserved addresses on the bus
+    for (const r of ["orchestrator", "lead", "user", "baton", "all"]) taken.add(r)
     if (requested) {
-      let name = requested.replace(/\s+/g, "-")
+      requested = requested.trim().replace(/^@/, "").replace(/\s+/g, "-") || adapter
+      let name = requested
       let i = 2
       while (taken.has(name.toLowerCase())) name = `${requested}-${i++}`
       return name
@@ -216,6 +231,8 @@ export class Runtime {
       budgetWarned: false,
       lastEventAt: Date.now(),
       toolRepeats: 0,
+      blocked: 0,
+      openTools: new Set(),
     }
     this.agents.set(agentId, rt)
     this.emit({ type: "agent.spawned", data: info }, agentId)
@@ -248,8 +265,18 @@ export class Runtime {
     // workers get their own git worktree; the orchestrator (and explicit cwd) work in place
     const isolation = params.isolation ?? (params.isOrchestrator || params.cwd ? "shared" : this.config.workspace.isolation)
     if (params.adoptWorkspace) info.cwd = this.collab.adopt(rt, params.adoptWorkspace)
-    else if (isolation === "worktree") info.cwd = await this.collab.prepare(rt, "worktree")
-    else this.emit({ type: "workspace.created", data: { path: info.cwd, mode: "shared" } }, agentId)
+    else if (isolation === "worktree") {
+      try {
+        info.cwd = await this.collab.prepare(rt, "worktree")
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e)
+        rt.closing = true
+        this.emit({ type: "error", data: { message: `workspace for ${name}: ${message}`, fatal: true } }, agentId)
+        this.emit({ type: "agent.exited", data: { code: null, reason: message } }, agentId)
+        await this.onExited(rt, message)
+        throw new Error(`could not create a worktree for ${name}: ${message}`)
+      }
+    } else this.emit({ type: "workspace.created", data: { path: info.cwd, mode: "shared" } }, agentId)
     if (params.taskId) this.collab.assignTask(params.taskId, agentId)
 
     const ac = new AbortController()
@@ -262,7 +289,9 @@ export class Runtime {
           model: model && providerCfg?.models?.[model] ? providerCfg.models[model] : model,
           provider,
           systemPrompt,
-          mcpServers: this.mcpBaseUrl && rt.caps.mcp ? [{ name: "baton", url: `${this.mcpBaseUrl}/mcp/${rt.token}` }] : [],
+          // identity travels as a bearer header, not in the URL (URLs end up in process lists and logs)
+          mcpServers:
+            this.mcpBaseUrl && rt.caps.mcp ? [{ name: "baton", url: `${this.mcpBaseUrl}/mcp`, headers: { Authorization: `Bearer ${rt.token}` } }] : [],
           approval,
           env: { ...this.collab.workspaces.env(agentId), ...profile?.env, BATON_AGENT: name, BATON_AGENT_ID: agentId, BATON_PROJECT_ROOT: this.projectRoot },
           command: profile?.command,
@@ -280,13 +309,15 @@ export class Runtime {
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
       this.emit({ type: "error", data: { message: `failed to start ${name}: ${message}`, fatal: true } }, agentId)
-      this.emit({ type: "agent.exited", data: { code: null, reason: message } }, agentId)
       rt.closing = true
-      void this.collab.remove(agentId)
+      this.emit({ type: "agent.exited", data: { code: null, reason: message } }, agentId)
+      await this.onExited(rt, message)
       throw new Error(`failed to start ${name}: ${message}`)
     }
     if (this.state.agents.get(agentId)?.status === "starting") this.emit({ type: "agent.status", data: { status: "ready" } }, agentId)
     if (params.prompt) await this.promptAgent(agentId, params.prompt, { from: params.parentId ?? "user", expectResult: !!params.parentId })
+    // messages that arrived while the agent was starting
+    else queueMicrotask(() => this.flushInbox(rt))
     return info
   }
 
@@ -306,7 +337,11 @@ export class Runtime {
     }
     rt.lastEventAt = stored.ts
     if (rt.flagged === "stalled") rt.flagged = undefined
-    if (stored.type === "tool.call") this.loopCheck(rt, stored.data.title)
+    if (stored.type === "tool.call") {
+      this.loopCheck(rt, stored.data.title)
+      if (stored.data.status === "pending" || stored.data.status === "in_progress") rt.openTools.add(stored.data.toolCallId)
+    } else if (stored.type === "tool.update" && (stored.data.status === "completed" || stored.data.status === "failed"))
+      rt.openTools.delete(stored.data.toolCallId)
     switch (stored.type) {
       case "turn.started":
         rt.busy = true
@@ -327,6 +362,7 @@ export class Runtime {
       case "turn.completed":
       case "turn.interrupted":
         rt.busy = false
+        rt.openTools.clear()
         this.reportResult(rt, stored.type === "turn.interrupted" ? "interrupted" : stored.data.stopReason === "error" ? "failed" : "ok")
         queueMicrotask(() => this.flushInbox(rt))
         break
@@ -347,12 +383,36 @@ export class Runtime {
         break
       case "agent.exited":
         rt.closing = true
-        rt.busy = false
-        for (const w of rt.waiters) w()
-        this.policy.forgetAgent(agentId)
-        break
+        this.collab.onEvent(rt, stored)
+        void this.onExited(rt, stored.data.reason ?? (stored.data.code ? `exit code ${stored.data.code}` : "exited"))
+        return
     }
     this.collab.onEvent(rt, stored)
+  }
+
+  /**
+   * Everything that has to happen once an agent is gone — crashed, killed or failed to start:
+   * dispatchers get a failed result (so wait_for_results returns), its task fails, pending
+   * asks resolve, long-polls wake, and its workspace + leases are released.
+   */
+  private onExited(rt: AgentRuntime, reason: string): Promise<void> {
+    rt.exitHandled ??= this.handleExit(rt, reason)
+    return rt.exitHandled
+  }
+
+  private async handleExit(rt: AgentRuntime, reason: string): Promise<void> {
+    rt.closing = true
+    const wasBusy = rt.busy
+    rt.busy = false
+    if (rt.flushTimer) clearTimeout(rt.flushTimer)
+    for (const w of [...rt.waiters]) w()
+    this.policy.forgetAgent(rt.info.agentId)
+    for (const [id, ask] of this.asks) if (ask.agentId === rt.info.agentId) void this.resolvePermission(rt.info.agentId, id, "no", "cancelled")
+    if (wasBusy || rt.resultTo.size) {
+      if (!rt.lastAssistantText.trim()) rt.lastAssistantText = `(${rt.info.name} exited: ${reason})`
+      this.reportResult(rt, "failed")
+    } else this.collab.onResult(rt, "failed")
+    if (!this.closed) await this.collab.remove(rt.info.agentId).catch(() => {})
   }
 
   private authHinted = new Set<string>()
@@ -379,6 +439,8 @@ export class Runtime {
   async promptAgent(agentId: string, text: string, opts: { from?: string; delivery?: Delivery; expectResult?: boolean } = {}): Promise<void> {
     const rt = this.agents.get(agentId)
     if (!rt?.session || rt.closing) throw new Error(`agent ${agentId} is not running`)
+    if ((this.runStopped || rt.budgetStopped) && opts.from !== "user")
+      throw new Error(`budget exceeded — ${rt.info.name} gets no new work until the budget is raised (budget.run_usd / budget.per_agent_usd)`)
     const fromAgent = opts.from ? this.agents.get(opts.from) : undefined
     const dispatcher = !!fromAgent && (fromAgent.info.isOrchestrator || rt.info.parentId === fromAgent.info.agentId)
     if (fromAgent && (opts.expectResult ?? dispatcher)) rt.resultTo.add(fromAgent.info.agentId)
@@ -408,13 +470,15 @@ export class Runtime {
       await Promise.race([rt.session?.close(), new Promise((r) => setTimeout(r, 5000))])
     } catch {}
     if (this.state.agents.get(agentId)?.status !== "exited") this.emit({ type: "agent.exited", data: { code: 0, reason: "killed" } }, agentId)
-    await this.collab.remove(agentId)
+    await this.onExited(rt, "killed")
   }
 
   rename(agentId: string, name?: string, label?: string) {
     const rt = this.agents.get(agentId)
     if (!rt) return
-    if (name) rt.info.name = this.allocateName(rt.info.adapter, name)
+    // the orchestrator keeps its address; renaming to the current name is a no-op
+    if (name?.trim() && !rt.info.isOrchestrator && name.trim().toLowerCase() !== rt.info.name.toLowerCase())
+      rt.info.name = this.allocateName(rt.info.adapter, name, rt)
     if (label !== undefined) rt.info.label = label
     this.emit({ type: "agent.updated", data: { name: rt.info.name, label: rt.info.label } }, agentId)
   }
@@ -426,7 +490,12 @@ export class Runtime {
       if (o) return o
     }
     const v = this.state.findAgent(clean)
-    return v ? this.agents.get(v.agentId) : undefined
+    const hit = v ? this.agents.get(v.agentId) : undefined
+    if (hit && !hit.closing) return hit
+    // a live agent may have reused the name of an exited one
+    const lower = clean.toLowerCase()
+    for (const a of this.agents.values()) if (!a.closing && a.info.name.toLowerCase() === lower) return a
+    return undefined
   }
 
   orchestrator(): AgentRuntime | undefined {
@@ -493,7 +562,7 @@ export class Runtime {
   }
 
   private deliver(rt: AgentRuntime, msg: InboxMessage, delivery: Delivery) {
-    if (!rt.session) {
+    if (!rt.session || rt.closing) {
       rt.inbox.push(msg)
       return
     }
@@ -507,32 +576,41 @@ export class Runtime {
     const from = msg.from
     // requests expect an answer; results/replies never trigger another result
     const expectResult = msg.kind === "request" ? true : msg.kind === "result" || msg.kind === "reply" ? false : undefined
+    // a failed prompt (agent died, budget stop, adapter error) keeps the message for later
+    const send = (via: Delivery | "prompt", d?: Delivery) =>
+      this.promptAgent(rt.info.agentId, text, { from, delivery: d, expectResult }).then(
+        () => this.markDelivered(msg.messageId, rt, via),
+        () => {
+          rt.inbox.push(msg)
+        },
+      )
     if (rt.busy) {
-      if (delivery === "interrupt") {
-        void this.promptAgent(rt.info.agentId, text, { from, delivery: "interrupt", expectResult }).then(() =>
-          this.markDelivered(msg.messageId, rt, "interrupt"),
-        )
-        return
-      }
-      if (delivery === "steer" && rt.caps.steer) {
-        void this.promptAgent(rt.info.agentId, text, { from, delivery: "steer", expectResult }).then(() => this.markDelivered(msg.messageId, rt, "steer"))
-        return
-      }
+      if (delivery === "interrupt") return void send("interrupt", "interrupt")
+      if (delivery === "steer" && rt.caps.steer) return void send("steer", "steer")
       rt.inbox.push(msg)
       return
     }
-    if (!this.allowAutoDelivery(rt)) {
+    if (this.runStopped || rt.budgetStopped || !this.allowAutoDelivery(rt)) {
       rt.inbox.push(msg)
       return
     }
-    void this.promptAgent(rt.info.agentId, text, { from, expectResult }).then(() => this.markDelivered(msg.messageId, rt, "prompt"))
+    void send("prompt")
   }
 
   private allowAutoDelivery(rt: AgentRuntime): boolean {
     const now = Date.now()
     rt.deliveries = rt.deliveries.filter((t) => now - t < 60_000)
     if (rt.deliveries.length >= MAX_AUTO_DELIVERIES_PER_MIN) {
-      this.emit({ type: "orch.note", data: { text: `${rt.info.name}: message rate limit hit — holding messages in inbox`, level: "warn" } }, rt.info.agentId)
+      if (!rt.flushTimer) {
+        this.emit({ type: "orch.note", data: { text: `${rt.info.name}: message rate limit hit — holding messages in inbox`, level: "warn" } }, rt.info.agentId)
+        // retry once the oldest delivery leaves the window
+        const wait = 60_000 - (now - (rt.deliveries[0] ?? now)) + 50
+        rt.flushTimer = setTimeout(() => {
+          rt.flushTimer = undefined
+          this.flushInbox(rt)
+        }, wait)
+        rt.flushTimer.unref?.()
+      }
       return false
     }
     rt.deliveries.push(now)
@@ -545,13 +623,25 @@ export class Runtime {
 
   private flushInbox(rt: AgentRuntime) {
     if (rt.busy || rt.closing || !rt.session || rt.inbox.length === 0 || rt.waiters.size > 0) return
+    if (this.runStopped || rt.budgetStopped) return
     if (!this.allowAutoDelivery(rt)) return
     const msgs = rt.inbox.splice(0)
     const only = msgs.length === 1 ? (msgs[0] as InboxMessage) : undefined
     const expectResult = only ? (only.kind === "request" ? true : only.kind === "result" || only.kind === "reply" ? false : undefined) : false
-    void this.promptAgent(rt.info.agentId, this.formatForAgent(msgs), { from: only?.from, expectResult }).then(() => {
-      for (const m of msgs) this.markDelivered(m.messageId, rt, "prompt")
-    })
+    // batched: every request in the batch still gets its answer routed back to its sender
+    if (!only)
+      for (const m of msgs) {
+        const sender = this.agents.get(m.from)
+        if (m.kind === "request" && sender && !sender.closing) rt.resultTo.add(sender.info.agentId)
+      }
+    void this.promptAgent(rt.info.agentId, this.formatForAgent(msgs), { from: only?.from, expectResult }).then(
+      () => {
+        for (const m of msgs) this.markDelivered(m.messageId, rt, "prompt")
+      },
+      () => {
+        rt.inbox.unshift(...msgs)
+      },
+    )
   }
 
   drainInbox(agentId: string): InboxMessage[] {
@@ -562,8 +652,12 @@ export class Runtime {
     return msgs
   }
 
-  /** Long-poll for inbox messages (used by wait_for_results / read_inbox). */
-  async waitInbox(agentId: string, timeoutMs: number, until?: (inbox: InboxMessage[]) => boolean): Promise<InboxMessage[]> {
+  /**
+   * Long-poll for inbox messages (used by wait_for_results / read_inbox). When `signal`
+   * aborts (the agent's MCP request went away) nothing is consumed: messages stay in the
+   * inbox and are delivered normally.
+   */
+  async waitInbox(agentId: string, timeoutMs: number, until?: (inbox: InboxMessage[]) => boolean, signal?: AbortSignal): Promise<InboxMessage[]> {
     const rt = this.agents.get(agentId)
     if (!rt) return []
     const ready = () => rt.inbox.length > 0 && (!until || until(rt.inbox))
@@ -572,13 +666,37 @@ export class Runtime {
       const w = () => {
         if (ready() || rt.closing) d.resolve()
       }
+      const onAbort = () => d.resolve()
       rt.waiters.add(w)
+      rt.blocked++
+      signal?.addEventListener("abort", onAbort, { once: true })
       const t = setTimeout(() => d.resolve(), timeoutMs)
+      if (signal?.aborted) d.resolve()
       await d.promise
       clearTimeout(t)
+      signal?.removeEventListener("abort", onAbort)
       rt.waiters.delete(w)
+      rt.blocked--
+    }
+    if (signal?.aborted) {
+      queueMicrotask(() => this.flushInbox(rt))
+      return []
     }
     return this.drainInbox(agentId)
+  }
+
+  /** Track a blocking tool call so the watchdog doesn't flag the agent as stalled. */
+  async whileBlocked<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
+    const rt = this.agents.get(agentId)
+    if (rt) rt.blocked++
+    try {
+      return await fn()
+    } finally {
+      if (rt) {
+        rt.blocked--
+        rt.lastEventAt = Date.now()
+      }
+    }
   }
 
   private reportResult(rt: AgentRuntime, outcome: "ok" | "failed" | "interrupted") {
@@ -627,9 +745,10 @@ export class Runtime {
     const stall = this.config.watchdog.stall_s * 1000
     if (stall <= 0) return
     for (const rt of this.agents.values()) {
-      if (!rt.busy || rt.closing || rt.flagged === "stalled") continue
+      if (!rt.busy || rt.closing || rt.flagged === "stalled" || rt.blocked > 0) continue
       if (this.state.agents.get(rt.info.agentId)?.status === "awaiting_approval") continue
-      if (now - rt.lastEventAt < stall) continue
+      // a running command (build, test suite) is quiet but alive: give it 3× the patience
+      if (now - rt.lastEventAt < (rt.openTools.size > 0 ? stall * 3 : stall)) continue
       rt.flagged = "stalled"
       const mins = Math.round((now - rt.lastEventAt) / 60000)
       this.emit({ type: "agent.attention", data: { reason: "stalled", detail: `no activity for ${mins}m` } }, rt.info.agentId)
@@ -691,16 +810,22 @@ export class Runtime {
     queueMicrotask(() => void this.resolvePermission(rt.info.agentId, requestId, opt?.optionId ?? null, "policy"))
   }
 
-  private asks = new Map<string, (ok: boolean) => void>()
+  private asks = new Map<string, { agentId: string; resolve: (ok: boolean) => void }>()
 
   /**
    * Ask the user a yes/no question on behalf of an agent (shows in the inbox like any approval,
    * but is never decided by the policy). Resolves false on deny or after `timeoutMs`.
    */
-  askUser(agentId: string, title: string, detail?: string, timeoutMs = 15 * 60_000): Promise<boolean> {
+  askUser(agentId: string, title: string, detail?: string, timeoutMs = 15 * 60_000, signal?: AbortSignal): Promise<boolean> {
     const requestId = newId("ask")
     const d = deferred<boolean>()
-    this.asks.set(requestId, d.resolve)
+    this.asks.set(requestId, { agentId, resolve: d.resolve })
+    const rt = this.agents.get(agentId)
+    if (rt) rt.blocked++
+    const onAbort = () => {
+      if (this.asks.has(requestId)) void this.resolvePermission(agentId, requestId, "no", "cancelled")
+    }
+    signal?.addEventListener("abort", onAbort, { once: true })
     this.emit(
       {
         type: "permission.requested",
@@ -721,7 +846,14 @@ export class Runtime {
       if (this.asks.has(requestId)) void this.resolvePermission(agentId, requestId, "no", "timeout")
     }, timeoutMs)
     t.unref?.()
-    return d.promise.finally(() => clearTimeout(t))
+    return d.promise.finally(() => {
+      clearTimeout(t)
+      signal?.removeEventListener("abort", onAbort)
+      if (rt) {
+        rt.blocked--
+        rt.lastEventAt = Date.now()
+      }
+    })
   }
 
   async resolvePermission(agentId: string, requestId: string, optionId: string | null, by: "user" | "policy" | "timeout" | "cancelled" = "user") {
@@ -729,7 +861,7 @@ export class Runtime {
     if (ask) {
       this.asks.delete(requestId)
       this.emit({ type: "permission.resolved", data: { requestId, optionId, kind: optionId === "yes" ? "allow_once" : "reject_once", by } }, agentId)
-      ask(optionId === "yes")
+      ask.resolve(optionId === "yes")
       return
     }
     const rt = this.agents.get(agentId)
@@ -760,8 +892,11 @@ export class Runtime {
     if (b.per_agent_usd && view) {
       const used = view.usage.costUsd
       if (used >= b.per_agent_usd) {
-        this.emit({ type: "budget.exceeded", data: { scope: rt.info.name, usedUsd: used, limitUsd: b.per_agent_usd } }, rt.info.agentId)
-        void this.interrupt(rt.info.agentId)
+        if (!rt.budgetStopped) {
+          rt.budgetStopped = true
+          this.emit({ type: "budget.exceeded", data: { scope: rt.info.name, usedUsd: used, limitUsd: b.per_agent_usd } }, rt.info.agentId)
+          if (rt.busy) void this.interrupt(rt.info.agentId).catch(() => {})
+        }
       } else if (!rt.budgetWarned && used >= b.per_agent_usd * b.warn_at) {
         rt.budgetWarned = true
         this.emit({ type: "budget.warn", data: { scope: rt.info.name, usedUsd: used, limitUsd: b.per_agent_usd } }, rt.info.agentId)
@@ -770,12 +905,32 @@ export class Runtime {
     if (b.run_usd) {
       const used = this.state.totals.costUsd
       if (used >= b.run_usd) {
-        this.emit({ type: "budget.exceeded", data: { scope: "run", usedUsd: used, limitUsd: b.run_usd } })
-        for (const a of this.agents.values()) if (a.busy) void this.interrupt(a.info.agentId)
+        if (!this.runStopped) {
+          this.runStopped = true
+          this.emit({ type: "budget.exceeded", data: { scope: "run", usedUsd: used, limitUsd: b.run_usd } })
+          for (const a of this.agents.values()) if (a.busy) void this.interrupt(a.info.agentId).catch(() => {})
+        }
       } else if (!this.runWarned && used >= b.run_usd * b.warn_at) {
         this.runWarned = true
         this.emit({ type: "budget.warn", data: { scope: "run", usedUsd: used, limitUsd: b.run_usd } })
       }
+    }
+  }
+
+  /** A raised (or removed) budget lifts the stop; held messages flow again. */
+  private recheckBudgetStops() {
+    const b = this.config.budget
+    if (this.runStopped && (!b.run_usd || this.state.totals.costUsd < b.run_usd)) {
+      this.runStopped = false
+      this.runWarned = false
+    }
+    for (const rt of this.agents.values()) {
+      const used = this.state.agents.get(rt.info.agentId)?.usage.costUsd ?? 0
+      if (rt.budgetStopped && (!b.per_agent_usd || used < b.per_agent_usd)) {
+        rt.budgetStopped = false
+        rt.budgetWarned = false
+      }
+      if (!this.runStopped && !rt.budgetStopped) queueMicrotask(() => this.flushInbox(rt))
     }
   }
 
@@ -784,6 +939,7 @@ export class Runtime {
     this.config = next
     this.policy.configure(next.policy.preset, next.policy.rules)
     this.collab.workspaces.configure(next.workspace)
+    this.recheckBudgetStops()
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
     this.heartbeatTimer = undefined
     if (next.bus.heartbeat_s > 0) {

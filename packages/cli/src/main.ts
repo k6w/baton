@@ -11,16 +11,16 @@
  *   baton ps | stop        daemon status / stop the daemon (and all agents)
  *   baton config …         get <key> | explain <key> | path | schema
  *   baton theme …          list | set <name>
- *   baton trust            allow this project's plugins to run (--revoke to undo)
+ *   baton trust            review + allow this project's commands/plugins (--revoke to undo)
  *   baton history          past runs of this project (resume them from the TUI: ctrl+r)
  *   baton export <run>     a run as Markdown (--format jsonl for raw events)
  *   baton daemon           run the daemon in the foreground (normally started automatically)
  */
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { isTrusted, projectPluginSpecs, runDaemonProcess, socketPathFor, startDaemon, trustProject } from "@batonsh/daemon"
-import { BatonConfig, configDir, configJsonSchema, findProjectRoot, getPath, loadConfig, projectPaths } from "@batonsh/kernel"
+import { runDaemonProcess, socketPathFor, startDaemon } from "@batonsh/daemon"
+import { BatonConfig, configDir, configJsonSchema, findProjectRoot, getPath, loadConfig, projectPaths, revokeTrust, trustEntries } from "@batonsh/kernel"
 import { BatonClient, connect, discoverSocket } from "@batonsh/sdk"
 import { listThemes, loadTheme } from "@batonsh/themes"
 import { runHeadless } from "./headless.ts"
@@ -50,7 +50,7 @@ function parseArgs(argv: string[]): Args {
       else if (
         argv[i + 1] &&
         !argv[i + 1]!.startsWith("-") &&
-        ["root", "theme", "layout", "timeout", "approve", "workers", "speed", "orchestrator"].includes(k)
+        ["root", "theme", "layout", "timeout", "approve", "workers", "speed", "orchestrator", "format"].includes(k)
       )
         out.flags[k] = argv[++i] as string
       else out.flags[k] = true
@@ -102,9 +102,11 @@ async function cmdStart(args: Args) {
   }
   const client = await connect({ cwd: root, daemonCommand: (r) => [...selfCommand(), "daemon", "--root", r], clientName: "tui" })
   const task = args._.slice(0).join(" ").trim()
-  if (task) void client.submit(task)
+  let submitError: unknown
+  if (task) client.submit(task).catch((e) => (submitError = e))
   await startTui(client, root, args.flags)
-  process.exit(0)
+  if (submitError) console.error(c.red(`baton: the task wasn't sent: ${submitError instanceof Error ? submitError.message : submitError}`))
+  process.exit(submitError ? 1 : 0)
 }
 
 async function cmdDemo(args: Args) {
@@ -148,13 +150,19 @@ async function cmdRun(args: Args) {
     console.error('usage: baton run "<task>" [--json] [--approve all|none] [--timeout 3600]')
     process.exit(2)
   }
+  const approve = args.flags.approve ?? "ask"
+  if (approve !== "ask" && approve !== "all" && approve !== "none") {
+    console.error(`baton run: --approve must be ask, all or none (got ${JSON.stringify(approve)})`)
+    process.exit(2)
+  }
   const root = findProjectRoot(process.cwd())
-  if (!isInitialized(root)) await initProject({ root, yes: true, quiet: !!args.flags.json })
+  // headless never creates a git repo on its own — that needs -y
+  if (!isInitialized(root)) await initProject({ root, yes: true, gitInit: !!args.flags.yes, quiet: !!args.flags.json })
   const client = await connect({ cwd: root, daemonCommand: (r) => [...selfCommand(), "daemon", "--root", r], clientName: "cli" })
   const code = await runHeadless(client, task, {
     json: !!args.flags.json,
     timeoutS: Number(args.flags.timeout) || undefined,
-    approve: (args.flags.approve as "all" | "none" | undefined) ?? "ask",
+    approve,
   })
   client.close()
   process.exit(code)
@@ -192,6 +200,8 @@ async function cmdDoctor() {
   for (const l of loaded.layers) ok(`${l.name}${l.path ? ` ${c.dim(l.path)}` : ""}`)
   if (!isInitialized(root)) warn("project not set up yet — run `baton` or `baton init`")
   for (const e of loaded.errors) bad(e)
+  if (loaded.untrusted.length)
+    warn(`${loaded.untrusted.length} project setting(s) held back until trusted: ${loaded.untrusted.map((e) => e.path).join(", ")} — run \`baton trust\``)
   console.log(c.bold("\nDaemon"))
   const sock = discoverSocket(root)
   if (existsSync(sock)) {
@@ -257,11 +267,21 @@ async function cmdConfig(args: Args) {
     const v = getPath(loaded.config, key)
     const src = Object.entries(loaded.provenance).filter(([k]) => k === key || k.startsWith(`${key}.`))
     console.log(`${c.bold(key)} = ${JSON.stringify(v)}`)
+    for (const e of loaded.untrusted.filter((u) => u.path === key || u.path.startsWith(`${key}.`) || key.startsWith(`${u.path}.`)))
+      console.log(c.yellow(`  ${e.path} = ${JSON.stringify(e.value)} is held back until \`baton trust\``))
     if (src.length === 0) console.log(c.dim("  (built-in default)"))
     for (const [k, layer] of src) {
       const l = loaded.layers.find((x) => x.name === layer)
       console.log(`  ${k} ← ${c.bold(layer)}${l?.path ? c.dim(` ${l.path}`) : ""}`)
     }
+  } else if (sub === "reload") {
+    const sock = discoverSocket(root)
+    if (!existsSync(sock)) return console.log(c.dim("no daemon running — the config applies when it starts"))
+    const cl = await BatonClient.open(sock, "cli")
+    const { errors } = await cl.call("config.reload", {})
+    cl.close()
+    for (const e of errors) console.log(c.yellow(e))
+    if (!errors.length) console.log(c.green("reloaded"))
   } else if (sub === "schema") {
     console.log(JSON.stringify(configJsonSchema(), null, 2))
   } else if (sub === "defaults") {
@@ -293,18 +313,26 @@ async function cmdTheme(args: Args) {
 
 async function cmdTrust(args: Args) {
   const root = findProjectRoot(process.cwd())
-  const loaded = loadConfig({ projectRoot: root })
-  const specs = projectPluginSpecs(loaded.layers)
   if (args.flags.revoke) {
-    trustProject(root, specs, true)
-    return console.log(`revoked trust for ${root}`)
+    revokeTrust(root)
+    return console.log(`revoked trust for ${root} — commands, plugins and widened permissions from its config are held back again`)
   }
-  if (specs.length === 0) return console.log(c.dim("this project declares no plugins — nothing to trust"))
-  console.log(`${c.bold("Project plugins")} ${c.dim(root)}`)
-  for (const s of specs) console.log(`  ${c.yellow("•")} ${s}`)
-  if (isTrusted(root, specs)) return console.log(c.green("already trusted"))
-  trustProject(root, specs)
-  console.log(c.green("trusted — they load the next time the daemon starts (baton stop && baton)"))
+  const { untrusted } = loadConfig({ projectRoot: root })
+  if (untrusted.length === 0) return console.log(c.green("nothing to trust — every project setting already applies"))
+  console.log(`${c.bold("This project's config wants to")} ${c.dim(root)}`)
+  for (const e of untrusted) {
+    const v = typeof e.value === "string" ? e.value : JSON.stringify(e.value)
+    console.log(`  ${c.yellow("•")} ${e.path.padEnd(28)} ${v.length > 90 ? `${v.slice(0, 89)}…` : v}`)
+  }
+  console.log(c.dim("These run commands, load code or widen agent permissions. Only trust repositories you'd run `make` in."))
+  if (!args.flags.yes && process.stdin.isTTY) {
+    process.stdout.write("Trust these settings? [y/N] ")
+    const answer = await new Promise<string>((res) => process.stdin.once("data", (d) => res(String(d).trim().toLowerCase())))
+    process.stdin.pause()
+    if (answer !== "y" && answer !== "yes") return console.log("not trusted")
+  }
+  trustEntries(root, untrusted)
+  console.log(c.green("trusted — run `baton config reload` (or restart: baton stop && baton) to apply; plugins load on the next daemon start"))
 }
 
 async function daemonClient(): Promise<BatonClient> {
@@ -348,7 +376,7 @@ ${b("Commands")}
   baton demo [task]     simulated agents                   baton agents          installed agent CLIs
   baton run "<task>"    headless run (--json)              baton history         past runs (resume: ctrl+r)
   baton init            re-run project setup               baton export <run>    run as Markdown (--format jsonl)
-  baton ps | stop       daemon status / stop everything    baton trust           allow project plugins
+  baton ps | stop       daemon status / stop everything    baton trust           allow project commands
   baton config get|explain|path|schema|defaults            baton theme list|set <name>
 
 ${b("Flags")}

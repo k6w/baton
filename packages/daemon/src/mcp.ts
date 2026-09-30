@@ -23,7 +23,7 @@ async function guard(fn: () => Promise<ToolResult> | ToolResult): Promise<ToolRe
   }
 }
 
-export function buildMcpServer(rt: Runtime, caller: AgentRuntime): McpServer {
+export function buildMcpServer(rt: Runtime, caller: AgentRuntime, signal?: AbortSignal): McpServer {
   const server = new McpServer({ name: "baton", version: "0.1.0" }, { instructions: "Baton multi-agent coordination tools." })
   const me = caller.info.agentId
   const isLead = !!caller.info.isOrchestrator
@@ -54,7 +54,7 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime): McpServer {
     },
     (a) =>
       guard(async () => {
-        const msgs = a.wait_s ? await rt.waitInbox(me, a.wait_s * 1000) : rt.drainInbox(me)
+        const msgs = a.wait_s ? await rt.waitInbox(me, a.wait_s * 1000, undefined, signal) : rt.drainInbox(me)
         if (msgs.length === 0) return ok("(inbox empty)")
         return ok(msgs.map((m) => `from ${m.fromName} [${m.kind}]:\n${m.body}`).join("\n\n---\n\n"))
       }),
@@ -184,6 +184,8 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime): McpServer {
               me,
               `start ${n} more ${a.adapter} agent${n === 1 ? "" : "s"} (${live + n} total)?`,
               `${a.reason ?? "no reason given"}${a.task ? `\ntask: ${a.task.slice(0, 300)}` : ""}`,
+              undefined,
+              signal,
             )
             if (!ok) return fail(`the user declined starting more agents (${live} running). Reuse existing agents (send_message) or do it with fewer.`)
           }
@@ -304,7 +306,7 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime): McpServer {
       },
       (a) =>
         guard(async () => {
-          const r = await rt.collab.plan(a.tasks)
+          const r = await rt.whileBlocked(me, () => rt.collab.plan(a.tasks, undefined, signal))
           if (!r.approved) return fail(`plan rejected by the user${r.notes ? `: ${r.notes}` : ""} — revise it`)
           return ok(`plan recorded (${r.ids.join(", ")})${r.notes ? `; user notes: ${r.notes}` : ""}`)
         }),
@@ -348,10 +350,15 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime): McpServer {
                 .join("\n\n") || "(nothing pending)",
             )
           const seen = new Set<string>()
-          const msgs = await rt.waitInbox(me, (a.timeout_s ?? 600) * 1000, (inbox) => {
-            for (const m of inbox) if (m.kind === "result") seen.add(m.fromName.toLowerCase())
-            return [...wanted].every((w) => seen.has(w))
-          })
+          const msgs = await rt.waitInbox(
+            me,
+            (a.timeout_s ?? 600) * 1000,
+            (inbox) => {
+              for (const m of inbox) if (m.kind === "result") seen.add(m.fromName.toLowerCase())
+              return [...wanted].every((w) => seen.has(w))
+            },
+            signal,
+          )
           const pending = [...wanted].filter((w) => !msgs.some((m) => m.kind === "result" && m.fromName.toLowerCase() === w))
           const text = msgs.map((m) => `from ${m.fromName} [${m.kind}]:\n${m.body}`).join("\n\n---\n\n")
           return ok(`${text || "(no results yet)"}${pending.length ? `\n\nstill working: ${pending.join(", ")}` : ""}`)
@@ -406,12 +413,15 @@ export function startMcpServer(rt: Runtime, port = 0): McpHttpServer {
     idleTimeout: 0,
     async fetch(req) {
       const url = new URL(req.url)
-      const m = /^\/mcp\/([\w-]+)\/?$/.exec(url.pathname)
+      // identity: the per-agent token, as a bearer header (preferred — never visible in `ps`) or in the path
+      const m = /^\/mcp(?:\/([\w-]+))?\/?$/.exec(url.pathname)
       if (!m) return new Response("not found", { status: 404 })
-      const caller = [...rt.agents.values()].find((a) => a.token === m[1])
+      const bearer = /^Bearer\s+(\S+)$/i.exec(req.headers.get("authorization") ?? "")?.[1]
+      const token = bearer ?? m[1]
+      const caller = token ? [...rt.agents.values()].find((a) => a.token === token) : undefined
       if (!caller || caller.closing) return new Response("unknown agent token", { status: 401 })
       if (req.method !== "POST") return new Response(null, { status: 405, headers: { Allow: "POST" } })
-      const mcp = buildMcpServer(rt, caller)
+      const mcp = buildMcpServer(rt, caller, req.signal)
       const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
       await mcp.connect(transport)
       try {

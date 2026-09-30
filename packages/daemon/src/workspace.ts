@@ -11,16 +11,37 @@
 
 import { createHash } from "node:crypto"
 import { copyFileSync, existsSync, lstatSync, mkdirSync, rmdirSync, symlinkSync } from "node:fs"
-import { basename, dirname, join } from "node:path"
+import { basename, dirname, join, resolve } from "node:path"
 import type { BatonConfig } from "@batonsh/kernel"
 import { stateDir } from "@batonsh/kernel"
-import { applyPatch, commitTree, diffPatch, diffStat, type FileStat, git, headCommit, isGitRepo, mergeTree, snapshotCommit, snapshotTree } from "./git.ts"
+import {
+  applyPatch,
+  branchExists,
+  commitTree,
+  diffPatch,
+  diffStat,
+  type FileStat,
+  git,
+  headCommit,
+  isAncestor,
+  isGitRepo,
+  mergeBase,
+  mergeTree,
+  repoPrefix,
+  repoPrefixSync,
+  snapshotCommit,
+  snapshotTree,
+  treeOf,
+} from "./git.ts"
 
 export interface Workspace {
   agentId: string
   agentName: string
   mode: "worktree" | "shared"
+  /** The agent's working directory: the worktree root plus the project's prefix inside its repo. */
   path: string
+  /** Root of the git worktree (== path unless the project is a subdirectory of its repo). */
+  root?: string
   branch?: string
   /** Commit the agent's work is measured against (moves forward after each merge/rebase). */
   base?: string
@@ -30,6 +51,8 @@ export interface Workspace {
   merged: boolean
   /** Latest snapshot commit of the worktree (for conflict checks). */
   snapshot?: string
+  /** Git tree hash of the latest snapshot (set by refresh). */
+  tree?: string
   /** Ports reserved for this worktree. */
   ports?: number[]
 }
@@ -50,12 +73,19 @@ export function worktreeRoot(projectRoot: string, cfg: Cfg): string {
   return join(stateDir(), "worktrees", `${basename(projectRoot)}-${h}`)
 }
 
+export interface MergeOptions {
+  onStage?: (s: "verifying") => void
+  /** Called inside the merge queue right after the refresh; a returned string blocks the merge with that detail. */
+  gate?: (ws: Workspace) => string | undefined
+}
+
 export class WorkspaceManager {
   readonly byAgent = new Map<string, Workspace>()
   private queue: Promise<unknown> = Promise.resolve()
   /** Landed merges, newest last (for undo). */
   private history: { agentId: string; agentName: string; before: string; after: string; prevBase?: string; files: FileStat[] }[] = []
   private repo: boolean | undefined
+  private loc: { prefix: string; top: string } | undefined
 
   constructor(
     readonly projectRoot: string,
@@ -95,6 +125,15 @@ export class WorkspaceManager {
     return this.repo
   }
 
+  /** The project's position inside its repository (it may be a subdirectory, e.g. in a monorepo). */
+  private async location(): Promise<{ prefix: string; top: string }> {
+    if (!this.loc) {
+      const { prefix, cdup } = await repoPrefix(this.projectRoot)
+      this.loc = { prefix, top: resolve(this.projectRoot, cdup || ".") }
+    }
+    return this.loc
+  }
+
   /** Create the agent's workspace. Falls back to a shared workspace outside git repos. */
   async create(agentId: string, agentName: string, isolation: "worktree" | "shared"): Promise<Workspace> {
     if (isolation === "shared" || !(await this.isRepo())) {
@@ -105,13 +144,20 @@ export class WorkspaceManager {
     const root = worktreeRoot(this.projectRoot, this.cfg)
     mkdirSync(root, { recursive: true })
     const slug = agentName.replace(/[^\w.-]+/g, "-")
-    let path = join(root, slug)
-    for (let i = 2; existsSync(path); i++) path = join(root, `${slug}-${i}`)
+    let wtRoot = join(root, slug)
+    for (let i = 2; existsSync(wtRoot); i++) wtRoot = join(root, `${slug}-${i}`)
+    // the name may be reused (agent killed and respawned, resumed run): pick a free branch too
+    const branchStem = `baton/${this.runId.slice(-6)}/${slug}`
+    let branch = branchStem
+    for (let i = 2; await branchExists(this.projectRoot, branch); i++) branch = `${branchStem}-${i}`
     const exclude = this.cfg.link.filter((l) => existsSync(join(this.projectRoot, l)))
     // base = the project as it is now (committed + uncommitted), so agents start from what you see
     const base = await snapshotCommit(this.projectRoot, `baton base for ${agentName}`, undefined, exclude)
-    const branch = `baton/${this.runId.slice(-6)}/${slug}`
-    await git(this.projectRoot, ["worktree", "add", "-q", "-b", branch, path, base])
+    await git(this.projectRoot, ["worktree", "add", "-q", "-b", branch, wtRoot, base])
+    // the agent works in the project's subdirectory of the worktree (monorepo package etc.)
+    const { prefix } = await this.location()
+    const path = prefix ? join(wtRoot, prefix.replace(/\/+$/, "")) : wtRoot
+    mkdirSync(path, { recursive: true })
     for (const l of exclude) {
       const target = join(path, l)
       if (!existsSync(target)) symlinkSync(join(this.projectRoot, l), target, lstatSync(join(this.projectRoot, l)).isDirectory() ? "dir" : "file")
@@ -123,18 +169,38 @@ export class WorkspaceManager {
         exclude.push(f)
       }
     }
-    const ws: Workspace = { agentId, agentName, mode: "worktree", path, branch, base, exclude, files: [], merged: false, ports: this.allocatePorts() }
+    const ws: Workspace = {
+      agentId,
+      agentName,
+      mode: "worktree",
+      path,
+      root: wtRoot,
+      branch,
+      base,
+      exclude,
+      files: [],
+      merged: false,
+      ports: this.allocatePorts(),
+    }
     this.byAgent.set(agentId, ws)
     if (this.cfg.setup) {
-      const r = await runShell(this.cfg.setup, path, 600_000)
-      if (r.code !== 0) throw new Error(`workspace setup \`${this.cfg.setup}\` failed: ${tail(r.output)}`)
+      const r = await runShell(this.cfg.setup, path, 600_000).catch((e) => ({ code: -1, output: String(e) }))
+      if (r.code !== 0) {
+        // don't leak the worktree/branch of a workspace nobody will use
+        this.byAgent.delete(agentId)
+        await git(this.projectRoot, ["worktree", "remove", "--force", wtRoot], { allowFail: true })
+        await git(this.projectRoot, ["branch", "-D", branch], { allowFail: true })
+        throw new Error(`workspace setup \`${this.cfg.setup}\` failed: ${tail(r.output)}`)
+      }
     }
     return ws
   }
 
   adopt(agentId: string, agentName: string, path: string, branch?: string, base?: string): Workspace {
     const exclude = [...this.cfg.link, ...this.cfg.copy].filter((l) => existsSync(join(path, l)))
-    const ws: Workspace = { agentId, agentName, mode: "worktree", path, branch, base, exclude, files: [], merged: false, ports: this.allocatePorts() }
+    const loc = existsSync(path) ? repoPrefixSync(path) : undefined
+    const root = loc?.cdup ? resolve(path, loc.cdup) : path
+    const ws: Workspace = { agentId, agentName, mode: "worktree", path, root, branch, base, exclude, files: [], merged: false, ports: this.allocatePorts() }
     this.byAgent.set(agentId, ws)
     return ws
   }
@@ -146,6 +212,7 @@ export class WorkspaceManager {
     const tree = await snapshotTree(ws.path, ws.exclude)
     ws.files = await diffStat(ws.path, ws.base, tree)
     ws.snapshot = await commitTree(ws.path, tree, [ws.base], `baton snapshot ${ws.agentName}`)
+    ws.tree = tree
     if (ws.files.length) ws.merged = false
     return ws
   }
@@ -160,45 +227,68 @@ export class WorkspaceManager {
       if (other.agentId === agentId || other.mode !== "worktree" || !other.snapshot || other.merged) continue
       const overlap = other.files.map((f) => f.path).filter((p) => mine.has(p))
       if (!overlap.length) continue
-      // both branched from (possibly different) project snapshots: use my base as the merge base
-      const r = await mergeTree(this.projectRoot, me.base, me.snapshot, other.snapshot).catch(() => undefined)
+      const base = await this.pairBase(me, other)
+      const r = await mergeTree(this.projectRoot, base, me.snapshot, other.snapshot).catch(() => undefined)
       if (r && !r.clean) out.push({ with: other.agentId, files: r.conflicts.length ? r.conflicts : overlap })
     }
     return out
   }
 
+  /**
+   * Merge base for predicting conflicts between two worktrees that may have branched from
+   * different project snapshots (or moved forward after merges).
+   */
+  private async pairBase(me: Workspace, other: Workspace): Promise<string> {
+    const mine = me.base as string
+    if (!other.base || other.base === mine || (await treeOf(this.projectRoot, mine)) === (await treeOf(this.projectRoot, other.base))) return mine
+    // one base contains the other: the older one is the common ancestor
+    if (await isAncestor(this.projectRoot, mine, other.base)) return mine
+    if (await isAncestor(this.projectRoot, other.base, mine)) return other.base
+    return (await mergeBase(this.projectRoot, me.snapshot as string, other.snapshot as string)) ?? mine
+  }
+
   async patch(agentId: string, paths: string[] = []): Promise<string> {
     const ws = await this.refresh(agentId)
     if (!ws?.base || !ws.snapshot) return ""
-    return diffPatch(ws.path, ws.base, ws.snapshot, paths)
+    return diffPatch(ws.path, ws.base, ws.snapshot, paths, true)
   }
 
   /** Queue a merge of the agent's changes into the project working tree. */
-  merge(agentId: string, onStage?: (s: "verifying") => void): Promise<MergeOutcome> {
+  merge(agentId: string, opts: MergeOptions = {}): Promise<MergeOutcome> {
     const run = async (): Promise<MergeOutcome> => {
       const ws = await this.refresh(agentId)
       if (!ws) return { status: "failed", files: [], detail: "no workspace" }
-      if (ws.mode !== "worktree" || !ws.base || !ws.snapshot)
+      if (ws.mode !== "worktree" || !ws.base || !ws.snapshot || !ws.tree)
         return { status: "failed", files: [], detail: "agent works directly in the project (shared workspace) — nothing to merge" }
       if (ws.files.length === 0) return { status: "empty", files: [] }
+      const blocked = opts.gate?.(ws)
+      if (blocked) return { status: "failed", files: ws.files, detail: blocked }
+      // exactly this tree is what gets verified and merged
+      const tree = ws.tree
       if (this.cfg.verify) {
-        onStage?.("verifying")
+        opts.onStage?.("verifying")
         const r = await runShell(this.cfg.verify, ws.path, 900_000)
         if (r.code !== 0) return { status: "failed", files: ws.files, detail: `verify \`${this.cfg.verify}\` failed:\n${tail(r.output)}` }
+        const after = await snapshotTree(ws.path, ws.exclude)
+        if (after !== tree) return { status: "failed", files: ws.files, detail: "workspace changed during verify (agent still editing?); retry the merge" }
       }
+      const wtRoot = ws.root ?? ws.path
+      const { top } = await this.location()
       // commit the agent's work on its branch (in the worktree)
-      const commit = await commitTree(ws.path, await snapshotTree(ws.path, ws.exclude), [(await headCommit(ws.path)) ?? ws.base], `baton: ${ws.agentName}`)
-      await git(ws.path, ["update-ref", `refs/heads/${ws.branch}`, commit])
-      await git(ws.path, ["reset", "-q", "--soft", commit]) // keep the worktree's HEAD on the new commit
+      const commit = await commitTree(ws.path, tree, [(await headCommit(ws.path)) ?? ws.base], `baton: ${ws.agentName}`)
+      if (ws.branch) await git(ws.path, ["update-ref", `refs/heads/${ws.branch}`, commit])
+      // move the worktree's HEAD *and index* to the new commit; the working tree is untouched
+      await git(wtRoot, ["reset", "-q", commit])
       // merge against the project *as it is now*
       const current = await snapshotCommit(this.projectRoot, "baton merge target", undefined, this.cfg.link)
       const merged = await mergeTree(this.projectRoot, ws.base, current, commit)
       if (!merged.clean || !merged.tree)
         return { status: "conflict", files: ws.files, conflicts: merged.conflicts, detail: `conflicts in ${merged.conflicts.join(", ")}` }
+      // patch paths are relative to the repository top level, so apply it there
       const patch = await diffPatch(this.projectRoot, current, merged.tree)
-      const check = await applyPatch(this.projectRoot, patch, true)
+      const check = await applyPatch(top, patch, true)
       if (check.code !== 0) return { status: "failed", files: ws.files, detail: `project changed while merging; retry (${check.stderr.trim()})` }
-      const applied = await applyPatch(this.projectRoot, patch)
+      const applied = await applyPatch(top, patch)
       if (applied.code !== 0) return { status: "failed", files: ws.files, detail: applied.stderr.trim() }
       const files = ws.files
       const afterCommit = await commitTree(this.projectRoot, merged.tree, [current], `baton merged ${ws.agentName}`)
@@ -206,6 +296,7 @@ export class WorkspaceManager {
       ws.base = commit
       ws.files = []
       ws.snapshot = undefined
+      ws.tree = undefined
       ws.merged = true
       return { status: "merged", commit, files }
     }
@@ -232,7 +323,7 @@ export class WorkspaceManager {
           files: r.conflicts,
           detail: `files changed since the merge conflict with the undo: ${r.conflicts.join(", ")}`,
         }
-      const applied = await applyPatch(this.projectRoot, await diffPatch(this.projectRoot, now, r.tree))
+      const applied = await applyPatch((await this.location()).top, await diffPatch(this.projectRoot, now, r.tree))
       if (applied.code !== 0) return { ok: false, agentName: h.agentName, files: [], detail: applied.stderr.trim() }
       this.history.splice(idx, 1)
       const ws = this.byAgent.get(h.agentId)
@@ -256,7 +347,7 @@ export class WorkspaceManager {
     if (!r.tree) return { clean: false, conflicts: r.conflicts }
     // write the merged tree (conflict markers included) into the worktree, new base = current project
     const patch = await diffPatch(ws.path, ws.snapshot, r.tree)
-    const applied = await applyPatch(ws.path, patch)
+    const applied = await applyPatch(ws.root ?? ws.path, patch)
     if (applied.code !== 0) throw new Error(`sync failed: ${applied.stderr.trim()}`)
     ws.base = current
     await this.refresh(agentId)
@@ -269,18 +360,23 @@ export class WorkspaceManager {
     this.byAgent.delete(agentId)
     if (!ws || ws.mode !== "worktree") return { kept: false }
     let hasChanges = false
+    if (this.cfg.cleanup === "never") return { kept: true, reason: "cleanup = never" }
     try {
-      if (existsSync(ws.path) && ws.base) {
+      if (this.cfg.cleanup === "merged" && existsSync(ws.path) && ws.base) {
         const tree = await snapshotTree(ws.path, ws.exclude)
         hasChanges = (await diffStat(ws.path, ws.base, tree)).length > 0
       }
-    } catch {}
-    const keep = this.cfg.cleanup === "never" || (this.cfg.cleanup === "merged" && hasChanges)
-    if (keep) return { kept: true, reason: hasChanges ? `unmerged changes kept in ${ws.path} (branch ${ws.branch})` : "cleanup = never" }
-    await git(this.projectRoot, ["worktree", "remove", "--force", ws.path], { allowFail: true })
+    } catch (e) {
+      // can't tell whether there's unmerged work: never throw it away
+      const msg = e instanceof Error ? e.message : String(e)
+      return { kept: true, reason: `could not check ${ws.path} for unmerged changes, kept it (branch ${ws.branch}): ${msg}` }
+    }
+    if (this.cfg.cleanup === "merged" && hasChanges) return { kept: true, reason: `unmerged changes kept in ${ws.path} (branch ${ws.branch})` }
+    const wtRoot = ws.root ?? ws.path
+    await git(this.projectRoot, ["worktree", "remove", "--force", wtRoot], { allowFail: true })
     if (ws.branch) await git(this.projectRoot, ["branch", "-D", ws.branch], { allowFail: true })
     try {
-      rmdirSync(dirname(ws.path)) // only succeeds when no other worktrees remain
+      rmdirSync(dirname(wtRoot)) // only succeeds when no other worktrees remain
     } catch {}
     return { kept: false }
   }

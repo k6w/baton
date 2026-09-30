@@ -172,6 +172,137 @@ describe("WorkspaceManager", () => {
     expect((await wm.merge("a1")).status).toBe("merged")
     expect(readFileSync(join(d, "x.txt"), "utf8")).toBe("2\n")
   })
+  test("project in a subdirectory of its repo: agent cwd is the matching subdir, merges land in the project", async () => {
+    const top = mkdtempSync(join(tmpdir(), "baton-mono-"))
+    await git(top, ["init", "-q", "-b", "main"])
+    mkdirSync(join(top, "packages", "app"), { recursive: true })
+    writeFileSync(join(top, "root.txt"), "root\n")
+    writeFileSync(join(top, "packages", "app", "a.ts"), "export const a = 1\n")
+    await git(top, ["add", "-A"])
+    await git(top, ["commit", "-q", "-m", "init"])
+    const app = join(top, "packages", "app")
+    writeFileSync(join(app, "draft.ts"), "uncommitted\n")
+    const wm = new WorkspaceManager(app, cfg(), "run_x")
+    const ws = await wm.create("a1", "codex-1", "worktree")
+    expect(ws.root).toBeDefined()
+    expect(ws.path).toBe(join(ws.root as string, "packages", "app"))
+    expect(readFileSync(join(ws.path, "a.ts"), "utf8")).toBe("export const a = 1\n")
+    expect(readFileSync(join(ws.path, "draft.ts"), "utf8")).toBe("uncommitted\n")
+    writeFileSync(join(ws.path, "a.ts"), "export const a = 2\n")
+    writeFileSync(join(ws.path, "new file.ts"), "export {}\n")
+    const r = await wm.refresh("a1")
+    expect(r?.files.map((f) => f.path).sort()).toEqual(["a.ts", "new file.ts"])
+    const m = await wm.merge("a1")
+    expect(m.status).toBe("merged")
+    expect(readFileSync(join(app, "a.ts"), "utf8")).toBe("export const a = 2\n")
+    expect(readFileSync(join(app, "new file.ts"), "utf8")).toBe("export {}\n")
+    expect(existsSync(join(top, "a.ts"))).toBe(false)
+    expect(existsSync(join(top, "new file.ts"))).toBe(false)
+    // undo goes back to the project too
+    expect((await wm.undoMerge()).ok).toBe(true)
+    expect(readFileSync(join(app, "a.ts"), "utf8")).toBe("export const a = 1\n")
+    // removal removes the whole worktree, not just the subdir
+    await wm.merge("a1")
+    expect((await wm.remove("a1")).kept).toBe(false)
+    expect(existsSync(ws.root as string)).toBe(false)
+  })
+
+  test("reused agent names get a fresh branch instead of failing", async () => {
+    const wm = new WorkspaceManager(root, cfg({ cleanup: "never" }), "run_test123456")
+    const w1 = await wm.create("a1", "codex-1", "worktree")
+    await wm.remove("a1")
+    const w2 = await wm.create("a2", "codex-1", "worktree")
+    expect(w1.branch).toBe("baton/123456/codex-1")
+    expect(w2.branch).toBe("baton/123456/codex-1-2")
+    // a resumed run (new manager, same run id) as well
+    const wm2 = new WorkspaceManager(root, cfg(), "run_test123456")
+    expect((await wm2.create("a3", "codex-1", "worktree")).branch).toBe("baton/123456/codex-1-3")
+  })
+
+  test("failed setup cleans up the worktree and the branch", async () => {
+    const wm = new WorkspaceManager(root, cfg({ setup: "exit 3" }), "run_x")
+    await expect(wm.create("a1", "codex-1", "worktree")).rejects.toThrow("setup")
+    expect(wm.byAgent.has("a1")).toBe(false)
+    expect((await git(root, ["branch", "--list", "baton/*"])).stdout.trim()).toBe("")
+    expect((await git(root, ["worktree", "list"])).stdout.trim().split("\n").length).toBe(1)
+  })
+
+  test("paths with spaces, unicode and quotes are reported verbatim", async () => {
+    const wm = new WorkspaceManager(root, cfg(), "run_x")
+    const ws = await wm.create("a1", "codex-1", "worktree")
+    const names = ["with space.ts", "ünïcødé.ts", 'q"uote.ts', "tab\there.ts"]
+    for (const n of names) writeFileSync(join(ws.path, n), "x\n")
+    const r = await wm.refresh("a1")
+    expect(r?.files.map((f) => f.path).sort()).toEqual([...names].sort())
+    expect((await wm.merge("a1")).status).toBe("merged")
+    for (const n of names) expect(readFileSync(join(root, n), "utf8")).toBe("x\n")
+  })
+
+  test("edits made during verify are never merged unverified", async () => {
+    // verify passes, but sneaks in an extra edit (like an agent still working)
+    const wm = new WorkspaceManager(root, cfg({ verify: "echo late > late.txt" }), "run_x")
+    const ws = await wm.create("a1", "codex-1", "worktree")
+    writeFileSync(join(ws.path, "a.ts"), "export const a = 'v'\n")
+    const m = await wm.merge("a1")
+    expect(m.status).toBe("failed")
+    expect(m.detail).toContain("changed during verify")
+    expect(existsSync(join(root, "late.txt"))).toBe(false)
+    expect(readFileSync(join(root, "a.ts"), "utf8")).not.toContain("'v'")
+  })
+
+  test("after a merge the worktree index matches HEAD", async () => {
+    const wm = new WorkspaceManager(root, cfg(), "run_x")
+    const ws = await wm.create("a1", "codex-1", "worktree")
+    writeFileSync(join(ws.path, "a.ts"), "export const a = 'x'\n")
+    writeFileSync(join(ws.path, "n.ts"), "n\n")
+    expect((await wm.merge("a1")).status).toBe("merged")
+    expect((await git(ws.path, ["status", "--porcelain"])).stdout.trim()).toBe("")
+  })
+
+  test("remove keeps the worktree when it can't be inspected", async () => {
+    const wm = new WorkspaceManager(root, cfg(), "run_x")
+    const ws = await wm.create("a1", "codex-1", "worktree")
+    writeFileSync(join(ws.path, "x.txt"), "work\n")
+    ws.base = "0000000000000000000000000000000000000bad" // snapshot/diff will fail
+    const r = await wm.remove("a1")
+    expect(r.kept).toBe(true)
+    expect(r.reason).toContain("could not check")
+    expect(existsSync(join(ws.path, "x.txt"))).toBe(true)
+  })
+
+  test("gate runs in the queue with the fresh tree and can block the merge", async () => {
+    const wm = new WorkspaceManager(root, cfg(), "run_x")
+    const ws = await wm.create("a1", "codex-1", "worktree")
+    writeFileSync(join(ws.path, "a.ts"), "export const a = 'g'\n")
+    let seen: string | undefined
+    const m = await wm.merge("a1", {
+      gate: (w) => {
+        seen = w.tree
+        return "needs review"
+      },
+    })
+    expect(m).toMatchObject({ status: "failed", detail: "needs review" })
+    expect(m.files.map((f) => f.path)).toEqual(["a.ts"])
+    expect(seen).toMatch(/^[0-9a-f]{40}$/)
+    expect(readFileSync(join(root, "a.ts"), "utf8")).not.toContain("'g'")
+    const ok = await wm.merge("a1", { gate: (w) => (w.tree === seen ? undefined : "tree changed") })
+    expect(ok.status).toBe("merged")
+  })
+
+  test("conflict prediction uses a common base for workers that branched at different times", async () => {
+    const wm = new WorkspaceManager(root, cfg(), "run_x")
+    const w1 = await wm.create("a1", "codex-1", "worktree")
+    // the user edits line 3 after the first worker started; the second worker starts from that
+    writeFileSync(join(root, "a.ts"), "export const a = 1\nexport const b = 2\nexport const c = 'user'\n")
+    const w2 = await wm.create("a2", "codex-2", "worktree")
+    // non-overlapping edits to the same file: no conflict expected
+    writeFileSync(join(w1.path, "a.ts"), "export const a = 'one'\nexport const b = 2\nexport const c = 3\n")
+    writeFileSync(join(w2.path, "a.ts"), "export const a = 1\nexport const b = 2\nexport const c = 'user'\nexport const d = 4\n")
+    await wm.refresh("a1")
+    await wm.refresh("a2")
+    expect(await wm.conflictsFor("a1")).toEqual([])
+    expect(await wm.conflictsFor("a2")).toEqual([])
+  })
 })
 
 void symlinkSync

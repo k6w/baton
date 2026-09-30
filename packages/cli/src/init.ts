@@ -7,10 +7,11 @@
  *   5. write .baton/config.toml with sensible choices + .baton/.gitignore
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { basename, join } from "node:path"
+import { homedir } from "node:os"
+import { basename, dirname, join } from "node:path"
 import { createInterface } from "node:readline/promises"
 import { AdapterRegistry } from "@batonsh/daemon"
-import { gitInfo, projectPaths } from "@batonsh/kernel"
+import { gitInfo, loadConfig, projectPaths } from "@batonsh/kernel"
 import { type DetectResult, runCapture } from "@batonsh/protocol"
 import { c } from "./style.ts"
 
@@ -107,7 +108,7 @@ export function configToml(opts: { name: string; orchestrator: string; worker: s
 # Installed agents found at setup: ${installed.join(", ") || "none"}
 
 [project]
-name = "${opts.name}"
+name = ${JSON.stringify(opts.name)}
 
 [orchestrator]
 agent = "${opts.orchestrator}"        # any adapter or profile below
@@ -173,6 +174,8 @@ export interface InitOptions {
   quiet?: boolean
   /** Skip the confirmation prompt but still print a summary. */
   assumeYes?: boolean
+  /** Create a git repository without asking (default: only when `yes` and the folder isn't $HOME or /). */
+  gitInit?: boolean
 }
 
 async function ask(q: string, def = true): Promise<boolean> {
@@ -201,7 +204,13 @@ export async function initProject(opts: InitOptions): Promise<{ created: string[
   // 1. git
   const git = gitInfo(root)
   if (!git.isRepo) {
-    if (yes || (await ask(`  No git repository here. Run ${c.bold("git init")}?`))) {
+    // never turn a home directory (or /) into a repo without an explicit yes at a prompt
+    const risky = root === homedir() || root === "/" || root === dirname(homedir())
+    const auto = opts.gitInit ?? (yes && !risky)
+    if (
+      auto ||
+      (process.stdin.isTTY && (await ask(`  No git repository here${risky ? c.yellow(` (${root} — are you sure?)`) : ""}. Run ${c.bold("git init")}?`, !risky)))
+    ) {
       await runCapture(["git", "init", "-q"], { cwd: root })
       created.push("git repository")
       say(`  ${c.green("✓")} git init`)
@@ -243,12 +252,28 @@ export async function initProject(opts: InitOptions): Promise<{ created: string[
   // 5. config
   const paths = projectPaths(root)
   mkdirSync(paths.dir, { recursive: true })
+  const gi = join(paths.dir, ".gitignore")
+  if (!existsSync(gi)) writeFileSync(gi, "run/\nstate.db*\nworktrees/\nconfig.local.toml\n")
   if (!existsSync(paths.config)) {
     writeFileSync(paths.config, configToml({ name, orchestrator, worker, agents, toolchain: tc }))
     created.push(".baton/config.toml")
+    say(`  ${c.green("✓")} .baton/config.toml ${c.dim(`(orchestrator: ${orchestrator}, workers: ${worker})`)}\n`)
+  } else {
+    // never overwrite the user's config; point out when the detected best choice differs
+    const current = loadConfig({ projectRoot: root }).config
+    say(`  ${c.green("✓")} kept existing .baton/config.toml ${c.dim(`(orchestrator: ${current.orchestrator.agent}, workers: ${current.defaults.worker})`)}`)
+    const hints: string[] = []
+    const known = (id: string) => !!current.agents[id] || id === "mock" || agents.some((a) => a.id === id && a.installed)
+    if (
+      current.orchestrator.agent !== orchestrator &&
+      !known(current.orchestrator.agent) &&
+      !agents.some((a) => a.id === current.orchestrator.agent && a.installed)
+    )
+      hints.push(`orchestrator "${current.orchestrator.agent}" isn't installed — set [orchestrator] agent = "${orchestrator}"`)
+    if (current.defaults.worker !== worker && !known(current.defaults.worker) && !agents.some((a) => a.id === current.defaults.worker && a.installed))
+      hints.push(`worker "${current.defaults.worker}" isn't installed — set [defaults] worker = "${worker}"`)
+    for (const h of hints) say(`  ${c.yellow("!")} ${h}`)
+    say("")
   }
-  const gi = join(paths.dir, ".gitignore")
-  if (!existsSync(gi)) writeFileSync(gi, "run/\nstate.db*\nworktrees/\nconfig.local.toml\n")
-  say(`  ${c.green("✓")} .baton/config.toml ${c.dim(`(orchestrator: ${orchestrator}, workers: ${worker})`)}\n`)
   return { created, orchestrator, worker }
 }

@@ -148,6 +148,20 @@ export class EventStore {
       where.push("agent_id = ?")
       args.push(opts.agentId)
     }
+    // filter types in SQL so LIMIT counts matching events, not all events
+    if (opts.types?.length && !opts.types.includes("*")) {
+      const ors: string[] = []
+      for (const t of opts.types) {
+        if (t.endsWith(".*")) {
+          ors.push("substr(type, 1, ?) = ?")
+          args.push(t.length - 1, t.slice(0, -1))
+        } else {
+          ors.push("type = ?")
+          args.push(t)
+        }
+      }
+      where.push(`(${ors.join(" OR ")})`)
+    }
     const sql = `SELECT * FROM events ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY seq ASC ${opts.limit ? `LIMIT ${Math.floor(opts.limit)}` : ""}`
     const rows = this.db.prepare(sql).all(...args) as {
       seq: number

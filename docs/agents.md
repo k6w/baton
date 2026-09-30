@@ -146,8 +146,9 @@ plugins = ["./.baton/plugins/echo.ts"]
 ```
 
 Plugins listed in the global config load automatically. Plugins listed in a **project** config run code that
-came with the repository, so they only load after you run `baton trust` in that project. If the list changes,
-you have to trust it again. `baton trust --revoke` undoes it.
+came with the repository, so they only load after you run `baton trust` in that project. Trust is pinned to the
+plugin file's content: if it (or the list) changes, you have to trust it again. `baton trust --revoke` undoes it.
+See [configuration.md](configuration.md#trusting-a-project) for the other settings that need trust.
 
 Adapter checklist (`packages/adapters/testkit` has `startHarness` and a shared `contractSuite`):
 - emit `turn.started`/`turn.completed` around every prompt, and `agent.status` `busy`/`ready`

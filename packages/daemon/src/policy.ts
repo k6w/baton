@@ -22,7 +22,7 @@ export interface PolicyRequest {
 const BUILTIN_RULES: PolicyRule[] = [
   {
     kinds: ["other", "delegate", "think", "fetch"],
-    match: '^(mcp__baton__\\w+|baton[._]\\w+|baton: Allow the baton MCP server to run tool "\\w+")',
+    match: '^(mcp__baton__\\w+|baton[._]\\w+|baton: Allow the baton MCP server to run tool "\\w+"\\??)(\\(|\\s*$|\\n)',
     action: "allow",
   },
 ]
@@ -56,27 +56,37 @@ export class PolicyEngine {
     this.rules = rules
   }
 
+  /**
+   * Remembered decisions are scoped narrowly: shell commands by their full command line
+   * (so "always allow `npm test`" never covers `npm publish`), other tools by tool + target.
+   */
   private key(r: PolicyRequest): string {
-    return `${r.agentId}|${r.kind ?? "other"}|${verb(r.title)}`
+    const kind = r.kind ?? "other"
+    const subject = kind === "execute" ? normalize(`${r.title}\n${r.detail ?? ""}`) : `${verb(r.title)}|${normalize(r.title)}`
+    return `${r.agentId}|${kind}|${subject}`
+  }
+
+  private match(rule: PolicyRule, r: PolicyRequest): boolean {
+    if (rule.kinds?.length && !rule.kinds.includes(r.kind ?? "other")) return false
+    if (rule.agents?.length && !rule.agents.includes(r.agentName) && !rule.agents.includes(r.adapter)) return false
+    if (rule.match) {
+      let re: RegExp
+      try {
+        re = new RegExp(rule.match, "i")
+      } catch {
+        return false
+      }
+      if (!re.test(`${r.title}\n${r.detail ?? ""}`)) return false
+    }
+    return true
   }
 
   decide(r: PolicyRequest): Decision {
+    // the user's explicit rules win over anything remembered from a past click
+    for (const rule of this.rules) if (this.match(rule, r)) return rule.action
     const mem = this.remembered.get(this.key(r))
     if (mem) return mem
-    for (const rule of [...this.rules, ...BUILTIN_RULES, ...PRESETS[this.preset]]) {
-      if (rule.kinds?.length && !rule.kinds.includes(r.kind ?? "other")) continue
-      if (rule.agents?.length && !rule.agents.includes(r.agentName) && !rule.agents.includes(r.adapter)) continue
-      if (rule.match) {
-        let re: RegExp
-        try {
-          re = new RegExp(rule.match, "i")
-        } catch {
-          continue
-        }
-        if (!re.test(`${r.title}\n${r.detail ?? ""}`)) continue
-      }
-      return rule.action
-    }
+    for (const rule of [...BUILTIN_RULES, ...PRESETS[this.preset]]) if (this.match(rule, r)) return rule.action
     return "ask"
   }
 
@@ -87,6 +97,10 @@ export class PolicyEngine {
   forgetAgent(agentId: string) {
     for (const k of [...this.remembered.keys()]) if (k.startsWith(`${agentId}|`)) this.remembered.delete(k)
   }
+}
+
+function normalize(s: string): string {
+  return s.trim().replace(/\s+/g, " ").slice(0, 500)
 }
 
 /** First word of a tool title: "Bash(make lint)" → "Bash", "Ran git diff" → "Ran git". */

@@ -12,6 +12,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { parse as parseToml } from "smol-toml"
 import { z } from "zod"
+import { PROJECT_LAYERS, stripUntrusted, type TrustEntry, trustedIds, trustSurface } from "./trust.ts"
 
 const Approval = z.enum(["ask", "auto-edit", "auto", "yolo"])
 
@@ -244,6 +245,10 @@ export interface LoadedConfig {
   provenance: Record<string, string>
   layers: LayerSource[]
   errors: string[]
+  /** Project entries held back until `baton trust` (commands, plugins, widened permissions). */
+  untrusted: TrustEntry[]
+  /** Config files that exist but failed to parse (their settings are missing from `config`). */
+  failed: string[]
 }
 
 export function configDir(): string {
@@ -258,11 +263,12 @@ export function projectBatonDir(root: string): string {
   return join(root, ".baton")
 }
 
-function readToml(path: string, errors: string[]): Record<string, unknown> | undefined {
+function readToml(path: string, errors: string[], failed?: string[]): Record<string, unknown> | undefined {
   if (!existsSync(path)) return undefined
   try {
     return parseToml(readFileSync(path, "utf8")) as Record<string, unknown>
   } catch (e) {
+    failed?.push(path)
     errors.push(`${path}: ${e instanceof Error ? e.message : String(e)}`)
     return undefined
   }
@@ -324,18 +330,28 @@ function mergeInto(target: Record<string, unknown>, src: Record<string, unknown>
   }
 }
 
-export function loadConfig(opts: { projectRoot?: string; overrides?: Record<string, unknown>; env?: Record<string, string | undefined> } = {}): LoadedConfig {
+export function loadConfig(
+  opts: {
+    projectRoot?: string
+    overrides?: Record<string, unknown>
+    env?: Record<string, string | undefined>
+    /** Apply project entries that need trust without asking (tests, explicit opt-in). */
+    trustAll?: boolean
+  } = {},
+): LoadedConfig {
   const errors: string[] = []
+  const untrusted: TrustEntry[] = []
+  const failed: string[] = []
   const layers: LayerSource[] = []
   const globalPath = join(configDir(), "config.toml")
-  const g = readToml(globalPath, errors)
+  const g = readToml(globalPath, errors, failed)
   if (g) layers.push({ name: "global", path: globalPath, data: g })
   if (opts.projectRoot) {
     const projectPath = join(projectBatonDir(opts.projectRoot), "config.toml")
-    const p = readToml(projectPath, errors)
+    const p = readToml(projectPath, errors, failed)
     if (p) layers.push({ name: "project", path: projectPath, data: p })
     const localPath = join(projectBatonDir(opts.projectRoot), "config.local.toml")
-    const l = readToml(localPath, errors)
+    const l = readToml(localPath, errors, failed)
     if (l) layers.push({ name: "project-local", path: localPath, data: l })
   }
   const e = envLayer(opts.env)
@@ -344,32 +360,63 @@ export function loadConfig(opts: { projectRoot?: string; overrides?: Record<stri
 
   const merged: Record<string, unknown> = {}
   const provenance: Record<string, string> = {}
-  for (const layer of layers) mergeInto(merged, layer.data, layer.name, provenance)
+  const trusted = opts.projectRoot && !opts.trustAll ? trustedIds(opts.projectRoot) : undefined
+  for (const layer of layers) {
+    let data = layer.data
+    if (trusted && opts.projectRoot && PROJECT_LAYERS.has(layer.name)) {
+      const held = trustSurface(opts.projectRoot, data).filter((e) => !trusted.has(e.id))
+      if (held.length) {
+        untrusted.push(...held)
+        data = stripUntrusted(data, held)
+      }
+    }
+    mergeInto(merged, data, layer.name, provenance)
+  }
 
   // One bad key must not take the whole config down: drop each invalid leaf (reporting
   // where it came from) and re-validate, so every other setting still applies.
   for (let attempt = 0; attempt < 20; attempt++) {
     const parsed = BatonConfig.safeParse(merged)
-    if (parsed.success) return { config: parsed.data, provenance, layers, errors }
+    if (parsed.success) return { config: parsed.data, provenance, layers, errors, untrusted, failed }
     for (const issue of parsed.error.issues) {
       const key = issue.path.join(".")
       const from = provenance[key] ?? Object.entries(provenance).find(([k]) => k.startsWith(`${key}.`))?.[1]
       errors.push(`config ${key || "(root)"}${from ? ` (from ${from})` : ""}: ${issue.message} — ignored`)
-      if (issue.path.length === 0) return { config: BatonConfig.parse({}), provenance: {}, layers, errors }
+      if (issue.path.length === 0) return { config: BatonConfig.parse({}), provenance: {}, layers, errors, untrusted, failed }
       deletePath(merged, issue.path.map(String))
       for (const k of Object.keys(provenance)) if (k === key || k.startsWith(`${key}.`)) delete provenance[k]
     }
   }
-  return { config: BatonConfig.parse({}), provenance: {}, layers, errors }
+  return { config: BatonConfig.parse({}), provenance: {}, layers, errors, untrusted, failed }
 }
 
+/**
+ * Remove the value at path. When the leaf is already gone (a required key is missing), remove
+ * the nearest container entry instead — an array element is spliced out, a record entry
+ * (e.g. agents.<name>) is deleted — so validation always makes progress.
+ */
 function deletePath(obj: Record<string, unknown>, path: string[]): void {
-  let cur: unknown = obj
-  for (let i = 0; i < path.length - 1; i++) {
-    if (typeof cur !== "object" || cur === null) return
-    cur = (cur as Record<string, unknown>)[path[i] as string]
+  for (let depth = path.length; depth > 0; depth--) {
+    let cur: unknown = obj
+    for (let i = 0; i < depth - 1; i++) {
+      if (typeof cur !== "object" || cur === null) return
+      cur = (cur as Record<string, unknown>)[path[i] as string]
+    }
+    if (typeof cur !== "object" || cur === null) continue
+    const last = path[depth - 1] as string
+    if (Array.isArray(cur)) {
+      const idx = Number(last)
+      if (Number.isInteger(idx) && idx < cur.length) {
+        cur.splice(idx, 1)
+        return
+      }
+      continue
+    }
+    if (Object.hasOwn(cur, last)) {
+      delete (cur as Record<string, unknown>)[last]
+      return
+    }
   }
-  if (typeof cur === "object" && cur !== null) delete (cur as Record<string, unknown>)[path[path.length - 1] as string]
 }
 
 export function configJsonSchema(): unknown {

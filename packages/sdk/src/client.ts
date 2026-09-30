@@ -46,6 +46,9 @@ export class BatonClient {
   private outbox: Uint8Array[] = []
   private encoder = new TextEncoder()
   private early: { subscriptionId: string; event: BatonEvent }[] = []
+  /** events.subscribe calls awaiting their response (only then can events race ahead). */
+  private subscribing = 0
+  private closeAfterFlush = false
   closed = false
   projectRoot = ""
   runId = ""
@@ -56,7 +59,8 @@ export class BatonClient {
     this.peer.onNotification("event", (p: { subscriptionId: string; event: BatonEvent }) => {
       const h = this.eventHandlers.get(p.subscriptionId)
       if (h) h(p.event)
-      else if (this.early.length < 100_000) this.early.push(p) // raced ahead of events.subscribe's response
+      // raced ahead of events.subscribe's response; anything else is for a closed subscription
+      else if (this.subscribing > 0 && this.early.length < 100_000) this.early.push(p)
     })
     this.peer.onNotification("daemon.closing", (p: { reason: string }) => this.handleClose(p.reason))
   }
@@ -76,6 +80,7 @@ export class BatonClient {
         return
       }
     }
+    if (this.closeAfterFlush && this.outbox.length === 0) this.socket?.end()
   }
 
   private handleClose(reason: string) {
@@ -110,10 +115,16 @@ export class BatonClient {
       },
     })
     c.flush()
-    const hello = await c.call("hello", { client: clientName, version: CONTROL_PROTOCOL_VERSION })
-    c.projectRoot = hello.projectRoot
-    c.runId = hello.runId
-    c.daemonPid = hello.pid
+    try {
+      const hello = await c.call("hello", { client: clientName, version: CONTROL_PROTOCOL_VERSION }, 10_000)
+      c.projectRoot = hello.projectRoot
+      c.runId = hello.runId
+      c.daemonPid = hello.pid
+    } catch (e) {
+      c.socket?.terminate()
+      c.handleClose("hello failed")
+      throw e
+    }
     return c
   }
 
@@ -124,7 +135,13 @@ export class BatonClient {
 
   /** Subscribe to events; returns an unsubscribe function. */
   async subscribe(handler: (e: BatonEvent) => void, opts: { fromSeq?: number; types?: string[]; agentId?: string } = {}): Promise<() => Promise<void>> {
-    const { subscriptionId } = await this.call("events.subscribe", opts)
+    this.subscribing++
+    let subscriptionId: string
+    try {
+      ;({ subscriptionId } = await this.call("events.subscribe", opts))
+    } finally {
+      this.subscribing--
+    }
     this.eventHandlers.set(subscriptionId, handler)
     const mine = this.early.filter((p) => p.subscriptionId === subscriptionId)
     this.early = this.early.filter((p) => p.subscriptionId !== subscriptionId)
@@ -143,6 +160,8 @@ export class BatonClient {
       queue.push(e)
       wake?.()
     }, opts)
+    // a closed connection ends the stream instead of leaving the consumer waiting forever
+    const offClose = this.onClose(() => wake?.())
     try {
       while (!this.closed) {
         const e = queue.shift()
@@ -156,6 +175,7 @@ export class BatonClient {
         wake = undefined
       }
     } finally {
+      offClose()
       await unsub()
     }
   }
@@ -198,8 +218,10 @@ export class BatonClient {
     return run
   }
 
+  /** Close the connection; requests already written (e.g. a final submit) are still sent. */
   close() {
-    this.socket?.end()
+    this.closeAfterFlush = true
+    this.flush()
     this.handleClose("client closed")
   }
 }
@@ -265,7 +287,15 @@ export async function connect(opts: ConnectOptions = {}): Promise<BatonClient> {
     const sp = opts.socketPath ?? discoverSocket(root)
     const c = await tryOpen(sp, name)
     if (c) return c
-    if (proc.exitCode !== null && proc.exitCode !== 0) throw new Error(`baton daemon exited with code ${proc.exitCode} (see ${projectPaths(root).log})`)
+    // exited (by code or signal): one last look — another daemon may have won the start race
+    if (proc.exitCode !== null || proc.signalCode !== null) {
+      await Bun.sleep(150)
+      const late = await tryOpen(opts.socketPath ?? discoverSocket(root), name)
+      if (late) return late
+      throw new Error(
+        `baton daemon ${proc.signalCode ? `was killed (${proc.signalCode})` : `exited with code ${proc.exitCode}`} (see ${projectPaths(root).log})`,
+      )
+    }
   }
   throw new Error("timed out waiting for the baton daemon to start")
 }

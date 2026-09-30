@@ -37,4 +37,26 @@ describe("setTomlValue", () => {
     expect(parse(setTomlValue("", "ui.theme", "nord"))).toEqual({ ui: { theme: "nord" } })
     expect(parse(setTomlValue("", "budget.run_usd", 2.5))).toEqual({ budget: { run_usd: 2.5 } })
   })
+
+  test("multi-line values are replaced whole", () => {
+    const src = `[workspace]\nlink = [\n  "node_modules", # deps\n  ".venv",\n]\nsetup = """\nbun install\n"""\nreview = "off"\n`
+    let out = setTomlValue(src, "workspace.link", ["vendor"])
+    out = setTomlValue(out, "workspace.setup", "make deps")
+    expect(parse(out)).toEqual({ workspace: { link: ["vendor"], setup: "make deps", review: "off" } })
+    expect(parse(setTomlValue(src, "workspace.link", undefined))).toEqual({ workspace: { setup: "bun install\n", review: "off" } })
+  })
+  test("quoted table names, single-quoted keys, [[arrays]] and CRLF", () => {
+    const src = `# top\r\n[agent_style."my.agent"]\r\n'color' = "red"\r\n\r\n[[policy.rules]]\r\naction = "deny"\r\n\r\n[ui]\r\ntheme = "x"\r\n`
+    let out = setTomlValue(src, 'agent_style."my.agent".color', "blue")
+    out = setTomlValue(out, "ui.theme", "nord")
+    expect(out).toContain("# top\r\n")
+    expect(out.replace(/\r\n/g, "")).not.toContain("\n")
+    expect(parse(out)).toEqual({ agent_style: { "my.agent": { color: "blue" } }, policy: { rules: [{ action: "deny" }] }, ui: { theme: "nord" } })
+  })
+  test("inline tables and dotted keys fall back to a correct rewrite", () => {
+    const inline = `agent_style = { claude = { color = "red" } }\n`
+    expect(parse(setTomlValue(inline, "agent_style.claude.color", "blue"))).toEqual({ agent_style: { claude: { color: "blue" } } })
+    const dotted = `ui.theme = "x"\nui.fps = 30\n`
+    expect(parse(setTomlValue(dotted, "ui.theme", "nord"))).toEqual({ ui: { theme: "nord", fps: 30 } })
+  })
 })

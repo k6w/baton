@@ -81,20 +81,60 @@ export interface FileStat {
   removed: number
 }
 
-/** numstat between two tree-ish objects. Binary files count as 1/1. */
+/**
+ * numstat between two tree-ish objects. Binary files count as 1/1. Limited to (and paths relative
+ * to) `cwd` when it is a subdirectory of the repository. NUL-separated, so any path name works.
+ */
 export async function diffStat(cwd: string, from: string, to: string): Promise<FileStat[]> {
-  const r = await git(cwd, ["diff-tree", "-r", "--numstat", "--no-renames", from, to])
+  const r = await git(cwd, ["diff-tree", "-r", "-z", "--numstat", "--no-renames", "--relative", from, to])
   const out: FileStat[] = []
-  for (const line of r.stdout.split("\n")) {
-    const m = /^(\S+)\t(\S+)\t(.+)$/.exec(line)
+  for (const rec of r.stdout.split("\0")) {
+    const m = /^(\S+)\t(\S+)\t([\s\S]+)$/.exec(rec)
     if (!m) continue
     out.push({ path: m[3] as string, added: m[1] === "-" ? 1 : Number(m[1]), removed: m[2] === "-" ? 1 : Number(m[2]) })
   }
   return out
 }
 
-export async function diffPatch(cwd: string, from: string, to: string, paths: string[] = []): Promise<string> {
-  return (await git(cwd, ["diff", "--binary", "--no-color", from, to, "--", ...paths])).stdout
+/**
+ * Patch between two tree-ish objects. Paths in the patch are relative to the repository top
+ * level (what `git apply` expects); with `relative`, limited to and relative to `cwd` (for display).
+ * Pathspecs in `paths` are relative to `cwd`.
+ */
+export async function diffPatch(cwd: string, from: string, to: string, paths: string[] = [], relative = false): Promise<string> {
+  return (await git(cwd, ["diff", "--binary", "--no-color", ...(relative ? ["--relative"] : []), from, to, "--", ...paths])).stdout
+}
+
+/** Location of `cwd` inside its repository: `prefix` ("" or "sub/dir/") and `cdup` ("" or "../../"). */
+export async function repoPrefix(cwd: string): Promise<{ prefix: string; cdup: string }> {
+  const r = await git(cwd, ["rev-parse", "--show-prefix", "--show-cdup"])
+  const [prefix = "", cdup = ""] = r.stdout.split("\n")
+  return { prefix: prefix.trim(), cdup: cdup.trim() }
+}
+
+export function repoPrefixSync(cwd: string): { prefix: string; cdup: string } | undefined {
+  const r = Bun.spawnSync(["git", "rev-parse", "--show-prefix", "--show-cdup"], { cwd, stdout: "pipe", stderr: "ignore", stdin: "ignore" })
+  if (r.exitCode !== 0) return undefined
+  const [prefix = "", cdup = ""] = r.stdout.toString().split("\n")
+  return { prefix: prefix.trim(), cdup: cdup.trim() }
+}
+
+export async function branchExists(cwd: string, branch: string): Promise<boolean> {
+  return (await git(cwd, ["show-ref", "--verify", "-q", `refs/heads/${branch}`], { allowFail: true })).code === 0
+}
+
+export async function isAncestor(cwd: string, ancestor: string, of: string): Promise<boolean> {
+  return (await git(cwd, ["merge-base", "--is-ancestor", ancestor, of], { allowFail: true })).code === 0
+}
+
+export async function mergeBase(cwd: string, a: string, b: string): Promise<string | undefined> {
+  const r = await git(cwd, ["merge-base", a, b], { allowFail: true })
+  return r.code === 0 ? r.stdout.trim() || undefined : undefined
+}
+
+export async function treeOf(cwd: string, commit: string): Promise<string | undefined> {
+  const r = await git(cwd, ["rev-parse", "--verify", "-q", `${commit}^{tree}`], { allowFail: true })
+  return r.code === 0 ? r.stdout.trim() : undefined
 }
 
 export interface MergeTreeResult {
@@ -103,10 +143,13 @@ export interface MergeTreeResult {
   conflicts: string[]
 }
 
-/** Three-way merge of commits without touching any working tree (git ≥ 2.38). */
+/**
+ * Three-way merge of commits without touching any working tree (git ≥ 2.38). Conflict paths are
+ * relative to `cwd` (git prints them that way from a subdirectory).
+ */
 export async function mergeTree(cwd: string, base: string, ours: string, theirs: string): Promise<MergeTreeResult> {
-  const r = await git(cwd, ["merge-tree", "--write-tree", "--name-only", "--no-messages", `--merge-base=${base}`, ours, theirs], { allowFail: true })
-  const lines = r.stdout.split("\n").filter(Boolean)
+  const r = await git(cwd, ["merge-tree", "--write-tree", "-z", "--name-only", "--no-messages", `--merge-base=${base}`, ours, theirs], { allowFail: true })
+  const lines = r.stdout.split("\0").filter(Boolean)
   if (r.code === 0) return { clean: true, tree: lines[0], conflicts: [] }
   if (r.code === 1) return { clean: false, tree: lines[0], conflicts: [...new Set(lines.slice(1))] }
   throw new Error(`git merge-tree failed: ${r.stderr.trim()}`)

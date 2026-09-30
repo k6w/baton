@@ -5,7 +5,19 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
-import { BatonConfig, configDir, getPath, loadConfig, projectPaths, SETTING_SECTIONS, SETTINGS, type SettingDef, setTomlValue } from "@batonsh/kernel"
+import {
+  BatonConfig,
+  configDir,
+  getPath,
+  loadConfig,
+  projectPaths,
+  SETTING_SECTIONS,
+  SETTINGS,
+  type SettingDef,
+  setTomlValue,
+  trustEntries,
+  trustSurface,
+} from "@batonsh/kernel"
 import { listThemes } from "@batonsh/themes"
 import type { InputRenderable } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
@@ -110,12 +122,25 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
     const text = existsSync(path) ? readFileSync(path, "utf8") : ""
     const next = setTomlValue(text, s.key, v)
     // validate the whole file before writing so a bad value can't break the config
-    const check = BatonConfig.safeParse(Bun.TOML.parse(next))
+    let data: Record<string, unknown>
+    try {
+      data = Bun.TOML.parse(next) as Record<string, unknown>
+    } catch (e) {
+      ui.toast(`can't update ${path}: ${e instanceof Error ? e.message : String(e)}`, "error")
+      return
+    }
+    const check = BatonConfig.safeParse(data)
     if (!check.success) {
       ui.toast(`invalid value for ${s.label}: ${check.error.issues[0]?.message ?? "?"}`, "error")
       return
     }
     writeFileSync(path, next)
+    // you set this value yourself, so it doesn't need `baton trust`
+    if (scope() !== "global")
+      trustEntries(
+        root,
+        trustSurface(root, data).filter((e) => e.path === s.key),
+      )
     setTick((t) => t + 1)
     // apply live
     const [sec, key] = s.key.split(".") as [string, string]

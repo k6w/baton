@@ -34,6 +34,7 @@ export class JsonRpcPeer {
   private fallbackRequest?: RequestHandler
   private fallbackNotification?: NotificationHandler
   closed = false
+  private closeReason?: string
 
   constructor(
     private send: (msg: JsonRpcMessage) => void,
@@ -63,6 +64,7 @@ export class JsonRpcPeer {
   }
 
   request<T = unknown>(method: string, params?: unknown, timeoutMs = 0): Promise<T> {
+    if (this.closed) return Promise.reject(new JsonRpcError(-32099, this.closeReason ?? "connection closed"))
     const id = this.nextId++
     const d = deferred<unknown>()
     this.pending.set(id, d)
@@ -81,6 +83,9 @@ export class JsonRpcPeer {
   }
 
   async handle(msg: JsonRpcMessage): Promise<void> {
+    // Ignore anything that isn't a JSON-RPC object (e.g. a `null` / number / array line from a misbehaving peer).
+    if (msg === null || typeof msg !== "object" || Array.isArray(msg)) return
+    if (msg.method !== undefined && typeof msg.method !== "string") return
     if (msg.method !== undefined && msg.id !== undefined && msg.id !== null) {
       const h = this.requestHandlers.get(msg.method) ?? this.fallbackRequest
       if (!h) {
@@ -112,6 +117,7 @@ export class JsonRpcPeer {
 
   close(reason = "connection closed"): void {
     this.closed = true
+    this.closeReason ??= reason
     for (const d of this.pending.values()) d.reject(new JsonRpcError(-32099, reason))
     this.pending.clear()
   }

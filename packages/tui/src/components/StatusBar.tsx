@@ -9,7 +9,7 @@ import { createMemo } from "solid-js"
 import { agentLook } from "../agent-style.ts"
 import { useUi } from "../context.ts"
 import { type Seg, width as sw } from "../lines.ts"
-import { segs, toStyled } from "../ui/styled.ts"
+import { toStyled } from "../ui/styled.ts"
 import { Txt } from "../ui/Txt.tsx"
 
 const SPARK = "▁▂▃▄▅▆▇█"

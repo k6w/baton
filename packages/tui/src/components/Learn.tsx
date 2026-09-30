@@ -66,14 +66,14 @@ export function WelcomeOverlay(props: { onClose: () => void; onTask: (text: stri
       p("No agent CLIs found. Install Claude Code, Codex or OpenCode — or try `baton demo` to see Baton with simulated agents.", t.warning)
     out.push({ segs: [] })
     h("Try one of these")
-    tasks.forEach((task, i) =>
+    tasks.forEach((task, i) => {
       out.push({
         segs: [
           { text: ` ${i + 1}  `, fg: t.accent, bold: true },
           { text: clip(task, w - 5), fg: t.text },
         ],
-      }),
-    )
+      })
+    })
     out.push({ segs: [{ text: "    or /recipe for proven workflows (best-of-3, plan → execute, test-first…)", fg: t.textSubtle }] })
     out.push({ segs: [] })
     h("The keys you need")

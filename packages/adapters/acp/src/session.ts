@@ -23,10 +23,10 @@ import type {
   ToolStatus,
 } from "@batonsh/protocol"
 import { augmentedPath, deferred, newId, readLines } from "@batonsh/protocol"
-import { blockText, diffContent, mapKind, mapToolContent, rawSummary, toolName, toolTitle } from "./map.ts"
+import { blockText, contentKey, diffContent, diffKey, mapKind, mapToolContent, rawSummary, toolName, toolTitle } from "./map.ts"
 import type { AcpPreset } from "./presets.ts"
 import { runAuthCheck } from "./presets.ts"
-import { TerminalManager } from "./terminal.ts"
+import { killTree, TerminalManager } from "./terminal.ts"
 import { WorkspaceFs } from "./workspace-fs.ts"
 
 const AUTH_REQUIRED = -32000
@@ -63,6 +63,8 @@ interface PendingPermission {
 interface Turn {
   turnId: string
   interrupted: boolean
+  /** Terminal turn event already emitted (e.g. by onExit on a crash). */
+  ended?: boolean
 }
 
 export interface AcpSessionOptions {
@@ -133,6 +135,8 @@ export class AcpSession implements AgentSession {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
+      // own process group, so shutdown reaches the agent's helpers (MCP servers, tool shells …)
+      detached: true,
     })
     void this.pumpStderr()
     void this.proc.exited.then((code) => this.onExit(code))
@@ -237,18 +241,24 @@ export class AcpSession implements AgentSession {
     )
 
     const mcpServers = this.mcpServers(caps)
+    const sessionTimeoutMs = Number(this.cfg.options?.sessionTimeoutMs ?? 60_000)
+    const sessionRequest = <T>(p: Promise<T>, what: string) => withTimeout(p, sessionTimeoutMs, what)
     const resumeId = this.cfg.resumeId
     if (resumeId) {
       try {
         if (caps.sessionCapabilities?.resume) {
-          const r = await this.withAuth(() => this.agent.request("session/resume", { sessionId: resumeId, cwd: this.cfg.cwd, mcpServers }))
+          const r = await this.withAuth(() =>
+            sessionRequest(this.agent.request("session/resume", { sessionId: resumeId, cwd: this.cfg.cwd, mcpServers }), "session/resume"),
+          )
           this.sessionId = resumeId
           this.absorbSessionResponse(r)
           this.resumed = true
         } else if (caps.loadSession) {
           this.replaying = true
           try {
-            const r = await this.withAuth(() => this.agent.request("session/load", { sessionId: resumeId, cwd: this.cfg.cwd, mcpServers }))
+            const r = await this.withAuth(() =>
+              sessionRequest(this.agent.request("session/load", { sessionId: resumeId, cwd: this.cfg.cwd, mcpServers }), "session/load"),
+            )
             this.sessionId = resumeId
             this.absorbSessionResponse(r)
             this.resumed = true
@@ -263,7 +273,7 @@ export class AcpSession implements AgentSession {
       }
     }
     if (!this.sessionId) {
-      const r = await this.withAuth(() => this.agent.request("session/new", { cwd: this.cfg.cwd, mcpServers }))
+      const r = await this.withAuth(() => sessionRequest(this.agent.request("session/new", { cwd: this.cfg.cwd, mcpServers }), "session/new"))
       this.sessionId = r.sessionId
       this.absorbSessionResponse(r)
     }
@@ -337,12 +347,24 @@ export class AcpSession implements AgentSession {
       this.conn?.close(new Error("agent process exited"))
     } catch {}
     void this.terminals.disposeAll()
+    // reap helpers the agent left behind in its process group
+    killTree(this.proc)
     if (!expected) {
       this.emit("error", {
         message: `${this.opts.preset.displayName} exited unexpectedly (code ${code})`,
         detail: this.stderrTail.slice(-20).join("\n") || undefined,
         fatal: true,
       })
+    }
+    // A running turn must end (as failed) before agent.exited, so hosts record a failed result.
+    const turn = this.turn
+    if (turn && !turn.ended) {
+      turn.ended = true
+      this.flushAll()
+      this.emit(
+        turn.interrupted ? "turn.interrupted" : "turn.completed",
+        turn.interrupted ? { turnId: turn.turnId } : { turnId: turn.turnId, stopReason: expected ? "cancelled" : "error" },
+      )
     }
     this.emit("agent.exited", { code, reason: expected ? "closed" : "crashed" })
     this.emit("agent.status", { status: expected ? "exited" : "error" })
@@ -366,9 +388,9 @@ export class AcpSession implements AgentSession {
     } catch {}
     const exitedSoon = await Promise.race([this.proc.exited.then(() => true), Bun.sleep(1500).then(() => false)])
     if (!exitedSoon) {
-      this.proc.kill("SIGTERM")
+      killTree(this.proc, "SIGTERM")
       const gone = await Promise.race([this.proc.exited.then(() => true), Bun.sleep(2000).then(() => false)])
-      if (!gone) this.proc.kill("SIGKILL")
+      if (!gone) killTree(this.proc, "SIGKILL")
     }
     await Promise.race([this.exitDone.promise, Bun.sleep(3000)])
   }
@@ -426,13 +448,20 @@ export class AcpSession implements AgentSession {
     }
     try {
       const res = await this.agent.request("session/prompt", { sessionId: this.sessionId as string, prompt: [{ type: "text", text }] })
+      if (turn.ended) return
+      turn.ended = true
       this.flushAll()
       if (res.usage) this.addUsage(res.usage)
-      const stopReason = turn.interrupted && res.stopReason === "end_turn" ? "cancelled" : res.stopReason
-      this.emit("turn.completed", { turnId: turn.turnId, stopReason }, res)
+      // An interrupted turn ends with turn.interrupted alone (it is the terminal event).
+      if (turn.interrupted) this.emit("turn.interrupted", { turnId: turn.turnId }, res)
+      else this.emit("turn.completed", { turnId: turn.turnId, stopReason: res.stopReason }, res)
     } catch (e) {
+      if (turn.ended) return
+      turn.ended = true
       this.flushAll()
-      if (turn.interrupted || this.closing) {
+      if (turn.interrupted) {
+        this.emit("turn.interrupted", { turnId: turn.turnId })
+      } else if (this.closing) {
         this.emit("turn.completed", { turnId: turn.turnId, stopReason: "cancelled" })
       } else {
         const authHint = isAuthRequired(e) ? ` — ${this.opts.preset.authHint ?? "log in to the agent first"}` : ""
@@ -455,7 +484,7 @@ export class AcpSession implements AgentSession {
     await this.agent.notify("session/cancel", { sessionId: this.sessionId }).catch((e) => this.ctx.log("warn", `session/cancel failed: ${errMessage(e)}`))
     // Spec: the client MUST answer every pending permission request with `cancelled`.
     for (const id of [...this.permissions.keys()]) this.resolvePermission(id, null, "cancelled")
-    this.emit("turn.interrupted", { turnId: turn.turnId })
+    // turn.interrupted is emitted by runTurn once the agent answers session/prompt (stopReason cancelled)
   }
 
   async respondPermission(requestId: string, optionId: string | null): Promise<void> {
@@ -667,7 +696,7 @@ export class AcpSession implements AgentSession {
       },
       raw,
     )
-    const content = this.newContent(st, mapToolContent(u.content, this.terminalLookup(st.id)))
+    const content = mapToolContent(u.content, this.terminalLookup(st.id), st.seen)
     if (content.length > 0 || u.rawOutput !== undefined)
       this.emit("tool.update", { toolCallId: st.id, content: content.length ? content : undefined, rawOutput: u.rawOutput })
   }
@@ -700,7 +729,7 @@ export class AcpSession implements AgentSession {
     const status = u.status ? (u.status as ToolStatus) : undefined
     const statusChanged = status !== undefined && status !== st.status
     if (status) st.status = status
-    const content = this.newContent(st, mapToolContent(u.content, this.terminalLookup(st.id)))
+    const content = mapToolContent(u.content, this.terminalLookup(st.id), st.seen)
     if (!titleChanged && !statusChanged && content.length === 0 && u.rawOutput === undefined) return
     this.emit(
       "tool.update",
@@ -825,8 +854,11 @@ export class AcpSession implements AgentSession {
       throw acp.RequestError.invalidParams(undefined, errMessage(e))
     }
     const st = this.editToolFor(res.path)
-    const content = this.newContent(st, [diffContent(p.path, res.oldText, p.content)])
-    if (content.length) this.emit("tool.update", { toolCallId: st.id, content })
+    const key = diffKey(p.path, p.content)
+    if (!st.seen.has(key)) {
+      st.seen.add(key)
+      this.emit("tool.update", { toolCallId: st.id, content: [diffContent(p.path, res.oldText, p.content)] })
+    }
     return {}
   }
 
@@ -893,17 +925,6 @@ export class AcpSession implements AgentSession {
 function permKind(k: string): PermissionOptionKind {
   if (k === "allow_once" || k === "allow_always" || k === "reject_once" || k === "reject_always") return k
   return k.startsWith("allow") ? "allow_once" : "reject_once"
-}
-
-function contentKey(c: ToolContent): string {
-  switch (c.type) {
-    case "text":
-      return `t:${Bun.hash(c.text)}`
-    case "diff":
-      return `d:${resolve(c.path)}:${Bun.hash(c.newText ?? "")}`
-    case "terminal":
-      return `x:${c.terminalId}:${c.output.length}:${c.exitCode ?? ""}`
-  }
 }
 
 function samePath(root: string, a: string, b: string): boolean {

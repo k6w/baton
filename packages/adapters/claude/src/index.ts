@@ -112,8 +112,14 @@ async function start(cfg: SessionConfig, ctx: AdapterContextLike): Promise<Agent
   }
 
   // File contents captured right before Write/Edit/MultiEdit run (fallback diff source).
+  // Each snapshot is read once, when the tool's result arrives, then freed.
   const snapshots = new Map<string, string | null>()
-  const tr = new ClaudeTranslator({ cwd: cfg.cwd, snapshot: (id) => snapshots.get(id) })
+  const takeSnapshot = (id: string) => {
+    const v = snapshots.get(id)
+    snapshots.delete(id)
+    return v
+  }
+  const tr = new ClaudeTranslator({ cwd: cfg.cwd, snapshot: takeSnapshot })
   const input = new AsyncQueue<SDKUserMessage>()
   const abort = new AbortController()
   const onCtxAbort = () => void session.close()
@@ -123,6 +129,11 @@ async function start(cfg: SessionConfig, ctx: AdapterContextLike): Promise<Agent
   const denyAlways = new Set<string>()
   const pendingPerms = new Map<string, ReturnType<typeof deferred<string | null>>>()
   let closing = false
+  /** Set once start() has returned the session; before that a dead CLI makes start() throw. */
+  let started = false
+  /** The CLI process is gone (loop finished); `exitReason` says why. */
+  let dead = false
+  let exitReason = ""
   let interruptTimer: ReturnType<typeof setTimeout> | undefined
 
   const canUseTool: CanUseTool = async (toolName, toolInput, opts): Promise<PermissionResult> => {
@@ -219,6 +230,8 @@ async function start(cfg: SessionConfig, ctx: AdapterContextLike): Promise<Agent
           interruptTimer = undefined
         }
         emit(events)
+        // Tools that never got a result (interrupt / denial) keep no snapshot past the turn.
+        if (!tr.busy) snapshots.clear()
       }
       if (!closing) reason = "claude exited"
     } catch (e) {
@@ -227,15 +240,30 @@ async function start(cfg: SessionConfig, ctx: AdapterContextLike): Promise<Agent
         reason = msg
         const exit = /exited with code (\d+)/.exec(msg)
         code = exit ? Number(exit[1]) : null
-        ctx.log("error", `claude: ${msg}`)
-        emit([{ type: "error", data: { message: msg, fatal: true } }])
-        emit(tr.setStatus("error"))
+        ctx.log(started ? "error" : "debug", `claude: ${msg}`)
+        if (started) {
+          emit([{ type: "error", data: { message: msg, fatal: true } }])
+          emit(tr.setStatus("error"))
+        }
       } else ctx.log("debug", `claude ended during close: ${msg}`)
     } finally {
+      dead = true
+      exitReason = reason
+      input.close()
+      if (interruptTimer) clearTimeout(interruptTimer)
+      interruptTimer = undefined
       for (const d of pendingPerms.values()) d.resolve(null)
-      if (tr.busy) emit([{ type: "turn.interrupted", data: { turnId: tr.currentTurnId } }])
-      emit(tr.setStatus("exited"))
-      emit([{ type: "agent.exited", data: { code, reason } }])
+      snapshots.clear()
+      // A failed start() throws instead of reporting the exit as events.
+      if (started) {
+        if (tr.busy) {
+          // Closing (or an interrupt in flight) ends the turn as interrupted; an unexpected exit fails it.
+          if (closing) emit([{ type: "turn.interrupted", data: { turnId: tr.currentTurnId } }])
+          else emit(tr.failTurn())
+        }
+        emit(tr.setStatus("exited"))
+        emit([{ type: "agent.exited", data: { code, reason } }])
+      }
       ctx.signal.removeEventListener("abort", onCtxAbort)
     }
   })()
@@ -246,19 +274,24 @@ async function start(cfg: SessionConfig, ctx: AdapterContextLike): Promise<Agent
     input.push({ type: "user", message: { role: "user", content: text }, parent_tool_use_id: null, uuid: uuid as SDKUserMessage["uuid"] & string })
   }
 
+  const ensureOpen = () => {
+    if (dead) throw new Error(`claude is not running (${exitReason || "exited"})`)
+    if (closing || input.isClosed) throw new Error("session closed")
+  }
+
   const session: AgentSession = {
     async prompt(p) {
-      if (closing || input.isClosed) throw new Error("session closed")
+      ensureOpen()
       send(promptText(p))
     },
     // Claude Code drains queued user input at the next opportunity inside a running turn
     // (between tool calls), so steering is the same as sending another message.
     async steer(p) {
-      if (closing || input.isClosed) throw new Error("session closed")
+      ensureOpen()
       send(promptText(p))
     },
     async interrupt() {
-      if (!tr.busy) return
+      if (!tr.busy || dead) return
       tr.markInterrupting()
       for (const d of pendingPerms.values()) d.resolve(null)
       try {
@@ -276,6 +309,7 @@ async function start(cfg: SessionConfig, ctx: AdapterContextLike): Promise<Agent
       pendingPerms.get(requestId)?.resolve(optionId)
     },
     async setModel(model) {
+      ensureOpen()
       await q.setModel(model)
       emit([{ type: "agent.updated", data: { model } }])
     },
@@ -301,13 +335,32 @@ async function start(cfg: SessionConfig, ctx: AdapterContextLike): Promise<Agent
     },
   }
 
-  // Wait for the initialize handshake so "ready" means the CLI is actually up.
+  // Wait for the initialize handshake so "ready" means the CLI is actually up. A CLI that dies
+  // (or rejects initialize) during startup fails start() instead of reporting ready.
+  let initError: string | undefined
   try {
-    const init = await withTimeout(q.initializationResult(), INIT_TIMEOUT_MS)
+    const init = await withTimeout(
+      Promise.race([q.initializationResult(), loop.then(() => Promise.reject(new Error(exitReason || "claude exited")))]),
+      INIT_TIMEOUT_MS,
+    )
     if (!init) ctx.log("warn", "claude initialize handshake timed out")
   } catch (e) {
-    ctx.log("warn", `claude initialize failed: ${e instanceof Error ? e.message : String(e)}`)
+    initError = e instanceof Error ? e.message : String(e)
   }
+  if (initError !== undefined || dead) {
+    const msg = initError ?? (exitReason || "claude exited")
+    ctx.log("error", `claude failed to start: ${msg}`)
+    closing = true
+    input.close()
+    abort.abort()
+    try {
+      q.close()
+    } catch {}
+    await withTimeout(loop, CLOSE_TIMEOUT_MS)
+    ctx.signal.removeEventListener("abort", onCtxAbort)
+    throw new Error(`claude failed to start: ${msg}`)
+  }
+  started = true
   if (tr.status === "starting") emit(tr.setStatus("ready"))
   return session
 }

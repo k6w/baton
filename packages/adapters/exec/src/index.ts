@@ -18,6 +18,7 @@ import {
   augmentedPath,
   type DetectResult,
   diffStat,
+  killProcessTree,
   newId,
   type PromptInput,
   parseUnifiedDiff,
@@ -142,14 +143,21 @@ class ExecSession implements AgentSession {
   private closed = false
   private firstTurn = true
   private turns = 0
+  private exited = false
+  private current: Promise<void> | undefined
+  private emit: (e: AgentEvent) => void
 
   constructor(
     private bin: string,
     private preset: ExecPreset,
     private cfg: SessionConfig,
-    private emit: (e: AgentEvent) => void,
+    emit: (e: AgentEvent) => void,
     private log: (level: "debug" | "info" | "warn" | "error", m: string) => void,
   ) {
+    // nothing is emitted after agent.exited
+    this.emit = (e) => {
+      if (!this.exited) emit(e)
+    }
     queueMicrotask(() => {
       this.emit({ type: "agent.updated", data: { model: cfg.model } })
       this.emit({ type: "agent.status", data: { status: "ready" } })
@@ -161,12 +169,12 @@ class ExecSession implements AgentSession {
   }
 
   async prompt(input: PromptInput): Promise<void> {
-    if (this.closed) return
+    if (this.closed) throw new Error(`${this.preset.displayName} session is closed`)
     if (this.running) {
       this.queue.push(input)
       return
     }
-    void this.run(input)
+    this.current = this.run(input)
   }
 
   private async run(input: PromptInput) {
@@ -178,12 +186,12 @@ class ExecSession implements AgentSession {
     this.firstTurn = false
     this.emit({ type: "agent.status", data: { status: "busy" } })
     this.emit({ type: "turn.started", data: { turnId, prompt: input.text } })
-    const before = snapshot(this.cfg.cwd)
     const vars = { prompt: text, model: this.cfg.model ?? "", cwd: this.cfg.cwd }
     const args = [
       ...(this.cfg.args?.length ? expand(this.cfg.args, vars) : expand(this.preset.args, vars)),
       ...(this.cfg.model && this.preset.modelArgs && !this.cfg.args?.length ? expand(this.preset.modelArgs, vars) : []),
     ]
+    let before: string | null = null
     const toolCallId = newId("tc")
     const messageId = newId("msg")
     let buf = ""
@@ -196,6 +204,8 @@ class ExecSession implements AgentSession {
       }
     }
     try {
+      // inside the try: a failing snapshot (e.g. cwd vanished) must still end the turn
+      before = snapshot(this.cfg.cwd)
       this.proc = Bun.spawn([this.bin, ...args], {
         cwd: this.cfg.cwd,
         env: { ...process.env, PATH: augmentedPath(), NO_COLOR: "1", TERM: "dumb", ...this.preset.env, ...this.cfg.env },
@@ -246,8 +256,8 @@ class ExecSession implements AgentSession {
       this.proc = undefined
       this.running = false
       if (!this.closed) this.emit({ type: "agent.status", data: { status: "ready" } })
-      const next = this.queue.shift()
-      if (next && !this.closed) void this.run(next)
+      const next = this.closed ? undefined : this.queue.shift()
+      if (next) this.current = this.run(next)
     }
   }
 
@@ -258,22 +268,39 @@ class ExecSession implements AgentSession {
     try {
       ;(this.proc as unknown as { terminal?: { write(s: string): void } }).terminal?.write("\x03")
     } catch {}
+    this.escalate(1500, 6000)
+  }
+
+  /** SIGINT then SIGKILL the turn's process (group) if it is still running after the delays. */
+  private escalate(intMs: number, killMs: number) {
     const p = this.proc
+    if (!p) return
     setTimeout(() => {
-      if (this.proc === p) p.kill("SIGINT")
-    }, 1500)
+      if (this.proc === p) killProcessTree(p.pid, "SIGINT")
+    }, intMs)
     setTimeout(() => {
-      if (this.proc === p) p.kill("SIGKILL")
-    }, 6000)
+      if (this.proc === p) killProcessTree(p.pid, "SIGKILL")
+    }, killMs)
   }
 
   async respondPermission(): Promise<void> {}
 
   async close(): Promise<void> {
     if (this.closed) return
-    await this.interrupt()
     this.closed = true
+    this.queue = []
+    if (this.proc) {
+      this.interrupted = true
+      try {
+        ;(this.proc as unknown as { terminal?: { write(s: string): void } }).terminal?.write("\x03")
+      } catch {}
+      this.escalate(300, 2000)
+    }
+    // let the running turn finish (turn.interrupted) before reporting the exit — bounded
+    const cur = this.current
+    if (cur) await Promise.race([cur.catch(() => {}), Bun.sleep(3000)])
     this.emit({ type: "agent.exited", data: { code: 0, reason: "closed" } })
+    this.exited = true
   }
 }
 

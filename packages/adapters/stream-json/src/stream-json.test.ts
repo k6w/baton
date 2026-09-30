@@ -11,7 +11,7 @@ function fakeAdapter(base: StreamJsonPreset): AgentAdapter {
   return createStreamJsonAdapter({ ...base, id: `${base.id}-fake`, binaries: [process.execPath], prefixArgs: [FAKE] }, { timings: { interruptGraceMs: 3_000 } })
 }
 
-type Logged = { argv?: string[]; stdin?: Record<string, any>; signal?: string }
+type Logged = { argv?: string[]; stdin?: Record<string, any>; signal?: string; child?: number }
 
 interface Run {
   h: Harness
@@ -194,8 +194,56 @@ describe("stream-json: claude dialect (fake CLI)", () => {
     const err = h.ofType("error")[0]
     expect(err?.data.fatal).toBe(true)
     expect(err?.data.detail).toContain("fatal: boom")
-    expect(h.ofType("turn.interrupted")).toHaveLength(1)
+    // An unexpected exit fails the turn (the host reports an error result) before agent.exited.
+    expect(h.ofType("turn.interrupted")).toHaveLength(0)
+    const types = h.events.map((e) => e.type)
+    expect(h.ofType("turn.completed")[0]?.data.stopReason).toBe("error")
+    expect(types.indexOf("turn.completed")).toBeLessThan(types.indexOf("agent.exited"))
+    expect(h.ofType("agent.exited")).toHaveLength(1)
     expect(statuses(h).slice(-2)).toEqual(["error", "exited"])
+    // A dead CLI rejects new prompts instead of starting a turn that can never finish.
+    const started = h.ofType("turn.started").length
+    await expect(h.session.prompt({ text: "again" })).rejects.toThrow("not running")
+    expect(h.ofType("turn.started")).toHaveLength(started)
+    expect(statuses(h).at(-1)).toBe("exited")
+  })
+
+  test("CLI dying during startup fails start() without exit events", async () => {
+    const events: { type: string }[] = []
+    const cwd = tempWorkspace()
+    const t = Date.now()
+    await expect(
+      fakeAdapter(claudeCliPreset).start(
+        { agentId: "a", name: "a", cwd, mcpServers: [], approval: "ask", env: { FAKE_DIALECT: "claude", FAKE_EXIT_ON_START: "4" } } as SessionConfig,
+        {
+          emit: (e) => events.push(e),
+          log: () => {},
+          signal: new AbortController().signal,
+        },
+      ),
+    ).rejects.toThrow("failed to start")
+    expect(Date.now() - t).toBeLessThan(10_000)
+    expect(events.filter((e) => e.type === "agent.exited" || e.type === "turn.started")).toHaveLength(0)
+  })
+
+  test("close kills the CLI's process group (no orphaned children)", async () => {
+    const { h, logged } = await run(claudeCliPreset, "claude")
+    await h.session.prompt({ text: "grandchild" })
+    await h.waitTurn()
+    const child = logged().find((l) => l.child)?.child
+    expect(child).toBeGreaterThan(0)
+    const alive = (pid: number) => {
+      try {
+        process.kill(pid, 0)
+        return true
+      } catch {
+        return false
+      }
+    }
+    expect(alive(child as number)).toBe(true)
+    await h.close()
+    for (let i = 0; i < 20 && alive(child as number); i++) await Bun.sleep(100)
+    expect(alive(child as number)).toBe(false)
   })
 })
 

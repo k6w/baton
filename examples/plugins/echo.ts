@@ -15,7 +15,7 @@ const echo: AgentAdapter = {
   capabilities() {
     return { steer: false, interrupt: true, resume: false, fork: false, diff: false, usage: false, cost: false, permissions: false, mcp: false, models: [] }
   },
-  async start(cfg, ctx) {
+  async start(_cfg, ctx) {
     ctx.emit({ type: "agent.status", data: { status: "ready" } })
     return {
       async prompt({ text }) {

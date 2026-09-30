@@ -101,12 +101,20 @@ class MockSession implements AgentSession {
   private sessionId = newId("mock")
   private usage = { input: 0, cachedInput: 0, output: 0, reasoning: 0, costUsd: 0 }
   private turn = 0
+  private currentTurnId?: string
+  private closed = false
+  private timers = new Map<ReturnType<typeof setTimeout>, () => void>()
+  private emit: (e: AgentEvent) => void
 
   constructor(
     private cfg: SessionConfig,
-    private emit: (e: AgentEvent) => void,
+    emit: (e: AgentEvent) => void,
     signal: AbortSignal,
   ) {
+    // Nothing is emitted once the session has exited.
+    this.emit = (e) => {
+      if (!this.closed) emit(e)
+    }
     const o = cfg.options ?? {}
     this.persona = (o.persona as Persona) ?? "generic"
     this.speed = typeof o.speed === "number" ? o.speed : 1
@@ -124,6 +132,7 @@ class MockSession implements AgentSession {
   }
 
   async prompt(input: PromptInput): Promise<void> {
+    if (this.closed) throw new Error("mock session is closed")
     if (this.running) {
       this.queue.push(input)
       return
@@ -132,6 +141,7 @@ class MockSession implements AgentSession {
   }
 
   async steer(input: PromptInput): Promise<void> {
+    if (this.closed) throw new Error("mock session is closed")
     if (!this.running) return this.prompt(input)
     this.steered.push(input)
   }
@@ -153,14 +163,31 @@ class MockSession implements AgentSession {
   }
 
   async close(): Promise<void> {
+    if (this.closed) return
+    const turnId = this.running ? this.currentTurnId : undefined
     await this.interrupt()
     this.queue = []
+    this.steered = []
+    for (const [t, resolve] of this.timers) {
+      clearTimeout(t)
+      resolve()
+    }
+    this.timers.clear()
+    if (turnId) this.emit({ type: "turn.interrupted", data: { turnId } })
     this.emit({ type: "agent.exited", data: { code: 0, reason: "closed" } })
+    this.closed = true
   }
 
   private sleep(ms: number): Promise<void> {
     const t = ms * this.speed
-    return t <= 0 ? Promise.resolve() : new Promise((r) => setTimeout(r, t))
+    if (t <= 0 || this.closed) return Promise.resolve()
+    return new Promise((r) => {
+      const timer = setTimeout(() => {
+        this.timers.delete(timer)
+        r()
+      }, t)
+      this.timers.set(timer, r)
+    })
   }
 
   private pick<T>(arr: readonly T[]): T {
@@ -219,6 +246,7 @@ class MockSession implements AgentSession {
     this.running = true
     this.aborted = false
     const turnId = `t${++this.turn}`
+    this.currentTurnId = turnId
     this.emit({ type: "agent.status", data: { status: "busy" } })
     this.emit({ type: "turn.started", data: { turnId, prompt: input.text } })
     this.addUsage(1200 + Math.floor(this.rand() * 4000), 0)
@@ -244,7 +272,7 @@ class MockSession implements AgentSession {
     } finally {
       this.running = false
       this.emit({ type: "agent.status", data: { status: "ready" } })
-      const next = this.queue.shift()
+      const next = this.closed ? undefined : this.queue.shift()
       if (next) void this.runTurn(next)
     }
   }

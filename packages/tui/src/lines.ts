@@ -623,7 +623,7 @@ export interface WorkspaceLike {
 
 /** One-line workspace state for a card: `⎇ 3 files +12 −4 · review ✓`, conflicts, merge status. */
 export function workspaceLine(ws: WorkspaceLike | undefined, ctx: { theme: ResolvedTheme; width: number; who: RenderCtx["who"] }): Line | undefined {
-  if (!ws || ws.mode !== "worktree") return undefined
+  if (ws?.mode !== "worktree") return undefined
   const t = ctx.theme
   const segs: Seg[] = []
   const sep = () => segs.push({ text: " · ", fg: t.textSubtle })

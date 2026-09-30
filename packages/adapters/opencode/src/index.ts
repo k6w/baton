@@ -15,6 +15,65 @@ export { OpencodeTranslator, PERMISSION_OPTIONS, replyFor, stopReasonFor } from 
 
 const READY_TIMEOUT_MS = 30_000
 const INTERRUPT_GRACE_MS = 5_000
+const KILL_GRACE_MS = 3_000
+
+/**
+ * Watchdog wrapper: runs the server in the background with our stdin kept on fd 3. When the host
+ * dies (even SIGKILL) the stdin pipe hits EOF and the watchdog tears down the whole process group,
+ * so `opencode serve` (and anything it spawned) never outlives baton. The wrapper exits with the
+ * server's exit code when the server exits on its own.
+ */
+const WATCHDOG = [
+  "exec 3<&0",
+  '"$@" </dev/null 3<&- &',
+  "pid=$!",
+  // on stdin EOF: TERM the group, give the server up to ~3s to go, then KILL the group (incl. this watchdog)
+  '( trap "" TERM; read _ <&3; kill -TERM 0 2>/dev/null; i=0; while kill -0 "$pid" 2>/dev/null && [ $i -lt 30 ]; do sleep 0.1; i=$((i+1)); done; kill -KILL 0 2>/dev/null ) &',
+  "w=$!",
+  "exec 3<&-",
+  'wait "$pid"',
+  "code=$?",
+  'kill "$w" 2>/dev/null',
+  'exit "$code"',
+].join("\n")
+
+export type ServeProcess = Bun.Subprocess<"pipe", "pipe", "pipe">
+
+/** Spawn `cmd` in its own process group behind the stdin-EOF watchdog (see WATCHDOG). */
+export function spawnWatched(cmd: string[], opts: { cwd?: string; env?: Record<string, string | undefined> }): ServeProcess {
+  return Bun.spawn(["/bin/sh", "-c", WATCHDOG, "baton-opencode", ...cmd], {
+    cwd: opts.cwd,
+    env: opts.env,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    detached: true,
+  })
+}
+
+function groupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0)
+    return true
+  } catch (e) {
+    return (e as { code?: string }).code === "EPERM"
+  }
+}
+
+/** Signal the process group of a {@link spawnWatched} process (falls back to the pid itself). */
+export function killGroup(proc: { pid: number; kill(sig?: NodeJS.Signals | number): void }, sig: NodeJS.Signals): void {
+  try {
+    process.kill(-proc.pid, sig)
+    return
+  } catch {
+    // group already gone or not a group leader
+  }
+  try {
+    proc.kill(sig)
+  } catch {
+    // already exited
+  }
+}
 
 function randomPassword(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(24))
@@ -22,7 +81,6 @@ function randomPassword(): string {
 }
 
 function stripAnsi(s: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escapes
   return s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")
 }
 
@@ -53,7 +111,9 @@ function isTurnEnd(e: AgentEvent): boolean {
 class OpencodeSession implements AgentSession {
   private translator: OpencodeTranslator
   private client!: OpencodeClient
-  private proc!: ReturnType<typeof Bun.spawn>
+  private proc!: ServeProcess
+  /** start() finished: lifecycle events (crash / agent.exited) are only emitted for a live session. */
+  private started = false
   private sessionID: string | undefined
   private model: { providerID: string; modelID: string } | undefined
   private queue: PromptInput[] = []
@@ -77,7 +137,7 @@ class OpencodeSession implements AgentSession {
     if (!bin) throw new Error("opencode not found on PATH (install: `bun add -g opencode-ai` or `curl -fsSL https://opencode.ai/install | bash`)")
     const password = randomPassword()
     const config = buildConfig(this.cfg)
-    this.proc = Bun.spawn([bin, "serve", "--port", "0", "--hostname", "127.0.0.1", ...(this.cfg.args ?? [])], {
+    this.proc = spawnWatched([bin, "serve", "--port", "0", "--hostname", "127.0.0.1", ...(this.cfg.args ?? [])], {
       cwd: this.cfg.cwd,
       env: {
         ...process.env,
@@ -87,9 +147,6 @@ class OpencodeSession implements AgentSession {
         OPENCODE_SERVER_PASSWORD: password,
         OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
       },
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
     })
     this.ctx.log("debug", `spawned opencode serve pid=${this.proc.pid} in ${this.cfg.cwd}`)
 
@@ -101,13 +158,20 @@ class OpencodeSession implements AgentSession {
       url.reject(new Error(`opencode serve exited with code ${code} before it was ready`))
       this.onExit(code)
     })
-    const timer = setTimeout(() => url.reject(new Error(`opencode serve not ready after ${READY_TIMEOUT_MS}ms`)), READY_TIMEOUT_MS)
+    const readyMs = typeof this.cfg.options?.readyTimeoutMs === "number" ? this.cfg.options.readyTimeoutMs : READY_TIMEOUT_MS
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      url.reject(new Error(`opencode serve not ready after ${readyMs}ms`))
+    }, readyMs)
     let baseUrl: string
     try {
       baseUrl = await url.promise
     } catch (e) {
       this.closing = true
-      this.proc.kill()
+      // an unresponsive server gets no grace period
+      if (timedOut) killGroup(this.proc, "SIGKILL")
+      else await this.terminate()
       throw e
     } finally {
       clearTimeout(timer)
@@ -141,6 +205,7 @@ class OpencodeSession implements AgentSession {
     if (this.cfg.resumeId) await this.resync()
     if (!this.translator.turnActive) this.emitAll(this.translator.endTurn())
 
+    this.started = true
     this.ctx.signal.addEventListener("abort", () => void this.close(), { once: true })
   }
 
@@ -239,6 +304,8 @@ class OpencodeSession implements AgentSession {
 
   private onExit(code: number | null): void {
     this.sseAbort?.abort()
+    // a failed start() throws instead; the host never saw a session, so don't report its exit
+    if (!this.started) return
     if (!this.closing) {
       this.ctx.emit({ type: "error", data: { message: `opencode server exited unexpectedly (code ${code})`, fatal: true } })
       if (this.translator.turnActive) for (const e of this.translator.endTurn({ interrupted: true })) this.ctx.emit(e)
@@ -346,12 +413,23 @@ class OpencodeSession implements AgentSession {
       for (const e of this.translator.endTurn({ interrupted: true })) this.ctx.emit(e)
     }
     this.sseAbort?.abort()
-    if (!this.exited) {
-      this.proc.kill("SIGTERM")
-      const done = await Promise.race([this.proc.exited.then(() => true), Bun.sleep(3_000).then(() => false)])
-      if (!done) this.proc.kill("SIGKILL")
-      await this.proc.exited
+    await this.terminate()
+  }
+
+  /** SIGTERM the server's process group, then SIGKILL whatever is left after a grace period. */
+  private async terminate(): Promise<void> {
+    if (!this.proc) return
+    try {
+      this.proc.stdin.end()
+    } catch {
+      // already closed
     }
+    killGroup(this.proc, "SIGTERM")
+    // wait for the whole group (not just the wrapper) so the server can shut down gracefully
+    const deadline = Date.now() + KILL_GRACE_MS
+    while (Date.now() < deadline && groupAlive(this.proc.pid)) await Bun.sleep(50)
+    killGroup(this.proc, "SIGKILL")
+    await Promise.race([this.proc.exited, Bun.sleep(1_000)])
   }
 }
 

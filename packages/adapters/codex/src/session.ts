@@ -24,6 +24,8 @@ import { CodexTranslator, isReadOnlyCommand } from "./translator.ts"
 
 const CLIENT_VERSION = "0.1.0"
 const REQUEST_TIMEOUT_MS = 60_000
+/** How long close() waits for an in-flight turn to wind down after interrupting it. */
+const CLOSE_INTERRUPT_MS = 2_000
 
 type Proc = Bun.Subprocess<"pipe", "pipe", "pipe">
 
@@ -49,6 +51,9 @@ export class CodexSession implements AgentSession {
   private queue: PromptInput[] = []
   private interruptRequested = false
   private closing = false
+  /** Set once the app-server process has exited (for whatever reason). */
+  private dead = false
+  private stdoutDone: Promise<void> = Promise.resolve()
   private exited = deferred<number | null>()
   private turnIdle: ReturnType<typeof deferred<void>> | undefined
   /** Inbound messages are processed strictly in order (some steps are async). */
@@ -84,9 +89,11 @@ export class CodexSession implements AgentSession {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
+      // Own process group so close() can take down anything codex spawned (shell tools, MCP servers).
+      detached: true,
     })
     this.peer = new JsonRpcPeer((msg) => this.write(msg), { includeVersion: false })
-    void this.readStdout()
+    this.stdoutDone = this.readStdout()
     void this.readStderr()
     void this.proc.exited.then((code) => this.onExit(code))
     this.ctx.signal.addEventListener("abort", () => void this.close(), { once: true })
@@ -178,6 +185,10 @@ export class CodexSession implements AgentSession {
       return
     }
     if (msg.method !== undefined) {
+      if (this.translator.isForeign(msg.params)) {
+        this.ctx.log("debug", `codex: ignoring ${msg.method} for another thread`)
+        return
+      }
       this.translator.notification(msg.method, msg.params, raw)
       if (msg.method === "item/completed") await this.afterItem((msg.params as { item: ThreadItem }).item)
       return
@@ -212,13 +223,19 @@ export class CodexSession implements AgentSession {
     } catch {}
   }
 
-  private onExit(code: number | null): void {
+  private async onExit(code: number | null): Promise<void> {
+    this.dead = true
+    this.queue = []
+    // Let already-received output (e.g. a final turn/completed) be translated before reporting the exit.
+    await Promise.race([this.stdoutDone.then(() => this.inbox), Bun.sleep(1_000)])
     this.peer.close(`codex exited (${code})`)
     if (!this.closing) {
       this.ctx.emit({ type: "error", data: { message: `codex app-server exited unexpectedly (code ${code})`, fatal: true } })
     }
     // Pending permissions can never be answered now.
     this.translator.cancelAll()
+    // A turn that was running can never complete: report it as failed so the host records a result.
+    if (this.translator.activeTurnId) this.translator.failTurn(this.closing ? "cancelled" : "error")
     this.running = false
     this.queue = []
     this.turnIdle?.resolve()
@@ -229,8 +246,13 @@ export class CodexSession implements AgentSession {
 
   // ───────────────────────────── turns ─────────────────────────────
 
-  async prompt(input: PromptInput): Promise<void> {
+  private assertAlive(): void {
+    if (this.dead) throw new Error("codex app-server has exited")
     if (this.closing) throw new Error("codex session is closed")
+  }
+
+  async prompt(input: PromptInput): Promise<void> {
+    this.assertAlive()
     if (this.running) {
       this.queue.push(input)
       this.ctx.log("debug", `codex: turn running, queued prompt (${this.queue.length} queued)`)
@@ -252,10 +274,11 @@ export class CodexSession implements AgentSession {
       const res = await this.peer.request<TurnStartResponse>("turn/start", params, REQUEST_TIMEOUT_MS)
       // turn/started normally precedes the response; record the id either way.
       if (!this.translator.activeTurnId && res.turn.status === "inProgress") this.translator.activeTurnId = res.turn.id
-      if (this.interruptRequested) await this.interrupt()
+      if (this.interruptRequested) await this.interruptTurn()
     } catch (e) {
       this.running = false
       this.turnIdle.resolve()
+      if (this.dead) throw new Error("codex app-server has exited")
       const message = e instanceof Error ? e.message : String(e)
       this.ctx.emit({ type: "error", data: { message: `codex turn/start failed: ${message}` } })
       this.translator.setStatus("ready")
@@ -267,12 +290,13 @@ export class CodexSession implements AgentSession {
     this.running = false
     this.turnIdle?.resolve()
     const next = this.queue.shift()
-    if (next && !this.closing) {
+    if (next && !this.closing && !this.dead) {
       this.startTurn(next).catch((e) => this.ctx.log("warn", `codex: queued prompt failed: ${e instanceof Error ? e.message : String(e)}`))
     }
   }
 
   async steer(input: PromptInput): Promise<void> {
+    this.assertAlive()
     const turnId = this.translator.activeTurnId
     if (!this.threadId || !turnId) return this.prompt(input)
     const params: TurnSteerParams = { threadId: this.threadId, input: textInput(promptText(input)), expectedTurnId: turnId }
@@ -280,6 +304,7 @@ export class CodexSession implements AgentSession {
       await this.peer.request("turn/steer", params, REQUEST_TIMEOUT_MS)
     } catch (e) {
       // The turn ended between our check and codex receiving the steer: run it as a new turn.
+      if (this.dead) throw new Error("codex app-server has exited")
       this.ctx.log("info", `codex: steer rejected (${e instanceof Error ? e.message : String(e)}); queueing as a prompt`)
       await this.prompt(input)
     }
@@ -287,7 +312,12 @@ export class CodexSession implements AgentSession {
 
   async interrupt(): Promise<void> {
     this.queue = []
-    if (!this.running || !this.threadId) return
+    await this.interruptTurn()
+  }
+
+  /** Interrupt the running turn without touching the prompt queue. */
+  private async interruptTurn(): Promise<void> {
+    if (!this.running || !this.threadId || this.dead) return
     const turnId = this.translator.activeTurnId
     if (!turnId) {
       // turn/start is still in flight; interrupt as soon as we learn the turn id.
@@ -333,20 +363,37 @@ export class CodexSession implements AgentSession {
       return
     }
     for (const r of this.translator.cancelAll()) this.write({ id: r.rpcId, result: r.result })
-    if (this.running && this.translator.activeTurnId) {
-      await this.interrupt()
-      await Promise.race([this.turnIdle?.promise, Bun.sleep(3_000)])
+    if (!this.dead && this.running && this.translator.activeTurnId) {
+      // Bounded: a wedged app-server must not hold up shutdown.
+      const deadline = Bun.sleep(CLOSE_INTERRUPT_MS)
+      await Promise.race([this.interruptTurn().then(() => this.turnIdle?.promise), deadline])
     }
-    try {
-      this.proc.stdin.end()
-    } catch {}
-    const exited = await Promise.race([this.exited.promise.then(() => true), Bun.sleep(2_000).then(() => false)])
-    if (!exited) {
-      this.proc.kill("SIGTERM")
-      const gone = await Promise.race([this.exited.promise.then(() => true), Bun.sleep(2_000).then(() => false)])
-      if (!gone) this.proc.kill("SIGKILL")
+    if (!this.dead) {
+      try {
+        this.proc.stdin.end()
+      } catch {}
+      const exited = await Promise.race([this.exited.promise.then(() => true), Bun.sleep(2_000).then(() => false)])
+      if (!exited) {
+        this.killTree("SIGTERM")
+        const gone = await Promise.race([this.exited.promise.then(() => true), Bun.sleep(2_000).then(() => false)])
+        if (!gone) this.killTree("SIGKILL")
+      }
     }
+    // Take down anything codex left behind in its process group.
+    this.killTree("SIGKILL")
     await this.exited.promise
     this.snapshots?.dispose()
+  }
+
+  private killTree(sig: NodeJS.Signals): void {
+    const pid = this.proc?.pid
+    if (!pid) return
+    try {
+      process.kill(-pid, sig)
+      return
+    } catch {}
+    try {
+      this.proc.kill(sig)
+    } catch {}
   }
 }

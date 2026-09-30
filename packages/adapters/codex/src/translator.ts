@@ -88,6 +88,13 @@ export class CodexTranslator {
   private byRpcId = new Map<RpcId, string>()
   private permSeq = 0
   private currentRaw: unknown
+  /** True once one of our turns has started (usage before that belongs to earlier sessions). */
+  private sawTurn = false
+  /**
+   * Thread token totals that predate this session (resume/fork report the thread's lifetime
+   * totals): subtracted so `usage.updated` only counts what this session spent.
+   */
+  private usageOffset: TokenTotals | undefined
 
   constructor(
     private readonly sink: (e: AgentEvent) => void,
@@ -129,7 +136,21 @@ export class CodexTranslator {
 
   // ───────────────────────────── notifications ─────────────────────────────
 
+  /**
+   * True when a notification belongs to a different thread than ours (e.g. a sub-agent's child
+   * thread): those must not drive our turn state.
+   */
+  isForeign(params: unknown): boolean {
+    if (!this.threadId || !params || typeof params !== "object") return false
+    const tid = (params as { threadId?: unknown }).threadId
+    return typeof tid === "string" && tid !== this.threadId
+  }
+
   notification(method: string, params: unknown, raw?: unknown): void {
+    if (this.isForeign(params)) {
+      this.log("debug", `codex: ignored ${method} for another thread`)
+      return
+    }
     this.currentRaw = raw
     try {
       this.dispatch(method, params)
@@ -140,8 +161,15 @@ export class CodexTranslator {
 
   private dispatch(method: string, params: unknown) {
     switch (method) {
-      case "thread/started":
-        return this.setThread((params as NotificationParams<"thread/started">).thread.id)
+      case "thread/started": {
+        // Only the first thread is ours; later ones are sub-agent / child threads.
+        const id = (params as NotificationParams<"thread/started">).thread.id
+        if (this.threadId && id !== this.threadId) {
+          this.log("debug", `codex: child thread ${id} started`)
+          return
+        }
+        return this.setThread(id)
+      }
       case "thread/status/changed": {
         const p = params as NotificationParams<"thread/status/changed">
         if (p.status.type === "systemError") this.setStatus("error", "codex thread entered systemError")
@@ -206,14 +234,24 @@ export class CodexTranslator {
       case "thread/tokenUsage/updated": {
         // Codex reports OpenAI-style counts where inputTokens *includes* cached tokens. BEP keeps
         // them disjoint (input = uncached input) so totals add up and cache pricing can apply.
-        const t = (params as NotificationParams<"thread/tokenUsage/updated">).tokenUsage.total
+        const usage = (params as NotificationParams<"thread/tokenUsage/updated">).tokenUsage
+        const total = totals(usage.total)
+        if (!this.sawTurn) {
+          // Replayed lifetime totals of a resumed/forked thread: remember them as the baseline.
+          this.usageOffset = total
+          return
+        }
+        // No baseline seen before our first turn: the thread's prior total is this total minus
+        // the call that produced it.
+        if (!this.usageOffset) this.usageOffset = subTotals(total, totals(usage.last))
+        const t = subTotals(total, this.usageOffset)
         return this.emit({
           type: "usage.updated",
           data: {
-            input: Math.max(0, t.inputTokens - t.cachedInputTokens),
-            cachedInput: t.cachedInputTokens,
-            output: t.outputTokens,
-            reasoning: t.reasoningOutputTokens,
+            input: Math.max(0, t.input - t.cached),
+            cachedInput: t.cached,
+            output: t.output,
+            reasoning: t.reasoning,
             source: "reported",
             mode: "cumulative",
           },
@@ -256,6 +294,7 @@ export class CodexTranslator {
   // ───────────────────────────── turns ─────────────────────────────
 
   private turnStarted(turn: Turn): void {
+    this.sawTurn = true
     this.activeTurnId = turn.id
     const prompt = this.nextPrompt
     this.nextPrompt = undefined
@@ -286,6 +325,23 @@ export class CodexTranslator {
     if (this.activeTurnId === turn.id) this.activeTurnId = undefined
     this.setStatus("ready")
     this.onTurnEnded?.(turn.id, turn.status)
+  }
+
+  /**
+   * The app-server went away mid-turn: close what is open and report the turn as ended
+   * (no status change / onTurnEnded — the session is going down).
+   */
+  failTurn(stopReason: "error" | "cancelled"): void {
+    const turnId = this.activeTurnId
+    if (!turnId) return
+    for (const [id, m] of this.messages) this.emit({ type: "message.completed", data: { messageId: id, role: m.role, text: m.text } })
+    this.messages.clear()
+    for (const id of this.tools.keys()) this.emit({ type: "tool.update", data: { toolCallId: id, status: "failed", summary: "Agent exited" } })
+    this.tools.clear()
+    for (const id of [...this.pending.keys()]) this.dropPending(id, "cancelled")
+    if (stopReason === "cancelled") this.emit({ type: "turn.interrupted", data: { turnId } })
+    this.emit({ type: "turn.completed", data: { turnId, stopReason } })
+    this.activeTurnId = undefined
   }
 
   // ───────────────────────────── items ─────────────────────────────
@@ -898,5 +954,26 @@ export function toolResult(item: ThreadItem): Extract<AgentEvent, { type: "tool.
       return { toolCallId: item.id, status: "completed" }
     default:
       return undefined
+  }
+}
+
+interface TokenTotals {
+  input: number
+  cached: number
+  output: number
+  reasoning: number
+}
+
+function totals(b: Partial<Record<"inputTokens" | "cachedInputTokens" | "outputTokens" | "reasoningOutputTokens", number>> | undefined): TokenTotals {
+  const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0)
+  return { input: n(b?.inputTokens), cached: n(b?.cachedInputTokens), output: n(b?.outputTokens), reasoning: n(b?.reasoningOutputTokens) }
+}
+
+function subTotals(a: TokenTotals, b: TokenTotals): TokenTotals {
+  return {
+    input: Math.max(0, a.input - b.input),
+    cached: Math.max(0, a.cached - b.cached),
+    output: Math.max(0, a.output - b.output),
+    reasoning: Math.max(0, a.reasoning - b.reasoning),
   }
 }

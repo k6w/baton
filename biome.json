@@ -3,5 +3,11 @@
   "files": { "includes": ["**", "!**/generated", "!**/fixtures/**/*.jsonl", "!**/node_modules"] },
   "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 160 },
   "javascript": { "formatter": { "semicolons": "asNeeded", "quoteStyle": "double" } },
-  "linter": { "rules": { "recommended": true, "style": { "noNonNullAssertion": "off" }, "suspicious": { "noExplicitAny": "off" } } }
+  "linter": {
+    "rules": {
+      "preset": "recommended",
+      "style": { "noNonNullAssertion": "off" },
+      "suspicious": { "noExplicitAny": "off", "noControlCharactersInRegex": "off" }
+    }
+  }
 }

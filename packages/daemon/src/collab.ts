@@ -103,7 +103,7 @@ export class Collaboration {
     const taskId = this.taskOwners.get(agent.info.agentId)
     if (!taskId) return
     const task = this.rt.state.tasks.get(taskId)
-    if (!task || task.state !== "working") return
+    if (task?.state !== "working") return
     const state: TaskState = outcome === "ok" ? "completed" : outcome === "failed" ? "failed" : "input_required"
     this.rt.emit({ type: "task.state", data: { taskId, state, owner: agent.info.agentId } })
     this.taskOwners.delete(agent.info.agentId)
@@ -111,7 +111,7 @@ export class Collaboration {
 
   private scheduleRefresh(agentId: string, delay = 1200) {
     const ws = this.workspaces.byAgent.get(agentId)
-    if (!ws || ws.mode !== "worktree") return
+    if (ws?.mode !== "worktree") return
     const prev = this.refreshTimers.get(agentId)
     if (prev) clearTimeout(prev)
     const t = setTimeout(() => {

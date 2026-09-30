@@ -32,6 +32,22 @@ interface Term {
 }
 
 const DEFAULT_LIMIT = 1024 * 1024
+const PIPE_DRAIN_MS = 200
+
+/**
+ * Signal the process group of a child spawned with `detached: true` (it leads its own group),
+ * falling back to the pid itself while it is still running. Errors (already gone) are ignored.
+ */
+export function killTree(proc: { pid: number; exitCode: number | null; signalCode: string | null }, signal: NodeJS.Signals = "SIGTERM"): void {
+  try {
+    process.kill(-proc.pid, signal)
+    return
+  } catch {}
+  if (proc.exitCode !== null || proc.signalCode !== null) return
+  try {
+    process.kill(proc.pid, signal)
+  } catch {}
+}
 
 export class TerminalManager {
   private terms = new Map<string, Term>()
@@ -56,7 +72,8 @@ export class TerminalManager {
     // Agents send either a full shell string (no args) or an argv split; honour both.
     const cmd = o.args && o.args.length > 0 ? [o.command, ...o.args] : [this.shell, "-c", o.command]
     const display = o.args && o.args.length > 0 ? [o.command, ...o.args].join(" ") : o.command
-    const proc = Bun.spawn(cmd, { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" })
+    // Own process group, so kill/release reach the whole tree (`cmd1; cmd2`, pipelines, `&` jobs).
+    const proc = Bun.spawn(cmd, { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true })
     const limit = o.outputByteLimit != null && o.outputByteLimit >= 0 ? o.outputByteLimit : DEFAULT_LIMIT
     const t: Term = {
       id,
@@ -71,7 +88,9 @@ export class TerminalManager {
     }
     t.pumps = Promise.all([this.pump(t, proc.stdout as ReadableStream<Uint8Array>), this.pump(t, proc.stderr as ReadableStream<Uint8Array>)]).then(() => {})
     t.exited = proc.exited.then(async (code) => {
-      await t.pumps.catch(() => {})
+      // Exit is the process's, not the pipes': a background child can keep stdout open
+      // indefinitely. Give trailing output a moment to drain, then report.
+      await Promise.race([t.pumps.catch(() => {}), Bun.sleep(PIPE_DRAIN_MS)])
       const signal = proc.signalCode ?? null
       t.exit = { exitCode: signal ? null : code, signal }
       this.opts.onExit?.(id, t.exit)
@@ -130,14 +149,13 @@ export class TerminalManager {
   }
 
   kill(id: string): void {
-    const t = this.get(id)
-    if (!t.exit) t.proc.kill()
+    killTree(this.get(id).proc)
   }
 
   release(id: string): void {
     const t = this.terms.get(id)
     if (!t) return
-    if (!t.exit) t.proc.kill()
+    killTree(t.proc)
     this.terms.delete(id)
     this.released.set(id, { output: new TextDecoder().decode(t.bytes), exit: t.exit, command: t.command })
     if (this.released.size > 64) this.released.delete(this.released.keys().next().value as string)
@@ -146,9 +164,9 @@ export class TerminalManager {
   async disposeAll(): Promise<void> {
     const all = [...this.terms.values()]
     this.terms.clear()
-    for (const t of all) if (!t.exit) t.proc.kill()
+    for (const t of all) killTree(t.proc)
     await Promise.all(all.map((t) => Promise.race([t.exited, Bun.sleep(2000)]))).catch(() => {})
-    for (const t of all) if (!t.exit) t.proc.kill("SIGKILL")
+    for (const t of all) killTree(t.proc, "SIGKILL")
   }
 
   private get(id: string): Term {

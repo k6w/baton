@@ -7,7 +7,7 @@
 import type { FeedItem } from "@batonsh/kernel"
 import { formatCost } from "@batonsh/kernel"
 import type { InputRenderable } from "@opentui/core"
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, Show } from "solid-js"
 import { agentLook, whoFn } from "../agent-style.ts"
 import { type Completion, completions } from "../completion.ts"
 import { useUi } from "../context.ts"

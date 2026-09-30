@@ -202,7 +202,13 @@ export function editDiff(info: ToolResultInfo): Extract<ToolContent, { type: "di
   } else if (name === "Edit") {
     const oldS = str(input.old_string) ?? ""
     const newS = str(input.new_string) ?? ""
-    if (!lines) lines = shift(diffLines(oldS, newS), lineOffsetOf(original ?? undefined, oldS) - 1)
+    if (!lines) {
+      if (input.replace_all === true && typeof original === "string" && oldS) {
+        // Every occurrence changed: diff the whole file rather than the first match only.
+        newText = original.split(oldS).join(newS)
+        lines = diffLines(original, newText)
+      } else lines = shift(diffLines(oldS, newS), lineOffsetOf(original ?? undefined, oldS) - 1)
+    }
   } else {
     // MultiEdit: apply edits in order to the snapshot when we have one, else concatenate per-edit diffs.
     const edits = Array.isArray(input.edits) ? (input.edits as Input[]) : []

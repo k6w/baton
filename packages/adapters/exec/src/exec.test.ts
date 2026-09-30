@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test"
-import { writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { startHarness, tempWorkspace } from "../../testkit/src/index.ts"
 import { cleanTerminal, createExecAdapter, execAdapters } from "./index.ts"
@@ -42,6 +41,36 @@ describe("exec adapter", () => {
     await h.session.interrupt()
     await h.waitFor("turn.interrupted", undefined, 10_000)
     await h.close()
+  })
+
+  test("a failing turn setup still completes the turn with an error", async () => {
+    const cwd = tempWorkspace({})
+    const adapter = createExecAdapter({ id: "gone", displayName: "Gone", binaries: ["sh"], args: ["-c", "echo hi"] })
+    const h = await startHarness(adapter, { cwd: join(cwd, "does-not-exist") })
+    await h.session.prompt({ text: "go" })
+    await h.waitFor("turn.completed", undefined, 10_000)
+    expect(h.ofType("turn.completed")[0]?.data.stopReason).toBe("error")
+    await h.close()
+  })
+
+  test("close mid-turn: turn ends before agent.exited, exited once, nothing after", async () => {
+    const cwd = tempWorkspace({})
+    const adapter = createExecAdapter({ id: "slow2", displayName: "Slow", binaries: ["sh"], args: ["-c", "trap '' INT; echo started; sleep 30"] })
+    const h = await startHarness(adapter, { cwd })
+    await h.session.prompt({ text: "go" })
+    await h.waitFor("message.delta", undefined, 10_000)
+    const t = performance.now()
+    await h.close()
+    await h.session.close()
+    expect(performance.now() - t).toBeLessThan(5000)
+    const n = h.events.length
+    await Bun.sleep(300)
+    expect(h.events.length).toBe(n)
+    const types = h.events.map((e) => e.type)
+    expect(types.filter((x) => x === "agent.exited")).toHaveLength(1)
+    expect(types.at(-1)).toBe("agent.exited")
+    expect(types).toContain("turn.interrupted")
+    await expect(h.session.prompt({ text: "again" })).rejects.toThrow()
   })
 
   test("presets are registered", () => {

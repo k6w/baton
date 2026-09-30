@@ -241,7 +241,7 @@ export function Inbox(props: { onClose: () => void; onJump: (item: AttentionItem
   const selClamped = () => Math.max(0, Math.min(sel(), items().length - 1))
   const respond = async (kind: "allow_once" | "allow_always" | "reject_once" | "reject_always") => {
     const it = current()
-    if (!it || it.kind !== "approval" || !ui.client) return
+    if (it?.kind !== "approval" || !ui.client) return
     const p = ui.run.approvals.get(it.requestId!)
     if (!p) return
     const opt = p.options.find((o) => o.kind === kind) ?? p.options.find((o) => o.kind.startsWith(kind.split("_")[0]!))

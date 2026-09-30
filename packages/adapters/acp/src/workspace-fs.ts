@@ -3,8 +3,8 @@
  * Paths are checked both lexically and after resolving symlinks (so a link inside the
  * workspace can't be used to escape it, and macOS /var ↔ /private/var aliases work).
  */
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path"
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, writeFileSync } from "node:fs"
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 
 export class WorkspaceFs {
   readonly root: string
@@ -20,10 +20,9 @@ export class WorkspaceFs {
     const abs = isAbsolute(p) ? resolve(p) : resolve(this.root, p)
     const lexicallyInside = inside(this.root, abs) || inside(this.realRoot, abs)
     if (!lexicallyInside) throw new Error(`path is outside the workspace (${this.root}): ${p}`)
-    // resolve symlinks of the deepest existing ancestor
-    let probe = abs
-    while (!existsSync(probe) && dirname(probe) !== probe) probe = dirname(probe)
-    const real = safeRealpath(probe)
+    // Where would an access actually land? Follows symlinks — including dangling ones, which
+    // `existsSync`/`realpath` treat as missing but a write would happily follow out of the tree.
+    const real = landingPath(abs)
     if (!inside(this.realRoot, real) && !inside(this.root, real)) throw new Error(`path resolves outside the workspace (${this.root}): ${p}`)
     return abs
   }
@@ -61,6 +60,36 @@ export class WorkspaceFs {
 function inside(root: string, p: string): boolean {
   const rel = relative(root, p)
   return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
+}
+
+/**
+ * Real path a read/write of `p` would hit: realpath of the deepest entry that exists (lstat),
+ * with dangling symlinks followed by hand (their target may not exist yet), plus the
+ * not-yet-existing remainder.
+ */
+function landingPath(p: string, depth = 0): string {
+  if (depth > 40) throw new Error(`too many levels of symbolic links: ${p}`)
+  const rest: string[] = []
+  let probe = p
+  for (;;) {
+    let isLink: boolean | undefined
+    try {
+      isLink = lstatSync(probe).isSymbolicLink()
+    } catch {}
+    if (isLink !== undefined) {
+      let real: string | undefined
+      try {
+        real = realpathSync(probe)
+      } catch {}
+      if (real !== undefined) return join(real, ...rest)
+      if (isLink) return landingPath(join(resolve(dirname(probe), readlinkSync(probe)), ...rest), depth + 1)
+      return join(probe, ...rest)
+    }
+    const parent = dirname(probe)
+    if (parent === probe) return p
+    rest.unshift(basename(probe))
+    probe = parent
+  }
 }
 
 function safeRealpath(p: string): string {

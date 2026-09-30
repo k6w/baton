@@ -74,7 +74,7 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
   const [filter, setFilter] = createSignal<string | null>(null)
   const [tick, setTick] = createSignal(0)
   let editRef: InputRenderable | undefined
-  let searchRef: InputRenderable | undefined
+  let _searchRef: InputRenderable | undefined
   const themes = listThemes({ global: join(configDir(), "themes"), project: join(projectPaths(root).dir, "themes") }).map((t) => t.name)
 
   // fresh config + provenance from disk (re-read after every write)
@@ -150,7 +150,6 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
       if (key === "theme" || key === "appearance") props.applyTheme(ui.prefs.theme)
     }
     const fresh = getPath(loaded().config, s.key)
-    // biome-ignore lint/suspicious/noExplicitAny: path-based store update
     ;(ui.setConfig as any)(sec, key, fresh)
     ui.bump()
     if (!s.ui) void ui.client?.call("config.reload", {}).then((r) => r.errors.length && ui.toast(r.errors[0]!, "warn"))
@@ -367,7 +366,7 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
             focusedTextColor={ui.theme().text}
             placeholder="search settings…"
             ref={(r: InputRenderable) => {
-              searchRef = r
+              _searchRef = r
             }}
             onInput={(v: string) => {
               setFilter(v)

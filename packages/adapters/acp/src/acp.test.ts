@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, symlinkSync } from "node:fs"
 import { join } from "node:path"
 import type { AgentEvent } from "@batonsh/protocol"
 import { startHarness, tempWorkspace } from "../../testkit/src/index.ts"
 import type { AcpPreset } from "./index.ts"
 import { ACP_PRESETS, acpAdapter, acpAdapters, createAcpAdapter, fetchAcpRegistry, registryAgentToPreset, TerminalManager, WorkspaceFs } from "./index.ts"
+import { diffKey, mapToolContent } from "./map.ts"
 
 const MOCK = join(import.meta.dir, "fixtures", "mock-agent.ts")
 
@@ -166,11 +167,16 @@ describe("acp adapter — mock agent mapping", () => {
     try {
       await h.session.prompt({ text: "slow" })
       await h.waitFor("message.delta", undefined, 10_000)
-      const turn = h.waitTurn(10_000)
       await h.session.interrupt()
-      await turn
+      const ended = await h.waitFor("turn.interrupted", undefined, 10_000)
+      // turn.interrupted is the turn's only terminal event (no extra turn.completed), and it
+      // comes after the agent's final output
+      expect(ended.data.turnId).toBe(h.ofType("turn.started")[0]?.data.turnId as string)
+      await Bun.sleep(100)
       expect(h.ofType("turn.interrupted").length).toBe(1)
-      expect(h.ofType("turn.completed")[0]?.data.stopReason).toBe("cancelled")
+      expect(h.ofType("turn.completed").length).toBe(0)
+      const types = h.events.map((e) => e.type)
+      expect(types.lastIndexOf("message.completed")).toBeLessThan(types.indexOf("turn.interrupted"))
       expect(assistantText(h.events)[0]?.startsWith("tick0 ")).toBe(true)
     } finally {
       await h.close()
@@ -184,12 +190,11 @@ describe("acp adapter — mock agent mapping", () => {
       await h.session.prompt({ text: "perm-wait" })
       const req = await h.waitFor("permission.requested", undefined, 10_000)
       expect(req.data).toMatchObject({ toolCallId: "wait-1", kind: "execute", title: "Bash(rm -rf build)", detail: "rm -rf build" })
-      const turn = h.waitTurn(10_000)
       await h.session.interrupt()
-      await turn
+      await h.waitFor("turn.interrupted", undefined, 10_000)
       expect(h.ofType("permission.resolved")[0]?.data).toEqual({ requestId: req.data.requestId, optionId: null, kind: null, by: "cancelled" })
       expect(assistantText(h.events)).toEqual(["outcome=cancelled"])
-      expect(h.ofType("turn.completed")[0]?.data.stopReason).toBe("cancelled")
+      expect(h.ofType("turn.completed").length).toBe(0)
     } finally {
       await h.close()
     }
@@ -312,12 +317,63 @@ describe("acp adapter — mock agent mapping", () => {
       await h.session.prompt({ text: "crash" })
       const exited = await h.waitFor("agent.exited", undefined, 10_000)
       expect(exited.data).toEqual({ code: 3, reason: "crashed" })
-      await h.waitFor("turn.completed", undefined, 10_000)
-      expect(h.ofType("turn.completed")[0]?.data.stopReason).toBe("error")
+      // the turn ends (failed) before agent.exited, exactly once
+      const types = h.events.map((e) => e.type)
+      expect(types.indexOf("turn.completed")).toBeGreaterThan(-1)
+      expect(types.indexOf("turn.completed")).toBeLessThan(types.indexOf("agent.exited"))
+      await Bun.sleep(100)
+      expect(h.ofType("turn.completed").map((e) => e.data.stopReason)).toEqual(["error"])
+      await expect(h.session.prompt({ text: "again" })).rejects.toThrow(/closed/)
       expect(h.ofType("error").some((e) => e.data.fatal && e.data.message.includes("exited unexpectedly"))).toBe(true)
     } finally {
       await h.close()
     }
+  }, 20_000)
+
+  test("terminal output keeps updating after the byte limit is reached", async () => {
+    const h = await startHarness(adapter, { cwd: tempWorkspace() })
+    try {
+      await h.session.prompt({ text: "term-flood" })
+      await h.waitTurn(10_000)
+      const outs = h
+        .ofType("tool.update")
+        .filter((u) => u.data.toolCallId === "flood-1")
+        .flatMap((u) => u.data.content ?? [])
+        .filter((c) => c.type === "terminal") as { output: string; exitCode?: number | null }[]
+      expect(outs.at(-1)?.output).toBe("l26\nl27\nl28\nl29\n")
+      // while running, several distinct snapshots at the (constant) truncated length were emitted
+      const live = outs.filter((o) => o.exitCode == null && Buffer.byteLength(o.output) === 16).map((o) => o.output)
+      expect(new Set(live).size).toBeGreaterThan(1)
+    } finally {
+      await h.close()
+    }
+  }, 20_000)
+
+  test("session/new timeout fails start instead of hanging", async () => {
+    const a = createAcpAdapter(mockPreset({ env: { MOCK_HANG_SESSION: "1" } }))
+    const events: AgentEvent[] = []
+    const t0 = Date.now()
+    const err = await a
+      .start(
+        { agentId: "a1", name: "m", cwd: tempWorkspace(), mcpServers: [], approval: "ask", options: { sessionTimeoutMs: 500 } },
+        { emit: (e) => events.push(e), log: () => {}, signal: new AbortController().signal },
+      )
+      .then(() => undefined)
+      .catch((e: Error) => e)
+    expect(err?.message).toContain("timeout after 500ms waiting for session/new")
+    expect(Date.now() - t0).toBeLessThan(8000)
+    expect(ofType(events, "agent.exited").length).toBe(1)
+  }, 20_000)
+
+  test("close() kills the agent's process group", async () => {
+    const secs = String(4000 + Math.floor(Math.random() * 900) + 0.5)
+    const a = createAcpAdapter(mockPreset({ env: { MOCK_CHILD: secs } }))
+    const h = await startHarness(a, { cwd: tempWorkspace() })
+    const alive = async () => (await Bun.$`pgrep -f ${`sleep ${secs}`}`.nothrow().text()).trim()
+    expect(await alive()).not.toBe("")
+    await h.close()
+    await Bun.sleep(200)
+    expect(await alive()).toBe("")
   }, 20_000)
 
   test("close() emits agent.exited(closed)", async () => {
@@ -401,6 +457,31 @@ describe("acp client-side services", () => {
     expect(tm.has(id)).toBe(false)
   })
 
+  test("terminal exit does not wait for pipes held open by background children", async () => {
+    const tm = new TerminalManager({ cwd: tempWorkspace(), env: {} })
+    const id = tm.create({ command: "sleep 4321.5 & echo started" })
+    const t0 = Date.now()
+    const exit = await tm.waitForExit(id)
+    expect(exit).toEqual({ exitCode: 0, signal: null })
+    expect(Date.now() - t0).toBeLessThan(2000)
+    expect(tm.output(id).output).toBe("started\n")
+    tm.release(id) // kills the whole group, including the background sleep
+    await Bun.sleep(200)
+    expect((await Bun.$`pgrep -f ${"sleep 4321.5"}`.nothrow().text()).trim()).toBe("")
+  })
+
+  test("terminal kill reaches grandchildren", async () => {
+    const tm = new TerminalManager({ cwd: tempWorkspace(), env: {} })
+    const id = tm.create({ command: "sleep 4322.5; echo after" })
+    await Bun.sleep(200)
+    tm.kill(id)
+    const exit = await Promise.race([tm.waitForExit(id), Bun.sleep(3000).then(() => "hung" as const)])
+    expect(exit).toEqual({ exitCode: null, signal: "SIGTERM" })
+    await Bun.sleep(100)
+    expect((await Bun.$`pgrep -f ${"sleep 4322.5"}`.nothrow().text()).trim()).toBe("")
+    await tm.disposeAll()
+  })
+
   test("terminal kill reports a signal", async () => {
     const tm = new TerminalManager({ cwd: tempWorkspace(), env: {} })
     const id = tm.create({ command: "sleep", args: ["30"] })
@@ -418,5 +499,37 @@ describe("acp client-side services", () => {
     expect(() => fs.write("/etc/hosts", "x")).toThrow(/outside the workspace/)
     expect(fs.write("sub/dir/b.txt", "hi").oldText).toBeNull()
     expect(fs.display(join(cwd, "sub/dir/b.txt"))).toBe("sub/dir/b.txt")
+  })
+
+  test("tool content is deduped before diffing", () => {
+    const seen = new Set<string>()
+    const oldText = Array.from({ length: 2000 }, (_, i) => `old ${i}`).join("\n")
+    const newText = Array.from({ length: 2000 }, (_, i) => `new ${i}`).join("\n")
+    const items = [{ type: "diff" as const, path: "/w/a.ts", oldText, newText }]
+    expect(mapToolContent(items, () => undefined, seen).length).toBe(1)
+    const t0 = performance.now()
+    for (let i = 0; i < 50; i++) expect(mapToolContent(items, () => undefined, seen)).toEqual([])
+    expect(performance.now() - t0).toBeLessThan(200)
+    expect(seen.has(diffKey("/w/a.ts", newText))).toBe(true)
+  })
+
+  test("workspace fs refuses dangling symlinks that point outside", () => {
+    const cwd = tempWorkspace()
+    const outside = tempWorkspace()
+    symlinkSync(join(outside, "pwned.txt"), join(cwd, "link"))
+    symlinkSync(join(outside, "newdir"), join(cwd, "dlink"))
+    symlinkSync("chain", join(cwd, "chain0"))
+    symlinkSync(join(cwd, "link"), join(cwd, "chain"))
+    symlinkSync(join(cwd, "inside-target.txt"), join(cwd, "ok-link"))
+    const fs = new WorkspaceFs(cwd)
+    expect(() => fs.write("link", "x")).toThrow(/outside the workspace/)
+    expect(() => fs.write("dlink/x.txt", "x")).toThrow(/outside the workspace/)
+    expect(() => fs.write("chain0", "x")).toThrow(/outside the workspace/)
+    expect(() => fs.read("link")).toThrow(/outside the workspace/)
+    expect(existsSync(join(outside, "pwned.txt"))).toBe(false)
+    expect(existsSync(join(outside, "newdir"))).toBe(false)
+    // a dangling link whose target is inside the workspace is still fine
+    fs.write("ok-link", "fine")
+    expect(readFileSync(join(cwd, "inside-target.txt"), "utf8")).toBe("fine")
   })
 })

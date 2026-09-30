@@ -93,6 +93,8 @@ interface Turn {
   finish?: string
   error?: string
   aborted?: boolean
+  /** Message ids already known when the turn began: late updates for them belong to an earlier turn. */
+  prior: Set<string>
 }
 
 export class OpencodeTranslator {
@@ -151,7 +153,7 @@ export class OpencodeTranslator {
     this.raw = undefined
     const out: AgentEvent[] = []
     if (this.turn) return out
-    this.turn = { turnId, interrupting: false, active: false }
+    this.turn = { turnId, interrupting: false, active: false, prior: new Set(this.roles.keys()) }
     out.push(this.ev({ type: "turn.started", data: prompt !== undefined ? { turnId, prompt } : { turnId } }))
     this.status(out, "busy")
     return out
@@ -250,7 +252,8 @@ export class OpencodeTranslator {
         if (!info?.id) break
         if (own && !this.roles.has(info.id)) this.activity()
         this.roles.set(info.id, info.role)
-        if (own && info.role === "assistant" && this.turn) {
+        // A late update (e.g. an error) for a message from an earlier turn must not decide this turn's outcome.
+        if (own && info.role === "assistant" && this.turn && !this.turn.prior.has(info.id)) {
           const a = info as AssistantMessage
           if (a.finish) this.turn.finish = a.finish
           if (a.error?.name === "MessageAbortedError") this.turn.aborted = true

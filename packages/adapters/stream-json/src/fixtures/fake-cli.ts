@@ -8,6 +8,8 @@
  * Scenarios, chosen by prompt text:
  *   "ping"  → assistant text "PONG", no tools
  *   "crash" → exit(3) mid-turn
+ *   "grandchild" → spawns a long-lived `sleep` child (pid logged) and finishes the turn
+ * FAKE_EXIT_ON_START=<code> exits immediately (before the initialize handshake).
  *   "fail"  → failing result frame
  *   "slow"  → edit, then a 3s window accepting steer / interrupt before finishing
  *   other   → stream deltas + Edit(notes.txt teh→the) + tool_result + final text + result
@@ -30,6 +32,11 @@ if (argv.includes("--version")) {
   process.exit(0)
 }
 log({ argv })
+
+if (process.env.FAKE_EXIT_ON_START) {
+  process.stderr.write("fatal: startup failed\n")
+  process.exit(Number(process.env.FAKE_EXIT_ON_START))
+}
 
 const argValue = (flag: string) => {
   const i = argv.indexOf(flag)
@@ -200,6 +207,13 @@ async function runTurn(first: Msg) {
   if (text.includes("ping")) {
     await say("PONG", uuids)
     return result(uuids, true, "PONG")
+  }
+  if (text.includes("grandchild")) {
+    // A long-lived child in the CLI's process group (like a tool's shell).
+    const child = Bun.spawn(["sleep", "37"], { stdio: ["ignore", "ignore", "ignore"] })
+    log({ child: child.pid })
+    await say("spawned", uuids)
+    return result(uuids, true, "spawned")
   }
   if (text.includes("crash")) {
     await say("about to crash", uuids)

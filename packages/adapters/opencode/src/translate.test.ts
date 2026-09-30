@@ -429,6 +429,30 @@ describe("translator: synthetic edge cases", () => {
     expect(out.map((e) => e.type)).toEqual(["turn.started", "agent.status", "turn.completed", "agent.status"])
   })
 
+  test("late error for the previous turn's message does not fail the next turn", () => {
+    const t = mk()
+    const busy: OcEvent = { type: "session.status", properties: { sessionID: SID, status: { type: "busy" } } }
+    const idle: OcEvent = { type: "session.idle", properties: { sessionID: SID } }
+    const first = [busy, assistant, idle].flatMap((e) => t.handle(e))
+    expect(of(first, "turn.completed")[0]?.data.stopReason).not.toBe("error")
+    const out = [...t.beginTurn("next", "turn_2")]
+    out.push(
+      ...[
+        busy,
+        // straggler from turn_x
+        {
+          type: "message.updated",
+          properties: { sessionID: SID, info: { id: "msg_a", role: "assistant", error: { name: "APIError", data: { message: "late" } } } },
+        },
+        { type: "message.updated", properties: { sessionID: SID, info: { id: "msg_b", role: "assistant", sessionID: SID, finish: "stop" } } },
+        idle,
+      ].flatMap((e) => t.handle(e as OcEvent)),
+    )
+    const done = of(out, "turn.completed")
+    expect(done.map((e) => e.data.turnId)).toEqual(["turn_2"])
+    expect(done[0]?.data.stopReason).toBe("end_turn")
+  })
+
   test("aborted assistant message → turn.interrupted even without local interrupt", () => {
     const t = mk()
     const out = [

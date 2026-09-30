@@ -10,7 +10,9 @@ import { Readable, Writable } from "node:stream"
  *   "outside"    tries to write outside the workspace
  *   "info"       replies with a JSON dump of what the client sent us
  *   "crash"      exits with code 3 mid-turn
- * Env: MOCK_REQUIRE_AUTH=1 makes session/new require authentication (method "mock-api-key"
+ *   "term-flood" runs a terminal whose output keeps changing past a small outputByteLimit
+ * Env: MOCK_HANG_SESSION=1 never answers session/new; MOCK_CHILD=<secs> spawns `sleep <secs>`
+ * (a helper that would outlive us unless its process group is killed); MOCK_REQUIRE_AUTH=1 makes session/new require authentication (method "mock-api-key"
  * succeeds when MOCK_API_KEY is set; "mock-oauth" always fails).
  */
 import * as acp from "@agentclientprotocol/sdk"
@@ -52,6 +54,7 @@ class MockAgent implements acp.Agent {
 
   async initialize(params: acp.InitializeRequest): Promise<acp.InitializeResponse> {
     initParams = params
+    if (process.env.MOCK_CHILD) Bun.spawn(["sleep", process.env.MOCK_CHILD], { stdio: ["ignore", "ignore", "ignore"] }).unref()
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
       agentCapabilities: {
@@ -76,6 +79,7 @@ class MockAgent implements acp.Agent {
   }
 
   async newSession(params: acp.NewSessionRequest): Promise<acp.NewSessionResponse> {
+    if (process.env.MOCK_HANG_SESSION === "1") await new Promise(() => {})
     if (process.env.MOCK_REQUIRE_AUTH === "1" && !authenticated) throw acp.RequestError.authRequired()
     const sessionId = `mock-${crypto.randomUUID()}`
     sessions.set(sessionId, { cwd: params.cwd, mcpServers: params.mcpServers, model: "mock/fast", prompts: [] })
@@ -163,6 +167,28 @@ class MockAgent implements acp.Agent {
       case "info":
         await say(JSON.stringify({ init: initParams, mcpServers: s.mcpServers, model: s.model, loadedFrom: s.loadedFrom, prompts: s.prompts }))
         return { stopReason: "end_turn" }
+      case "term-flood": {
+        const term = await this.conn.createTerminal({
+          sessionId: sid,
+          command: "for i in $(seq 10 29); do echo l$i; sleep 0.06; done",
+          outputByteLimit: 16,
+        })
+        await this.conn.sessionUpdate({
+          sessionId: sid,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "flood-1",
+            title: "Run flood",
+            kind: "execute",
+            status: "in_progress",
+            content: [{ type: "terminal", terminalId: term.id }],
+          },
+        })
+        await term.waitForExit()
+        await this.conn.sessionUpdate({ sessionId: sid, update: { sessionUpdate: "tool_call_update", toolCallId: "flood-1", status: "completed" } })
+        await term.release()
+        return { stopReason: "end_turn" }
+      }
       case "crash":
         await say("about to crash")
         setTimeout(() => process.exit(3), 10)

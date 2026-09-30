@@ -39,9 +39,48 @@ export function augmentedPath(): string {
   return parts.join(delimiter)
 }
 
+/** Signal a child's whole process group (spawned with `detached: true`), falling back to the pid itself. */
+export function killProcessTree(pid: number | undefined, signal: NodeJS.Signals | number = "SIGTERM"): void {
+  if (!pid) return
+  try {
+    process.kill(-pid, signal)
+    return
+  } catch {}
+  try {
+    process.kill(pid, signal)
+  } catch {}
+}
+
+/** Drain a stream into memory; `cancel()` stops waiting (e.g. a grandchild still holds the pipe). */
+function collect(stream: ReadableStream<Uint8Array>): { done: Promise<void>; cancel: () => void; text: () => string } {
+  const chunks: Uint8Array[] = []
+  const reader = stream.getReader()
+  const done = (async () => {
+    try {
+      for (;;) {
+        const r = await reader.read()
+        if (r.done) break
+        chunks.push(r.value)
+      }
+    } catch {}
+  })()
+  return {
+    done,
+    cancel: () => {
+      reader.cancel().catch(() => {})
+    },
+    text: () => Buffer.concat(chunks).toString("utf8"),
+  }
+}
+
+/**
+ * Run a command and capture its output. The child gets its own process group, which is SIGKILLed on
+ * timeout; once the child exits we wait only briefly for its pipes (a backgrounded grandchild may
+ * keep them open forever) before returning what we have.
+ */
 export async function runCapture(
   cmd: string[],
-  opts: { timeoutMs?: number; cwd?: string; env?: Record<string, string | undefined> } = {},
+  opts: { timeoutMs?: number; cwd?: string; env?: Record<string, string | undefined>; pipeGraceMs?: number } = {},
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   const proc = Bun.spawn(cmd, {
     cwd: opts.cwd,
@@ -49,12 +88,31 @@ export async function runCapture(
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
+    detached: true,
   })
-  const timer = setTimeout(() => proc.kill(), opts.timeoutMs ?? 10_000)
-  const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()])
+  const out = collect(proc.stdout)
+  const err = collect(proc.stderr)
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    killProcessTree(proc.pid, "SIGKILL")
+  }, opts.timeoutMs ?? 10_000)
   const code = await proc.exited
   clearTimeout(timer)
-  return { code, stdout, stderr }
+  const pipes = Promise.all([out.done, err.done])
+  let graceTimer: ReturnType<typeof setTimeout> | undefined
+  const drained = await Promise.race([
+    pipes.then(() => true),
+    new Promise<boolean>((r) => {
+      graceTimer = setTimeout(() => r(false), timedOut ? 200 : (opts.pipeGraceMs ?? 1000))
+    }),
+  ])
+  clearTimeout(graceTimer)
+  if (!drained) {
+    out.cancel()
+    err.cancel()
+  }
+  return { code, stdout: out.text(), stderr: err.text() }
 }
 
 export function parseVersion(s: string): string | undefined {

@@ -87,13 +87,22 @@ export async function startSession(
   try {
     realCwd = realpathSync(cfg.cwd)
   } catch {}
-  const tr = new ClaudeTranslator({ cwd: realCwd, snapshot: (id) => snapshots.get(id) })
+  // Each snapshot is read once, when the tool's result arrives, then freed.
+  const takeSnapshot = (id: string) => {
+    const v = snapshots.get(id)
+    snapshots.delete(id)
+    return v
+  }
+  const tr = new ClaudeTranslator({ cwd: realCwd, snapshot: takeSnapshot })
 
   type Proc = ReturnType<typeof spawnProc>
   let proc!: Proc
   let gen = 0
   let closing = false
   let exited = false
+  /** Set once startSession() returns; before that an exit makes it throw instead of emitting. */
+  let started = false
+  let exitReason = ""
   let sentFirst = Boolean(cfg.resumeId)
   let signalInterrupt = false
   let interruptTimer: ReturnType<typeof setTimeout> | undefined
@@ -128,7 +137,9 @@ export async function startSession(
     if (exited) return false
     try {
       proc.stdin.write(`${JSON.stringify(msg)}\n`)
-      proc.stdin.flush()
+      const r = proc.stdin.flush() as unknown
+      // A large write to a dying process flushes asynchronously; never leave that rejection unhandled.
+      if (r instanceof Promise) r.catch((e) => ctx.log("warn", `${preset.id}: stdin flush failed: ${e instanceof Error ? e.message : String(e)}`))
       return true
     } catch (e) {
       ctx.log("warn", `${preset.id}: stdin write failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -291,6 +302,8 @@ export async function startSession(
       signalInterrupt = false
     }
     emit(events)
+    // Tools that never got a result (interrupt / denial) keep no snapshot past the turn.
+    if (!tr.busy) snapshots.clear()
   }
 
   const snapshot = (id: string, input: Input) => {
@@ -308,7 +321,19 @@ export async function startSession(
   function spawnProc(resumeId: string | undefined) {
     const argv = launchArgv(preset, cfg, binary, resumeId)
     ctx.log("debug", `${preset.id}: spawn ${argv.map((a) => (a.length > 80 ? `${a.slice(0, 77)}...` : a)).join(" ")}`)
-    return Bun.spawn(argv, { cwd: cfg.cwd, env, stdin: "pipe", stdout: "pipe", stderr: "pipe" })
+    // Own process group, so close() can take down the CLI's whole tree (shells, MCP servers…).
+    return Bun.spawn(argv, { cwd: cfg.cwd, env, stdin: "pipe", stdout: "pipe", stderr: "pipe", detached: true })
+  }
+
+  /** Signal the CLI's process group (falls back to the pid alone). */
+  const killTree = (p: Proc, sig: NodeJS.Signals) => {
+    try {
+      process.kill(-p.pid, sig)
+      return
+    } catch {}
+    try {
+      p.kill(sig)
+    } catch {}
   }
 
   const launch = (resumeId: string | undefined) => {
@@ -331,6 +356,8 @@ export async function startSession(
       }
       await p.exited
       await withTimeout(errDone, 1_000)
+      // Children left in the group (e.g. a tool's shell) must not outlive the CLI.
+      if (myGen === gen && !signalInterrupt) killTree(p, "SIGTERM")
       onExit(myGen, p.exitCode ?? null, p.signalCode ?? undefined, tail)
     })()
   }
@@ -358,18 +385,30 @@ export async function startSession(
     }
     exited = true
     if (interruptTimer) clearTimeout(interruptTimer)
+    interruptTimer = undefined
+    hostQueue.length = 0
+    snapshots.clear()
     let reason = "closed"
     if (!closing) {
       reason = code !== null ? `${preset.displayName} exited with code ${code}` : `${preset.displayName} killed by ${signal ?? "signal"}`
-      if (code !== 0) {
+      if (tail.length && code !== 0) exitReason = `${reason}: ${tail.slice(-3).join(" | ")}`
+      else exitReason = reason
+      if (code !== 0 && started) {
         ctx.log("error", `${preset.id}: ${reason}`)
         emit([{ type: "error", data: { message: reason, ...(tail.length ? { detail: tail.join("\n") } : {}), fatal: true } }])
         emit(tr.setStatus("error"))
       }
+    } else exitReason = reason
+    // A failed start throws from startSession() instead of reporting the exit as events.
+    if (started) {
+      if (tr.busy) {
+        // Closing ends the turn as interrupted; an unexpected exit fails it (host reports an error result).
+        if (closing) emit([{ type: "turn.interrupted", data: { turnId: tr.currentTurnId } }])
+        else emit(tr.failTurn())
+      }
+      emit(tr.setStatus("exited"))
+      emit([{ type: "agent.exited", data: { code, reason } }])
     }
-    if (tr.busy) emit([{ type: "turn.interrupted", data: { turnId: tr.currentTurnId } }])
-    emit(tr.setStatus("exited"))
-    emit([{ type: "agent.exited", data: { code, reason } }])
     ctx.signal.removeEventListener("abort", onCtxAbort)
     exitedD.resolve()
   }
@@ -384,7 +423,10 @@ export async function startSession(
   }
 
   const ensureOpen = () => {
+    if (exited && !closing && exitReason) throw new Error(`${preset.displayName} is not running (${exitReason})`)
     if (closing || exited) throw new Error("session closed")
+    // The process is gone but its pipes have not drained yet: fail fast rather than write into the void.
+    if (!signalInterrupt && (proc.exitCode !== null || proc.signalCode !== null)) throw new Error(`${preset.displayName} is not running`)
   }
 
   const doInterrupt = async () => {
@@ -399,6 +441,7 @@ export async function startSession(
       }
     } else {
       signalInterrupt = true
+      // SIGINT the CLI only: its tool children are handled by the CLI's own interrupt logic.
       proc.kill("SIGINT")
     }
     if (tr.isInterrupting && !interruptTimer)
@@ -467,10 +510,12 @@ export async function startSession(
         proc.stdin.end()
       } catch {}
       if ((await withTimeout(exitedD.promise, closeMs)) === undefined && !exited) {
-        proc.kill("SIGINT")
-        if ((await withTimeout(exitedD.promise, KILL_TIMEOUT_MS)) === undefined && !exited) proc.kill("SIGKILL")
+        killTree(proc, "SIGINT")
+        if ((await withTimeout(exitedD.promise, KILL_TIMEOUT_MS)) === undefined && !exited) killTree(proc, "SIGKILL")
       }
       await withTimeout(exitedD.promise, KILL_TIMEOUT_MS)
+      // Whatever the CLI left behind in its process group goes with it.
+      killTree(proc, "SIGKILL")
     },
   }
 
@@ -488,6 +533,11 @@ export async function startSession(
       ctx.log("warn", `${preset.id}: initialize failed: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
-  if (!exited && tr.status === "starting") emit(tr.setStatus("ready"))
+  if (exited) {
+    ctx.signal.removeEventListener("abort", onCtxAbort)
+    throw new Error(`${preset.displayName} failed to start: ${exitReason || "exited"}`)
+  }
+  started = true
+  if (tr.status === "starting") emit(tr.setStatus("ready"))
   return session
 }

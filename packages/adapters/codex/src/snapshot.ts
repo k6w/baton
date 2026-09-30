@@ -11,7 +11,7 @@ import { realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { DiffHunkLine } from "@batonsh/protocol"
-import { newId, parseUnifiedDiff, runCapture } from "@batonsh/protocol"
+import { newId, runCapture } from "@batonsh/protocol"
 
 export interface FileDiff {
   /** Absolute path. */
@@ -68,9 +68,27 @@ export class GitSnapshotter {
   /** Per-file diffs between two snapshots. */
   async diff(from: string, to: string): Promise<FileDiff[]> {
     if (from === to || !this.root) return []
-    const patch = await this.git(["diff", "--no-color", "--no-ext-diff", "--no-renames", from, to])
-    if (!patch) return []
-    return splitGitPatch(patch, this.displayRoot ?? this.root)
+    // NUL-separated names are unquoted and unambiguous (spaces, " b/", quotes, newlines).
+    const names = await this.git(["diff", "--name-status", "-z", "--no-renames", from, to])
+    if (!names) return []
+    const root = this.displayRoot ?? this.root
+    const out: FileDiff[] = []
+    const parts = names.split("\0")
+    for (let i = 0; i + 1 < parts.length; i += 2) {
+      const status = parts[i] as string
+      const rel = parts[i + 1] as string
+      if (!status || !rel) continue
+      const patch = await this.git(["--literal-pathspecs", "diff", "--no-color", "--no-ext-diff", "--no-renames", from, to, "--", rel])
+      const lines = patch ? parseHunks(patch) : []
+      let added = 0
+      let removed = 0
+      for (const l of lines) {
+        if (l.kind === "add") added++
+        else if (l.kind === "del") removed++
+      }
+      out.push({ path: join(root, rel), lines, added, removed, created: status.startsWith("A"), deleted: status.startsWith("D") })
+    }
+    return out
   }
 
   dispose(): void {
@@ -98,7 +116,7 @@ export function splitGitPatch(patch: string, root: string): FileDiff[] {
     const header = /^diff --git a\/(.+?) b\/(.+)$/m.exec(chunk)
     if (!header) continue
     const rel = header[2] as string
-    const lines = parseUnifiedDiff(chunk).flatMap((f) => f.lines)
+    const lines = parseHunks(chunk)
     let added = 0
     let removed = 0
     for (const l of lines) {
@@ -113,6 +131,43 @@ export function splitGitPatch(patch: string, root: string): FileDiff[] {
       created: /^new file mode/m.test(chunk),
       deleted: /^deleted file mode/m.test(chunk),
     })
+  }
+  return out
+}
+
+/**
+ * Parse the hunks of a single-file unified diff, counting lines from each `@@` header so content
+ * lines that look like headers ("--- x", "+++ y") are never mistaken for them.
+ */
+export function parseHunks(patch: string): DiffHunkLine[] {
+  const out: DiffHunkLine[] = []
+  let oldLn = 0
+  let newLn = 0
+  let oldLeft = 0
+  let newLeft = 0
+  for (const raw of patch.split("\n")) {
+    if (oldLeft > 0 || newLeft > 0) {
+      const c = raw[0]
+      if (c === "+" && newLeft > 0) {
+        out.push({ kind: "add", text: raw.slice(1), newLine: newLn++ })
+        newLeft--
+      } else if (c === "-" && oldLeft > 0) {
+        out.push({ kind: "del", text: raw.slice(1), oldLine: oldLn++ })
+        oldLeft--
+      } else if ((c === " " || raw === "") && oldLeft > 0 && newLeft > 0) {
+        out.push({ kind: "ctx", text: raw.slice(1), oldLine: oldLn++, newLine: newLn++ })
+        oldLeft--
+        newLeft--
+      }
+      // "\ No newline at end of file" and anything unexpected: skip.
+      continue
+    }
+    const h = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(raw)
+    if (!h) continue
+    oldLn = Number(h[1])
+    oldLeft = h[2] === undefined ? 1 : Number(h[2])
+    newLn = Number(h[3])
+    newLeft = h[4] === undefined ? 1 : Number(h[4])
   }
   return out
 }

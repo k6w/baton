@@ -113,6 +113,16 @@ export class ClaudeTranslator {
     return this.endTurn(undefined)
   }
 
+  /**
+   * The CLI died: end the running turn as failed (`turn.interrupted` when an interrupt was
+   * in flight) without starting queued prompts or reporting ready.
+   */
+  failTurn(): AgentEvent[] {
+    if (!this.turn) return []
+    this.pending.clear()
+    return this.endTurn("error").filter((e) => e.type !== "agent.status")
+  }
+
   toolStarted(toolUseId: string): AgentEvent[] {
     const t = this.tools.get(toolUseId)
     if (!t || t.started || t.done) return []

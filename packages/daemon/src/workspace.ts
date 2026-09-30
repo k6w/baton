@@ -208,7 +208,7 @@ export class WorkspaceManager {
   /** Recompute the agent's changes (files, +/-) and refresh its snapshot commit. */
   async refresh(agentId: string): Promise<Workspace | undefined> {
     const ws = this.byAgent.get(agentId)
-    if (!ws || ws.mode !== "worktree" || !ws.base || !existsSync(ws.path)) return ws
+    if (ws?.mode !== "worktree" || !ws.base || !existsSync(ws.path)) return ws
     const tree = await snapshotTree(ws.path, ws.exclude)
     ws.files = await diffStat(ws.path, ws.base, tree)
     ws.snapshot = await commitTree(ws.path, tree, [ws.base], `baton snapshot ${ws.agentName}`)
@@ -341,7 +341,7 @@ export class WorkspaceManager {
   /** Bring the project's current state into the agent's worktree (to resolve conflicts there). */
   async sync(agentId: string): Promise<{ clean: boolean; conflicts: string[] }> {
     const ws = await this.refresh(agentId)
-    if (!ws || ws.mode !== "worktree" || !ws.base || !ws.snapshot) return { clean: true, conflicts: [] }
+    if (ws?.mode !== "worktree" || !ws.base || !ws.snapshot) return { clean: true, conflicts: [] }
     const current = await snapshotCommit(this.projectRoot, "baton sync source", undefined, this.cfg.link)
     const r = await mergeTree(this.projectRoot, ws.base, ws.snapshot, current)
     if (!r.tree) return { clean: false, conflicts: r.conflicts }
@@ -358,7 +358,7 @@ export class WorkspaceManager {
   async remove(agentId: string): Promise<{ kept: boolean; reason?: string }> {
     const ws = this.byAgent.get(agentId)
     this.byAgent.delete(agentId)
-    if (!ws || ws.mode !== "worktree") return { kept: false }
+    if (ws?.mode !== "worktree") return { kept: false }
     let hasChanges = false
     if (this.cfg.cleanup === "never") return { kept: true, reason: "cleanup = never" }
     try {

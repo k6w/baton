@@ -1,6 +1,7 @@
 /**
  * Pure ACP → BEP mapping helpers (no I/O).
  */
+import { resolve } from "node:path"
 import type * as acp from "@agentclientprotocol/sdk"
 import type { ToolContent, ToolKind } from "@batonsh/protocol"
 import { diffLines, diffStat } from "@batonsh/protocol"
@@ -119,17 +120,51 @@ export function diffContent(path: string, oldText: string | null | undefined, ne
 /** Terminal snapshot provider used to fill `terminal` content. */
 export type TerminalLookup = (terminalId: string) => { output: string; exitCode?: number | null; command?: string } | undefined
 
-export function mapToolContent(items: acp.ToolCallContent[] | null | undefined, terminals: TerminalLookup): ToolContent[] {
+/** Dedupe key of a content item (diffs are keyed by path + new text, so computing it needs no diff). */
+export function contentKey(c: ToolContent): string {
+  switch (c.type) {
+    case "text":
+      return `t:${Bun.hash(c.text)}`
+    case "diff":
+      return diffKey(c.path, c.newText)
+    case "terminal":
+      // hash, not length: output truncated at the byte limit keeps its length while changing
+      return `x:${c.terminalId}:${Bun.hash(c.output)}:${c.exitCode ?? ""}`
+  }
+}
+
+export function diffKey(path: string, newText: string | null | undefined): string {
+  return `d:${resolve(path)}:${Bun.hash(newText ?? "")}`
+}
+
+/**
+ * Maps ACP tool content. With `seen`, items already emitted are dropped (and new keys recorded)
+ * *before* any diff is computed — agents resend the full content set on every update.
+ */
+export function mapToolContent(items: acp.ToolCallContent[] | null | undefined, terminals: TerminalLookup, seen?: Set<string>): ToolContent[] {
   const out: ToolContent[] = []
+  const fresh = (key: string) => {
+    if (!seen) return true
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  }
   for (const c of items ?? []) {
     if (c.type === "content") {
       const text = blockText(c.content)
-      if (text) out.push({ type: "text", text })
+      if (text && fresh(`t:${Bun.hash(text)}`)) out.push({ type: "text", text })
     } else if (c.type === "diff") {
-      out.push(diffContent(c.path, c.oldText, c.newText))
+      if (fresh(diffKey(c.path, c.newText))) out.push(diffContent(c.path, c.oldText, c.newText))
     } else if (c.type === "terminal") {
       const snap = terminals(c.terminalId)
-      out.push({ type: "terminal", terminalId: c.terminalId, command: snap?.command, output: snap?.output ?? "", exitCode: snap?.exitCode ?? null })
+      const item: ToolContent = {
+        type: "terminal",
+        terminalId: c.terminalId,
+        command: snap?.command,
+        output: snap?.output ?? "",
+        exitCode: snap?.exitCode ?? null,
+      }
+      if (fresh(contentKey(item))) out.push(item)
     }
   }
   return out

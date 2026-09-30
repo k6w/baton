@@ -17,6 +17,24 @@ describe("tools", () => {
     expect(toolTitle("WebFetch", { url: "https://x.dev" }, "/w")).toBe("Fetch(https://x.dev)")
   })
 
+  test("Edit fallback with replace_all diffs every occurrence", () => {
+    const before = "a\nfoo\nb\nc\nd\ne\nf\ng\nfoo\nh\n"
+    const d = editDiff({
+      name: "Edit",
+      input: { file_path: "/w/f", old_string: "foo", new_string: "bar", replace_all: true },
+      content: "ok",
+      isError: false,
+      before,
+    })
+    expect(d?.lines?.filter((l) => l.kind !== "ctx")).toEqual([
+      { kind: "del", text: "foo", oldLine: 2 },
+      { kind: "add", text: "bar", newLine: 2 },
+      { kind: "del", text: "foo", oldLine: 9 },
+      { kind: "add", text: "bar", newLine: 9 },
+    ])
+    expect(d).toMatchObject({ added: 2, removed: 2, newText: "a\nbar\nb\nc\nd\ne\nf\ng\nbar\nh\n" })
+  })
+
   test("Edit fallback (no structured result) locates the edit in the snapshot for line numbers", () => {
     const before = "a\nb\nc\nold\ne\n"
     const d = editDiff({ name: "Edit", input: { file_path: "/w/f", old_string: "old", new_string: "new\nnew2" }, content: "ok", isError: false, before })

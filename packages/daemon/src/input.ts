@@ -20,6 +20,8 @@ export const DAEMON_COMMANDS: Record<string, string> = {
   kill: "/kill <name|all> — stop agents",
   interrupt: "/interrupt <name|all> — interrupt current turns",
   mode: "/mode <orchestrator|solo|…> — switch orchestrator playbook",
+  autonomy: "/autonomy <normal|ask|auto|yolo> — how freely every agent acts (shift+tab cycles)",
+  yolo: "/yolo — toggle YOLO for every agent: no prompts, no sandbox",
   model: "/model <name> <model> — switch an agent's model",
   label: "/label <name> <text> — set an agent's card label",
   rename: "/rename <name> <new-name>",
@@ -109,6 +111,15 @@ async function handleCommand(rt: Runtime, text: string): Promise<InputResult> {
       const targets = !args[0] || args[0] === "all" ? [...rt.agents.values()].filter((a) => a.busy) : [byName(args[0])]
       for (const t of targets) await rt.interrupt(t.info.agentId)
       return { routedTo: targets.map((t) => t.info.name), command: cmd }
+    }
+    case "autonomy":
+    case "yolo": {
+      const levels = ["normal", "ask", "auto", "yolo"] as const
+      const want = cmd === "yolo" ? (rt.autonomy === "yolo" ? "normal" : "yolo") : args[0]
+      if (!want) return { routedTo: [], command: cmd, output: `autonomy: ${rt.autonomy}` }
+      if (!levels.includes(want as (typeof levels)[number])) throw new Error(`autonomy levels: ${levels.join(", ")}`)
+      const r = await rt.setAutonomy(want as (typeof levels)[number])
+      return { routedTo: [], command: cmd, output: autonomySummary(r) }
     }
     case "mode": {
       if (!args[0]) return { routedTo: [], command: cmd, output: `mode: ${rt.state.mode}` }
@@ -229,4 +240,12 @@ async function handleCommand(rt: Runtime, text: string): Promise<InputResult> {
     default:
       throw new Error(`unknown command /${cmd}`)
   }
+}
+
+/** "autonomy: yolo — 3 agents switched; codex-2 keeps its sandbox until restarted" */
+export function autonomySummary(r: { mode: string; live: string[]; pending: string[] }): string {
+  const parts = [`autonomy: ${r.mode}`]
+  if (r.live.length) parts.push(`${r.live.length} agent${r.live.length === 1 ? "" : "s"} switched`)
+  if (r.pending.length) parts.push(`${r.pending.join(", ")} keep${r.pending.length === 1 ? "s" : ""} its start-up mode until restarted (asks are auto-decided)`)
+  return parts.join(" — ")
 }

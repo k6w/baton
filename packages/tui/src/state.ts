@@ -8,7 +8,7 @@ import { join } from "node:path"
 import { type BatonConfig, type RunState, stateDir, type UiConfig } from "@batonsh/kernel"
 import type { BatonEvent } from "@batonsh/protocol"
 import type { BatonClient } from "@batonsh/sdk"
-import { DEFAULT_VERBS, type ResolvedTheme, SPINNERS } from "@batonsh/themes"
+import { DEFAULT_VERBS, type ResolvedTheme, SPINNERS, STYLES, type StylePrefs } from "@batonsh/themes"
 import { type Accessor, createSignal, type Setter } from "solid-js"
 import { createStore, type SetStoreFunction } from "solid-js/store"
 import { Keymap } from "./keymap.ts"
@@ -16,10 +16,25 @@ import { Keymap } from "./keymap.ts"
 /** UI preferences that can change at runtime (persisted to the state dir, never to config files). */
 export type Prefs = Pick<
   UiConfig,
-  "theme" | "appearance" | "layout" | "icons" | "border" | "density" | "render_style" | "show_bus" | "show_thoughts" | "animations" | "spinner"
+  | "theme"
+  | "appearance"
+  | "layout"
+  | "icons"
+  | "border"
+  | "density"
+  | "render_style"
+  | "show_bus"
+  | "show_thoughts"
+  | "animations"
+  | "spinner"
+  | "style"
+  | "frame"
+  | "status_style"
+  | "background"
+  | "brand_borders"
 >
 
-const PREF_KEYS: (keyof Prefs)[] = [
+export const PREF_KEYS: (keyof Prefs)[] = [
   "theme",
   "appearance",
   "layout",
@@ -31,7 +46,22 @@ const PREF_KEYS: (keyof Prefs)[] = [
   "show_thoughts",
   "animations",
   "spinner",
+  "style",
+  "frame",
+  "status_style",
+  "background",
+  "brand_borders",
 ]
+
+/**
+ * The theme as painted: `background = terminal` makes the app and pane backgrounds
+ * transparent so the terminal's own background (and its opacity / blur) shows through.
+ * Overlays keep a solid fill so they stay readable.
+ */
+export function paintedTheme(t: ResolvedTheme, background: Prefs["background"]): ResolvedTheme {
+  if (background !== "terminal") return t
+  return { ...t, background: "transparent", backgroundPanel: "transparent" }
+}
 
 function prefsPath(): string {
   return join(stateDir(), "ui.json")
@@ -73,6 +103,7 @@ export type Overlay =
   | "guide"
   | "recipes"
   | "costs"
+  | "style"
 export type Focus = { kind: "input" } | { kind: "agent"; agentId: string }
 
 export interface Toast {
@@ -92,7 +123,10 @@ export interface UiState {
   persistPrefs: () => void
   /** False in tests / embedded use: nothing is written to the state dir, no first-run screens. */
   persistent: boolean
+  /** The theme as painted (background mode applied). */
   theme: Accessor<ResolvedTheme>
+  /** The theme as loaded — use this to save/restore (previews). */
+  rawTheme: Accessor<ResolvedTheme>
   setTheme: Setter<ResolvedTheme>
   version: Accessor<number>
   bump: () => void
@@ -139,21 +173,45 @@ export interface UiState {
 
 export function createUiState(opts: { client?: BatonClient; run: RunState; config: BatonConfig; theme: ResolvedTheme; persist?: boolean }): UiState {
   const [config, setConfig] = createStore<BatonConfig>(structuredClone(opts.config))
+  // `style = "modern"` in a config file implies its frame / status bar / …: any style key still
+  // at its built-in default (the classic preset) takes the chosen style's value
+  const chosen = STYLES.find((st) => st.name === opts.config.ui.style)
+  const classic = STYLES[0]!.prefs
+  const styled = <K extends keyof StylePrefs>(k: K, v: StylePrefs[K]): StylePrefs[K] => (chosen && v === classic[k] ? chosen.prefs[k] : v)
   const base: Prefs = {
+    style: opts.config.ui.style,
+    frame: styled("frame", opts.config.ui.frame),
+    status_style: styled("status_style", opts.config.ui.status_style),
+    background: styled("background", opts.config.ui.background),
+    brand_borders: styled("brand_borders", opts.config.ui.brand_borders),
     theme: opts.config.ui.theme,
     appearance: opts.config.ui.appearance,
     layout: opts.config.ui.layout,
     icons: opts.config.ui.icons,
-    border: opts.config.ui.border,
-    density: opts.config.ui.density,
+    border: styled("border", opts.config.ui.border),
+    density: styled("density", opts.config.ui.density),
     render_style: opts.config.ui.render_style,
     show_bus: opts.config.ui.show_bus,
     show_thoughts: opts.config.ui.show_thoughts,
     animations: opts.config.ui.animations,
-    spinner: opts.config.ui.spinner,
+    spinner: styled("spinner", opts.config.ui.spinner),
   }
   const [prefs, setPrefs] = createStore<Prefs>({ ...base, ...(opts.persist === false ? {} : loadPrefs()) })
-  const [theme, setTheme] = createSignal(opts.theme)
+  const [rawTheme, setTheme] = createSignal(opts.theme)
+  // cached: theme() is read hundreds of times per frame
+  let paintedFrom: ResolvedTheme | undefined
+  let paintedBg: Prefs["background"] | undefined
+  let painted = opts.theme
+  const theme = () => {
+    const raw = rawTheme()
+    const bg = prefs.background
+    if (raw !== paintedFrom || bg !== paintedBg) {
+      paintedFrom = raw
+      paintedBg = bg
+      painted = paintedTheme(raw, bg)
+    }
+    return painted
+  }
   const [version, setVersion] = createSignal(0)
   const [frame, setFrame] = createSignal(0)
   const [now, setNow] = createSignal(Date.now())
@@ -235,6 +293,7 @@ export function createUiState(opts: { client?: BatonClient; run: RunState; confi
       if (opts.persist !== false) savePrefs({ ...prefs })
     },
     theme,
+    rawTheme,
     setTheme,
     version,
     bump: () => {

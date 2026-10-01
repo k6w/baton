@@ -100,7 +100,9 @@ export function baseOptions(cfg: SessionConfig, binary: string): Options {
     env: buildEnv(cfg),
     ...(cfg.model ? { model: cfg.model } : {}),
     permissionMode: mode,
-    ...(mode === "bypassPermissions" ? { allowDangerouslySkipPermissions: true } : {}),
+    // lets Baton's run-wide autonomy switch this session into yolo later (setPermissionMode);
+    // the session only bypasses permissions once that mode is actually set
+    allowDangerouslySkipPermissions: true,
     systemPrompt: { type: "preset", preset: "claude_code", ...(cfg.systemPrompt ? { append: cfg.systemPrompt } : {}) },
     ...(buildMcpServers(cfg) ? { mcpServers: buildMcpServers(cfg) } : {}),
     ...(cfg.resumeId ? { resume: cfg.resumeId } : {}),

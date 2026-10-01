@@ -9,7 +9,7 @@ import { Txt } from "../ui/Txt.tsx"
 
 export function BusPane(props: { width: number; height: number; focused?: boolean }) {
   const ui = useUi()
-  const inner = () => innerSize(props.width, props.height, ui.prefs.border)
+  const inner = () => innerSize(props.width, props.height, ui.prefs.border, 1, ui.prefs.frame)
   const busVer = createMemo(() => {
     ui.version()
     return ui.run.busVersion
@@ -55,6 +55,8 @@ export function BusPane(props: { width: number; height: number; focused?: boolea
       height={props.height}
       border={ui.prefs.border}
       borderColor={props.focused ? ui.theme().borderActive : ui.theme().border}
+      focused={props.focused}
+      accent={ui.theme().accent}
       icon={{ text: "⇄", fg: ui.theme().text, bold: true }}
       title={[{ text: "bus", fg: ui.theme().text, bold: true }]}
       right={[{ text: "a2a", fg: ui.theme().textMuted }]}

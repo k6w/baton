@@ -42,9 +42,15 @@ const PRESETS: Record<"strict" | "balanced" | "yolo", PolicyRule[]> = {
   yolo: [{ action: "allow" }],
 }
 
+export type Autonomy = "normal" | "ask" | "auto" | "yolo"
+
+/** The preset an autonomy level implies (normal = whatever is configured). */
+const AUTONOMY_PRESET: Record<Exclude<Autonomy, "normal">, "strict" | "balanced" | "yolo"> = { ask: "strict", auto: "balanced", yolo: "yolo" }
+
 export class PolicyEngine {
   /** "agentId|toolName-or-kind" → remembered decision from allow_always / reject_always. */
   private remembered = new Map<string, "allow" | "deny">()
+  private autonomy: Autonomy = "normal"
 
   constructor(
     private preset: "strict" | "balanced" | "yolo",
@@ -81,12 +87,23 @@ export class PolicyEngine {
     return true
   }
 
+  /** Run-wide autonomy override: ask → strict, auto → balanced, yolo → allow everything your deny rules don't stop. */
+  setAutonomy(mode: Autonomy) {
+    this.autonomy = mode
+  }
+
   decide(r: PolicyRequest): Decision {
-    // the user's explicit rules win over anything remembered from a past click
-    for (const rule of this.rules) if (this.match(rule, r)) return rule.action
+    // the user's explicit rules win over anything remembered from a past click;
+    // in yolo only deny rules still count (nothing asks)
+    for (const rule of this.rules) {
+      if (this.autonomy === "yolo" && rule.action !== "deny") continue
+      if (this.match(rule, r)) return rule.action
+    }
+    if (this.autonomy === "yolo") return "allow"
     const mem = this.remembered.get(this.key(r))
     if (mem) return mem
-    for (const rule of [...BUILTIN_RULES, ...PRESETS[this.preset]]) if (this.match(rule, r)) return rule.action
+    const preset = this.autonomy === "normal" ? this.preset : AUTONOMY_PRESET[this.autonomy]
+    for (const rule of [...BUILTIN_RULES, ...PRESETS[preset]]) if (this.match(rule, r)) return rule.action
     return "ask"
   }
 

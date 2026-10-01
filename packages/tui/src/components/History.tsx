@@ -22,7 +22,7 @@ function ago(ts: number, now: number): string {
 export function HistoryOverlay(props: { onClose: () => void }) {
   const ui = useUi()
   const [sel, setSel] = createSignal(0)
-  const [runs] = createResource(async () => (ui.client ? (await ui.client.call("runs.list", { limit: 50 })).runs : []))
+  const [runs] = createResource(async () => (ui.client ? (await ui.client.call("runs.list", { limit: 50 }).catch(() => ({ runs: [] }))).runs : []))
   const current = () => runs()?.[sel()]
   const act = async <T,>(p: Promise<T> | undefined, ok: (v: T) => string) => {
     if (!p) return

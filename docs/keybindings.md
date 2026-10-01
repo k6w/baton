@@ -36,6 +36,9 @@ The `?` overlay lists your current bindings and flags any conflicts.
 | `costs.open` | `ctrl+e` | global |
 | `guide.open`, `recipes.open`, `welcome.open` | (unbound; `/guide`, `/recipes`, `/welcome`) | global |
 | `theme.pick` | `ctrl+t` | global |
+| `style.pick` (style gallery), `toggle.background` | (unbound; `/style`, `/background`) | global |
+| `autonomy.cycle` (normal → auto → YOLO → ask, every agent) | `shift+tab` | input |
+| `autonomy.yolo` (toggle YOLO) | (unbound; `/yolo`) | global |
 | `changes.open` (worker branches, diff, merge) | `ctrl+d` | global |
 | `tasks.open` (task plan) | `ctrl+g` | global |
 | `pane.diff` | `d` | grid |

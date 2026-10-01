@@ -38,6 +38,7 @@ export function HintBar(props: { width: number }) {
         ["@", "talk to an agent"],
         ["/", "commands"],
         [key("focus.next", "tab"), "agents"],
+        [key("autonomy.cycle", "shift+tab"), "autonomy"],
         [key("changes.open"), "changes"],
         [key("app.palette"), "palette"],
         [key("settings.open"), "settings"],

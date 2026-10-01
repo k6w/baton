@@ -3,9 +3,10 @@
 import { appendFileSync } from "node:fs"
 import { join } from "node:path"
 import { type AttentionItem, attentionItems, configDir, projectBatonDir, urgentCount } from "@batonsh/kernel"
-import { listThemes, loadTheme } from "@batonsh/themes"
+import { FRAME_STYLES, listThemes, loadTheme, matchStyle, STYLES, type StylePrefs } from "@batonsh/themes"
 import { onBlur, onFocus, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
 import { createEffect, createMemo, Match, onCleanup, Show, Switch } from "solid-js"
+import { AUTONOMY_CYCLE, AUTONOMY_INFO, type Autonomy } from "./autonomy.ts"
 import { copyText } from "./clipboard.ts"
 import { completions, LOCAL_COMMANDS } from "./completion.ts"
 import { AgentList } from "./components/AgentList.tsx"
@@ -15,8 +16,9 @@ import { type Cell, computeGrid, Grid } from "./components/Grid.tsx"
 import { HintBar } from "./components/HintBar.tsx"
 import { HistoryOverlay } from "./components/History.tsx"
 import { GuideOverlay, RecipesOverlay, WelcomeOverlay } from "./components/Learn.tsx"
+import { StylePicker, ThemePicker } from "./components/Looks.tsx"
 import { Orchestrator } from "./components/Orchestrator.tsx"
-import { CommandPalette, HelpOverlay, Inbox, type PaletteItem, ThemePicker, Toasts } from "./components/Overlays.tsx"
+import { CommandPalette, HelpOverlay, Inbox, type PaletteItem, Toasts } from "./components/Overlays.tsx"
 import { PeekOverlay } from "./components/Peek.tsx"
 import { SettingsOverlay } from "./components/Settings.tsx"
 import { StatusBar } from "./components/StatusBar.tsx"
@@ -33,6 +35,7 @@ const debugKeys = process.env.BATON_DEBUG_KEYS
 const LAYOUTS: Prefs["layout"][] = ["grid", "list", "focus", "swarm", "wide"]
 const ICON_MODES: Prefs["icons"][] = ["auto", "unicode", "nerd", "ascii"]
 const BORDERS: Prefs["border"][] = ["rounded", "single", "heavy", "double", "ascii", "none"]
+const STYLE_KEYS = Object.keys(STYLES[0]!.prefs) as (keyof StylePrefs)[]
 
 export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
   const ui = useUi()
@@ -72,9 +75,9 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
   // initial theme (system / auto appearance need the renderer)
   if (ui.prefs.theme === "system" || ui.prefs.appearance === "auto") {
     // once the terminal reports dark/light — unless the user already changed the theme meanwhile
-    const initial = ui.theme()
+    const initial = ui.rawTheme()
     void renderer.waitForThemeMode(300).then(() => {
-      if (ui.theme() === initial) void applyTheme(ui.prefs.theme)
+      if (ui.rawTheme() === initial) void applyTheme(ui.prefs.theme)
     })
   }
 
@@ -100,9 +103,35 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
 
   const setPref = <K extends keyof Prefs>(k: K, v: Prefs[K]) => {
     ui.setPrefs(k, v as never)
+    // tweaking one part of a style turns it into "custom" (or back into the style it matches)
+    if (STYLE_KEYS.includes(k as keyof StylePrefs)) ui.setPrefs("style", matchStyle(ui.prefs))
     ui.persistPrefs()
     ui.bump()
   }
+
+  const applyStyle = (name: string) => {
+    const st = STYLES.find((s) => s.name === name)
+    if (!st) return ui.toast(`styles: ${STYLES.map((s) => s.name).join(", ")}`, "warn")
+    for (const [k, v] of Object.entries(st.prefs)) ui.setPrefs(k as keyof Prefs, v as never)
+    ui.setPrefs("style", st.name)
+    ui.persistPrefs()
+    ui.bump()
+  }
+
+  const setAutonomy = (mode: Autonomy) =>
+    void call(ui.client?.call("run.autonomy", { mode }), (r) => {
+      const info = AUTONOMY_INFO[mode]
+      const extra = r.pending.length ? ` · ${r.pending.join(", ")} keep${r.pending.length === 1 ? "s" : ""} its sandbox until restarted` : ""
+      ui.toast(`${info.glyph} autonomy: ${info.label} — ${info.blurb}${extra}`, mode === "yolo" ? "warn" : "info")
+    })
+
+  // background = terminal: the renderer's own clear color must be transparent too
+  createEffect(() => {
+    const bg = ui.theme().background
+    try {
+      renderer.setBackgroundColor(bg)
+    } catch {}
+  })
 
   // ───────────────────────────── layout ─────────────────────────────
 
@@ -448,6 +477,21 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       case "toggle.animations":
         setPref("animations", !ui.prefs.animations)
         break
+      case "toggle.background":
+        setPref("background", ui.prefs.background === "terminal" ? "theme" : "terminal")
+        ui.toast(`background: ${ui.prefs.background === "terminal" ? "your terminal's" : "the theme's"}`)
+        break
+      case "style.pick":
+        ui.setOverlay("style")
+        break
+      case "autonomy.cycle": {
+        const cur = ui.run.autonomy
+        setAutonomy(AUTONOMY_CYCLE[(AUTONOMY_CYCLE.indexOf(cur) + 1) % AUTONOMY_CYCLE.length]!)
+        break
+      }
+      case "autonomy.yolo":
+        setAutonomy(ui.run.autonomy === "yolo" ? "normal" : "yolo")
+        break
     }
   }
 
@@ -477,6 +521,18 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
         break
       case "look":
         setPref("render_style", arg === "unified" ? "unified" : "native")
+        break
+      case "style":
+        if (!arg) ui.setOverlay("style")
+        else applyStyle(arg)
+        break
+      case "background":
+        if (arg === "theme" || arg === "terminal") setPref("background", arg)
+        else run("toggle.background")
+        break
+      case "frame":
+        if (FRAME_STYLES.includes(arg as Prefs["frame"])) setPref("frame", arg as Prefs["frame"])
+        else ui.toast(`frames: ${FRAME_STYLES.join(", ")}`, "warn")
         break
       case "bus":
         run("toggle.bus")
@@ -603,6 +659,10 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
     for (const l of LAYOUTS) items.push({ id: `layout:${l}`, label: `Layout: ${l}`, run: () => setPref("layout", l) })
     for (const m of ICON_MODES) items.push({ id: `icons:${m}`, label: `Icons: ${m}`, run: () => setPref("icons", m) })
     for (const b of BORDERS) items.push({ id: `border:${b}`, label: `Border: ${b}`, run: () => setPref("border", b) })
+    for (const st of STYLES) items.push({ id: `style:${st.name}`, label: `Style: ${st.title}`, detail: st.description, run: () => applyStyle(st.name) })
+    for (const f of FRAME_STYLES) items.push({ id: `frame:${f}`, label: `Frame: ${f}`, run: () => setPref("frame", f) })
+    for (const m of ["normal", "ask", "auto", "yolo"] as const)
+      items.push({ id: `autonomy:${m}`, label: `Autonomy: ${AUTONOMY_INFO[m].label}`, detail: AUTONOMY_INFO[m].blurb, run: () => setAutonomy(m) })
     const adapters = ["claude", "codex", "opencode", "gemini", "cursor", "copilot", ...Object.keys(ui.config.agents)]
     for (const a of [...new Set(adapters)])
       items.push({ id: `spawn:${a}`, label: `Spawn: ${a}`, detail: "start a new agent", run: () => submit(`/spawn ${a}`) })
@@ -710,6 +770,14 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
             }}
             onTask={(text) => prefill(text)}
             onGuide={() => ui.setOverlay("guide")}
+            onStyle={applyStyle}
+            onTheme={(dir) => {
+              const names = ["system", ...listThemes(themeDirs()).map((t) => t.name)]
+              const next = names[(names.indexOf(ui.prefs.theme) + dir + names.length) % names.length]!
+              setPref("theme", next)
+              void applyTheme(next)
+            }}
+            onAutonomy={setAutonomy}
           />
         </Match>
         <Match when={ui.overlay() === "compare"}>
@@ -728,7 +796,17 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
           <CostsOverlay onClose={() => ui.setOverlay(null)} />
         </Match>
         <Match when={ui.overlay() === "guide"}>
-          <GuideOverlay onClose={() => ui.setOverlay(null)} />
+          <GuideOverlay
+            onClose={() => ui.setOverlay(null)}
+            onTry={(action) => {
+              // next tick: the key that closed the guide must not reach what opens next
+              setTimeout(() => {
+                if (action === "agents") submit("/agents")
+                else if (action.startsWith("prefill:")) prefill(action.slice(8))
+                else run(action)
+              }, 0)
+            }}
+          />
         </Match>
         <Match when={ui.overlay() === "recipes"}>
           <RecipesOverlay
@@ -738,6 +816,9 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
               prefill(`/recipe ${name} `)
             }}
           />
+        </Match>
+        <Match when={ui.overlay() === "style"}>
+          <StylePicker onClose={() => ui.setOverlay(null)} onPick={applyStyle} />
         </Match>
         <Match when={ui.overlay() === "settings"}>
           <SettingsOverlay onClose={() => ui.setOverlay(null)} applyTheme={(n) => void applyTheme(n)} />

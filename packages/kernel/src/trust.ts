@@ -80,6 +80,7 @@ export function trustSurface(root: string, data: Record<string, unknown>): Trust
   if (isObj(data.telemetry)) for (const k of ["otlp_endpoint", "headers"]) push(`telemetry.${k}`, data.telemetry[k])
   if (isObj(data.policy)) {
     if (data.policy.preset === "yolo") push("policy.preset", "yolo")
+    if (data.policy.autonomy === "auto" || data.policy.autonomy === "yolo") push("policy.autonomy", data.policy.autonomy)
     if (Array.isArray(data.policy.rules))
       data.policy.rules.forEach((r, i) => {
         if (isObj(r) && r.action === "allow") push(`policy.rules[${i}]`, r)

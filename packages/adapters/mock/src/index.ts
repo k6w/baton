@@ -14,6 +14,7 @@ import {
   type AgentAdapter,
   type AgentEvent,
   type AgentSession,
+  type ApprovalMode,
   DEFAULT_PERMISSION_OPTIONS,
   type DetectResult,
   deferred,
@@ -153,6 +154,11 @@ class MockSession implements AgentSession {
       d.resolve(null)
       this.pendingPerms.delete(id)
     }
+  }
+
+  async setApproval(mode: ApprovalMode): Promise<void> {
+    if (this.closed) throw new Error("mock session is closed")
+    this.cfg = { ...this.cfg, approval: mode }
   }
 
   async respondPermission(requestId: string, optionId: string | null): Promise<void> {

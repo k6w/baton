@@ -34,7 +34,8 @@ export interface Palette {
   extra?: Partial<Record<Token, string>>
 }
 
-function mix(a: string, b: string, t: number): string {
+/** Blend two "#rrggbb" colors (t = 0 → a, 1 → b). */
+export function mix(a: string, b: string, t: number): string {
   const pa = hexToRgb(a)
   const pb = hexToRgb(b)
   const c = pa.map((v, i) => Math.round(v + ((pb[i] as number) - v) * t))

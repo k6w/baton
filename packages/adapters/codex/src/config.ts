@@ -5,6 +5,7 @@
 import type { ApprovalMode, McpServerSpec, ProviderSpec, SessionConfig } from "@batonsh/protocol"
 import type { AskForApproval } from "./generated/v2/AskForApproval.ts"
 import type { SandboxMode } from "./generated/v2/SandboxMode.ts"
+import type { SandboxPolicy } from "./generated/v2/SandboxPolicy.ts"
 
 export interface ApprovalSettings {
   approvalPolicy: AskForApproval
@@ -50,6 +51,18 @@ export function approvalSettings(mode: ApprovalMode, options?: Record<string, un
   const sb = options?.sandbox
   if (sb === "read-only" || sb === "workspace-write" || sb === "danger-full-access") s.sandbox = sb
   return s
+}
+
+/** Thread-level sandbox mode → the per-turn sandbox policy override (turn/start). */
+export function sandboxPolicyFor(mode: SandboxMode): SandboxPolicy {
+  switch (mode) {
+    case "danger-full-access":
+      return { type: "dangerFullAccess" }
+    case "read-only":
+      return { type: "readOnly", networkAccess: false }
+    default:
+      return { type: "workspaceWrite", writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }
+  }
 }
 
 /** TOML basic string. JSON string escaping is a valid subset of TOML basic-string escaping. */

@@ -62,6 +62,7 @@ export interface Snapshot {
   projectName: string
   branch?: string
   mode: string
+  autonomy?: "normal" | "ask" | "auto" | "yolo"
   orchestratorId?: string
   agents: AgentView[]
   tasks: TaskView[]
@@ -127,13 +128,16 @@ export interface ControlMethods {
   }
   "permission.respond": { params: { agentId: string; requestId: string; optionId: string | null }; result: { ok: true } }
   "run.mode": { params: { mode: string }; result: { ok: true } }
+  /** Set the run-wide autonomy level. `live` = agents switched in place; `pending` = agents that keep their sandbox until restarted. */
+  "run.autonomy": { params: { mode: "normal" | "ask" | "auto" | "yolo" }; result: { mode: string; live: string[]; pending: string[] } }
   "workspace.merge": { params: { agentId: string }; result: { status: string; files: string[]; detail?: string } }
   "workspace.sync": { params: { agentId: string }; result: { clean: boolean; conflicts: string[] } }
   "workspace.diff": { params: { agentId: string; paths?: string[] }; result: { patch: string } }
   "review.request": { params: { agentId: string; reviewer?: string }; result: { reviewer: string } }
   "recipes.list": {
     params: Record<string, never> | undefined
-    result: { recipes: { name: string; title: string; description: string; agents: string; source: string }[] }
+    /** `steps`: the numbered steps of the recipe's template, for previews. */
+    result: { recipes: { name: string; title: string; description: string; agents: string; source: string; steps: string[] }[] }
   }
   "runs.list": {
     params: { limit?: number } | undefined

@@ -25,7 +25,7 @@ export function ZoomView(props: { agentId: string; width: number; height: number
     return a ? { ...a } : undefined
   })
   const look = createMemo(() => (agent() ? agentLook(ui, agent()!) : undefined))
-  const inner = () => innerSize(props.width, props.height, ui.prefs.border)
+  const inner = () => innerSize(props.width, props.height, ui.prefs.border, 1, ui.prefs.frame)
   const lines = createMemo(() => {
     const a = agent()
     const l = look()
@@ -159,6 +159,8 @@ export function ZoomView(props: { agentId: string; width: number; height: number
       height={props.height}
       border={ui.prefs.border}
       borderColor={ui.theme().borderActive}
+      focused
+      accent={look()?.color}
       icon={look() ? { text: look()!.glyph, fg: look()!.color, bold: true } : undefined}
       logo={look()?.logo}
       title={[

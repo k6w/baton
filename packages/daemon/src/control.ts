@@ -94,6 +94,7 @@ export function startControlServer(
       rt.setMode(p.mode)
       return { ok: true }
     },
+    "run.autonomy": (p) => rt.setAutonomy(p.mode),
     "config.get": () => ({ config: rt.config }),
     "config.reload": () => hooks.reloadConfig?.() ?? { errors: ["reload not supported"] },
     "workspace.merge": async (p) => {
@@ -113,7 +114,15 @@ export function startControlServer(
     "runs.list": (p) => ({ runs: listRunSummaries(rt, p?.limit ?? 30) }),
     "run.export": (p) => ({ text: exportRun(rt, p.runId, p.format) }),
     "run.resume": async (p) => ({ agents: await resumeRun(rt, p.runId) }),
-    "recipes.list": () => ({ recipes: listRecipes(rt.projectRoot).map(({ template: _t, ...r }) => r) }),
+    "recipes.list": () => ({
+      recipes: listRecipes(rt.projectRoot).map(({ template, ...r }) => ({
+        ...r,
+        steps: template
+          .split("\n")
+          .map((l) => l.trim())
+          .filter((l) => /^\d+\./.test(l)),
+      })),
+    }),
     "daemon.shutdown": () => {
       setTimeout(hooks.onShutdown, 10)
       return { ok: true }

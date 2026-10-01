@@ -19,6 +19,25 @@ whether they're written to the project or global file (comments are preserved).
 on its own: every other setting still applies. `baton config schema` prints a JSON Schema you can use for
 editor autocompletion.
 
+## Autonomy (and YOLO)
+
+`policy.autonomy` is one dial for **every** agent in a run — the lead and all workers, including agents that are
+already running:
+
+| Level | What happens |
+|---|---|
+| `normal` (default) | each agent uses its own `approval` setting and the `policy.preset` decides what they ask |
+| `ask` | everyone asks before editing or running anything (strict policy) |
+| `auto` | agents act on their own; destructive commands (rm -rf, git push, sudo…) still ask |
+| `yolo` | no prompts and no sandbox for anyone. Your `deny` rules still apply |
+
+Switch it for the current run with `shift+tab` in the input (normal → auto → YOLO → ask), `/autonomy <level>`,
+`/yolo`, the command palette, or start with `baton --yolo` / `--autonomy auto`. Agents whose CLI can change modes
+mid-session (Claude Code, Codex, ACP agents that expose modes, the mock agent) switch in place; the rest keep their
+start-up sandbox until restarted while Baton's policy auto-decides what they ask. Requests already waiting in your
+inbox are re-decided under the new level. The current level shows in the status bar and on the lead's pane (red in
+YOLO).
+
 ## Trusting a project
 
 Cloning a repository must never be enough to run its commands. Project config (`.baton/config.toml` and
@@ -32,7 +51,7 @@ Those are held back until you run `baton trust` in the project:
 | `workspace.setup`, `workspace.verify`, `workspace.dir` | shell commands, file locations |
 | `notify.command`, `notify.webhook`, `telemetry.otlp_endpoint` / `headers` | runs commands / sends run data elsewhere |
 | `providers.<name>.base_url` / `api_key` / `headers` | `cmd:` secrets run commands; a repo endpoint could receive your key |
-| `approval = "auto"` / `"yolo"`, `policy.preset = "yolo"`, `[[policy.rules]]` with `action = "allow"` | widen permissions |
+| `approval = "auto"` / `"yolo"`, `policy.preset = "yolo"`, `policy.autonomy = "auto"` / `"yolo"`, `[[policy.rules]]` with `action = "allow"` | widen permissions |
 
 `baton trust` lists exactly what it would allow and asks first (`-y` to skip the question). Trust is pinned to the
 values: when one of them changes (or a plugin file is edited), that entry is held back again. `baton doctor`
@@ -96,7 +115,8 @@ max_depth = 2                     # how deep agents may spawn agents
 warn_at = 0.8
 
 [policy]
-preset = "balanced"               # strict | balanced | yolo
+autonomy = "normal"               # normal | ask | auto | yolo — one dial for every agent (shift+tab switches it live)
+preset = "balanced"               # strict | balanced | yolo (used at autonomy = normal)
 timeout_s = 0                     # auto-deny unanswered requests after N seconds (0 = never)
 [[policy.rules]]                  # checked first, top to bottom; first match wins
 kinds = ["execute"]               # read edit delete move search execute think fetch other …
@@ -146,6 +166,11 @@ max_body = 8000
 
 [ui]
 theme = "baton"                   # see themes.md; "system" = your terminal's palette
+style = "classic"                 # classic | modern | minimal | accent | tabs | neon | retro | zen (sets the next five)
+frame = "line"                    # line | tab | bar | minimal | accent — how panes are framed
+status_style = "plain"            # plain | blocks | powerline | minimal
+background = "theme"              # theme | terminal (transparent: your terminal's own background)
+brand_borders = false             # tint agent cards with their brand color
 appearance = "auto"               # auto | dark | light — picks a theme's light/dark counterpart
 layout = "grid"                   # grid | list | focus | swarm | wide
 hints = true                      # key-hint bar

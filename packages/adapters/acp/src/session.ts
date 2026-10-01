@@ -13,6 +13,7 @@ import type {
   AdapterContext,
   AgentEvent,
   AgentSession,
+  ApprovalMode,
   EventInput,
   EventType,
   PermissionOptionKind,
@@ -502,6 +503,32 @@ export class AcpSession implements AgentSession {
     return this.configOptions.find((o) => o.type === "select" && (o.category === "model" || o.id === "model")) as
       | (acp.SessionConfigOption & { type: "select" })
       | undefined
+  }
+
+  /**
+   * Autonomy switch: pick the agent's own permission mode (a "mode" config option) whose
+   * id/name matches the level — e.g. Claude ACP's default / acceptEdits / bypassPermissions.
+   */
+  async setApproval(mode: ApprovalMode): Promise<void> {
+    const opt = this.configOptions.find((o) => o.type === "select" && (o.category === "mode" || o.id === "mode")) as
+      | (acp.SessionConfigOption & { type: "select" })
+      | undefined
+    if (!opt || !this.sessionId) throw new Error(`${this.opts.preset.displayName} exposes no permission modes over ACP`)
+    const values = (opt.options as unknown[]).flatMap((o) =>
+      o && typeof o === "object" && "options" in o ? (o as acp.SessionConfigSelectGroup).options : [o as acp.SessionConfigSelectOption],
+    )
+    const patterns: Record<ApprovalMode, RegExp> = {
+      yolo: /bypass|yolo|full.?access|danger|dont.?ask|never.?ask|allow.?all/i,
+      auto: /^auto$|auto.?approve|accept.?all|agent.?full|autonom/i,
+      "auto-edit": /accept.?edits|auto.?edit|edit/i,
+      ask: /^default$|ask|manual|normal|read.?only/i,
+    }
+    const match = values.find((v) => patterns[mode].test(v.value) || patterns[mode].test(v.name ?? ""))
+    if (!match) throw new Error(`${this.opts.preset.displayName} has no mode for ${mode}`)
+    if (opt.currentValue === match.value) return
+    const res = await this.agent.request("session/set_config_option", { sessionId: this.sessionId, configId: opt.id, value: match.value })
+    if (Array.isArray(res?.configOptions)) this.configOptions = res.configOptions
+    else opt.currentValue = match.value
   }
 
   private currentModel(): string | undefined {

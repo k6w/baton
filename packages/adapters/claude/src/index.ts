@@ -16,7 +16,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk"
 import type { AgentAdapter, AgentEvent, AgentSession, DetectResult, PermissionOptionKind, PromptInput, SessionConfig } from "@batonsh/protocol"
 import { AsyncQueue, DEFAULT_PERMISSION_OPTIONS, deferred, defineAdapter, newId, parseVersion, runCapture } from "@batonsh/protocol"
-import { baseOptions, buildEnv, resolveBinary } from "./options.ts"
+import { baseOptions, buildEnv, permissionModeFor, resolveBinary } from "./options.ts"
 import { ClaudeTranslator } from "./translator.ts"
 
 export { baseOptions, buildEnv, permissionModeFor } from "./options.ts"
@@ -312,6 +312,10 @@ async function start(cfg: SessionConfig, ctx: AdapterContextLike): Promise<Agent
       ensureOpen()
       await q.setModel(model)
       emit([{ type: "agent.updated", data: { model } }])
+    },
+    async setApproval(mode) {
+      ensureOpen()
+      await q.setPermissionMode(permissionModeFor(mode))
     },
     resumeId() {
       return tr.sessionId ?? cfg.resumeId

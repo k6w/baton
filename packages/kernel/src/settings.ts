@@ -1,13 +1,14 @@
 /**
- * Settings catalogue: every user-facing setting with label, help text and editor type.
- * Drives the TUI settings screen (and `baton config` docs). Keys are config paths.
+ * Settings catalogue: every user-facing setting with label, help text and editor type, grouped
+ * into sections. Drives the TUI settings screen (and `baton config` docs). Keys are config paths.
  */
 export type SettingType =
-  | { kind: "enum"; options: readonly string[] }
+  | { kind: "enum"; options: readonly string[]; labels?: Record<string, string> }
   | { kind: "bool" }
-  | { kind: "number"; min?: number; max?: number; step?: number; optional?: boolean }
+  | { kind: "number"; min?: number; max?: number; step?: number; optional?: boolean; unit?: string }
   | { kind: "string"; optional?: boolean; placeholder?: string }
   | { kind: "theme" }
+  | { kind: "style" }
   | { kind: "adapter" }
   | { kind: "list"; options?: readonly string[] }
 
@@ -21,69 +22,111 @@ export interface SettingDef {
   ui?: boolean
 }
 
+export interface SettingSection {
+  name: string
+  icon: string
+  /** One line under the section title. */
+  blurb: string
+}
+
+export const SECTIONS: SettingSection[] = [
+  { name: "Looks", icon: "◐", blurb: "Style (shapes) and theme (colors). Everything previews live." },
+  { name: "Layout", icon: "▦", blurb: "How panes are arranged and what they show." },
+  { name: "Autonomy & safety", icon: "⚡", blurb: "How freely agents act, what they may do without you, and what it may cost." },
+  { name: "Orchestrator", icon: "✱", blurb: "The lead agent: who plans and coordinates the work." },
+  { name: "Agents", icon: "◆", blurb: "Defaults for the workers the orchestrator (or you) starts." },
+  { name: "Workspaces", icon: "⎇", blurb: "Worktrees, reviews and merges — how changes land in your project." },
+  { name: "Notifications", icon: "⚑", blurb: "How Baton gets your attention when something needs you." },
+  { name: "Advanced", icon: "⋯", blurb: "Performance, the message bus, input." },
+]
+
 const e = (...options: string[]) => ({ kind: "enum" as const, options })
 
 export const SETTINGS: SettingDef[] = [
-  // Appearance
+  // ── Looks
+  {
+    key: "ui.style",
+    section: "Looks",
+    label: "Style",
+    help: "The shape of everything: frames, status bar, background. classic · modern · minimal · accent · tabs · neon · retro · zen. Enter opens the gallery with a live preview.",
+    type: { kind: "style" },
+    ui: true,
+  },
   {
     key: "ui.theme",
-    section: "Appearance",
+    section: "Looks",
     label: "Theme",
-    help: 'Color theme. ctrl+t previews them live. "system" uses your terminal\'s palette.',
+    help: 'Colors. Enter (or ctrl+t) previews them all live. "system" uses your terminal\'s palette.',
     type: { kind: "theme" },
     ui: true,
   },
   {
     key: "ui.appearance",
-    section: "Appearance",
+    section: "Looks",
     label: "Light / dark",
     help: "auto follows the terminal background and switches to a theme's light or dark twin.",
     type: e("auto", "dark", "light"),
     ui: true,
   },
   {
-    key: "ui.layout",
-    section: "Appearance",
-    label: "Layout",
-    help: "grid: lead on top, agent cards below · list: one row per agent (many agents) · focus: one agent zoomed · swarm: dense grid · wide: lead column on the left",
-    type: e("grid", "list", "focus", "swarm", "wide"),
+    key: "ui.background",
+    section: "Looks",
+    label: "Background",
+    help: "theme: Baton paints the theme's background · terminal: no background — your terminal's own color, transparency and blur show through.",
+    type: e("theme", "terminal"),
+    ui: true,
+  },
+  {
+    key: "ui.frame",
+    section: "Looks",
+    label: "Frames",
+    help: "line: rounded boxes · tab: titles in filled tabs · bar: filled title bars · minimal: a title rule only · accent: a colored stripe per pane.",
+    type: e("line", "tab", "bar", "minimal", "accent"),
     ui: true,
   },
   {
     key: "ui.border",
-    section: "Appearance",
-    label: "Borders",
-    help: "Pane border style.",
+    section: "Looks",
+    label: "Box lines",
+    help: "Line style for line / tab frames.",
     type: e("rounded", "single", "heavy", "double", "ascii", "none"),
     ui: true,
   },
   {
+    key: "ui.status_style",
+    section: "Looks",
+    label: "Status bar",
+    help: "plain bar · blocks (chips) · powerline (needs a Nerd Font) · minimal (just text).",
+    type: e("plain", "blocks", "powerline", "minimal"),
+    ui: true,
+  },
+  {
+    key: "ui.brand_borders",
+    section: "Looks",
+    label: "Agent colors on cards",
+    help: "Tint each agent card's frame with its brand color (Claude orange, Gemini blue, …).",
+    type: { kind: "bool" },
+    ui: true,
+  },
+  {
     key: "ui.icons",
-    section: "Appearance",
+    section: "Looks",
     label: "Agent icons",
-    help: "auto shows real logos where the terminal supports images (Kitty/Sixel), otherwise glyphs.",
+    help: "auto shows real logos where the terminal supports images (Kitty/Sixel), otherwise glyphs. nerd needs a Nerd Font.",
     type: e("auto", "unicode", "nerd", "ascii"),
     ui: true,
   },
   {
     key: "ui.render_style",
-    section: "Appearance",
-    label: "Look",
+    section: "Looks",
+    label: "Agent output",
     help: "native: each agent looks like its own CLI (Claude ● ⎿, Codex • └) · unified: one look for all.",
     type: e("native", "unified"),
     ui: true,
   },
   {
-    key: "ui.density",
-    section: "Appearance",
-    label: "Density",
-    help: "compact shows fewer diff/output lines per card.",
-    type: e("comfy", "compact"),
-    ui: true,
-  },
-  {
     key: "ui.spinner",
-    section: "Appearance",
+    section: "Looks",
     label: "Spinner",
     help: "Animation shown while agents work.",
     type: e("star", "dots", "circle", "moon", "arc", "pulse", "bounce", "line", "diamond"),
@@ -91,54 +134,157 @@ export const SETTINGS: SettingDef[] = [
   },
   {
     key: "ui.animations",
-    section: "Appearance",
+    section: "Looks",
     label: "Animations",
     help: "Turn off for reduced motion or slow connections.",
     type: { kind: "bool" },
     ui: true,
   },
+  // ── Layout
+  {
+    key: "ui.layout",
+    section: "Layout",
+    label: "Layout",
+    help: "grid: lead on top, cards below · list: one row per agent (many agents) · focus: one agent large · swarm: dense grid · wide: lead column on the left. ctrl+l cycles.",
+    type: e("grid", "list", "focus", "swarm", "wide"),
+    ui: true,
+  },
+  {
+    key: "ui.density",
+    section: "Layout",
+    label: "Density",
+    help: "compact shows fewer diff/output lines per card.",
+    type: e("comfy", "compact"),
+    ui: true,
+  },
   {
     key: "ui.show_bus",
-    section: "Appearance",
+    section: "Layout",
     label: "Bus pane",
-    help: "Show the agent-to-agent message log as a grid cell.",
+    help: "Show the agent-to-agent message log as a grid cell. ctrl+b toggles.",
     type: { kind: "bool" },
     ui: true,
   },
   {
     key: "ui.show_thoughts",
-    section: "Appearance",
+    section: "Layout",
     label: "Show reasoning",
-    help: "Show agents' thinking text in their cards.",
+    help: "Show agents' thinking text in their cards. ctrl+o toggles.",
     type: { kind: "bool" },
     ui: true,
   },
+  { key: "ui.hints", section: "Layout", label: "Hint bar", help: "The one-line bar with the keys that matter right now.", type: { kind: "bool" }, ui: true },
   {
     key: "ui.min_card_width",
-    section: "Appearance",
+    section: "Layout",
     label: "Min card width",
     help: "Cards get at least this many columns; more agents than fit are paged.",
-    type: { kind: "number", min: 24, max: 200, step: 4 },
+    type: { kind: "number", min: 24, max: 200, step: 4, unit: "cols" },
     ui: true,
   },
   {
     key: "ui.max_columns",
-    section: "Appearance",
+    section: "Layout",
     label: "Max columns",
     help: "Upper bound on grid columns.",
     type: { kind: "number", min: 1, max: 8 },
     ui: true,
   },
-  { key: "ui.timestamp_format", section: "Appearance", label: "Timestamps", help: "Bus log time format.", type: e("ss.mmm", "hh:mm:ss", "relative"), ui: true },
   {
-    key: "ui.fps",
-    section: "Appearance",
-    label: "Frame rate",
-    help: "Max redraws per second (lower = less CPU, e.g. over SSH).",
-    type: { kind: "number", min: 5, max: 120, step: 5 },
+    key: "ui.timestamp_format",
+    section: "Layout",
+    label: "Timestamps",
+    help: "Bus log time format.",
+    type: e("ss.mmm", "hh:mm:ss", "relative"),
+    ui: true,
   },
-  { key: "ui.mouse", section: "Appearance", label: "Mouse", help: "Click to focus, double-click to zoom. Restart to apply.", type: { kind: "bool" } },
-  // Orchestrator
+  {
+    key: "ui.tab_title",
+    section: "Layout",
+    label: "Tab title",
+    help: 'Show "⚑ 2 baton · project" in the terminal tab title.',
+    type: { kind: "bool" },
+    ui: true,
+  },
+  // ── Autonomy & safety
+  {
+    key: "policy.autonomy",
+    section: "Autonomy & safety",
+    label: "Autonomy",
+    help: "One dial for every agent, including running ones. normal: each agent's own setting · ask: everyone asks first · auto: agents act, destructive commands ask · yolo: no prompts, no sandbox. shift+tab switches it for this run.",
+    type: { kind: "enum", options: ["normal", "ask", "auto", "yolo"], labels: { yolo: "YOLO" } },
+  },
+  {
+    key: "policy.preset",
+    section: "Autonomy & safety",
+    label: "Approval policy",
+    help: "Used at autonomy normal. strict: only reads auto-approved · balanced: reads + edits; risky commands ask · yolo: everything.",
+    type: e("strict", "balanced", "yolo"),
+  },
+  {
+    key: "orchestrator.approval",
+    section: "Autonomy & safety",
+    label: "Lead autonomy",
+    help: "Used at autonomy normal. ask: approve everything · auto-edit: edits ok · auto: commands ok · yolo: anything.",
+    type: e("ask", "auto-edit", "auto", "yolo"),
+  },
+  {
+    key: "defaults.approval",
+    section: "Autonomy & safety",
+    label: "Worker autonomy",
+    help: "Used at autonomy normal. How freely workers act on their own (Baton's policy still sees every request).",
+    type: e("ask", "auto-edit", "auto", "yolo"),
+  },
+  {
+    key: "policy.timeout_s",
+    section: "Autonomy & safety",
+    label: "Auto-deny after",
+    help: "Seconds before an unanswered approval is denied (0 = wait forever).",
+    type: { kind: "number", min: 0, max: 3600, step: 30, unit: "s" },
+  },
+  {
+    key: "budget.run_usd",
+    section: "Autonomy & safety",
+    label: "Run budget",
+    help: "Stop all new work at this spend (empty = none). Raising it lets work continue.",
+    type: { kind: "number", min: 0, step: 1, optional: true, unit: "$" },
+  },
+  {
+    key: "budget.per_agent_usd",
+    section: "Autonomy & safety",
+    label: "Per-agent budget",
+    help: "Stop an agent at this spend.",
+    type: { kind: "number", min: 0, step: 0.5, optional: true, unit: "$" },
+  },
+  {
+    key: "budget.max_agents",
+    section: "Autonomy & safety",
+    label: "Max agents",
+    help: "Upper bound on simultaneously running agents.",
+    type: { kind: "number", min: 1, max: 64 },
+  },
+  {
+    key: "budget.soft_max_agents",
+    section: "Autonomy & safety",
+    label: "Ask above",
+    help: "Above this many workers the orchestrator needs your OK to start more (0 = never ask).",
+    type: { kind: "number", min: 0, max: 64 },
+  },
+  {
+    key: "budget.max_depth",
+    section: "Autonomy & safety",
+    label: "Spawn depth",
+    help: "How deep agents may spawn agents (0 = only the lead spawns).",
+    type: { kind: "number", min: 0, max: 5 },
+  },
+  {
+    key: "watchdog.stall_s",
+    section: "Autonomy & safety",
+    label: "Stuck after",
+    help: "Flag a busy agent with no activity for this long (0 = off). Long commands get 3× the time.",
+    type: { kind: "number", min: 0, max: 3600, step: 60, unit: "s" },
+  },
+  // ── Orchestrator
   {
     key: "orchestrator.agent",
     section: "Orchestrator",
@@ -154,13 +300,6 @@ export const SETTINGS: SettingDef[] = [
     type: { kind: "string", optional: true, placeholder: "default" },
   },
   {
-    key: "orchestrator.approval",
-    section: "Orchestrator",
-    label: "Lead autonomy",
-    help: "ask: approve everything · auto-edit: edits ok · auto: commands ok · yolo: anything",
-    type: e("ask", "auto-edit", "auto", "yolo"),
-  },
-  {
     key: "orchestrator.mode",
     section: "Orchestrator",
     label: "Playbook",
@@ -174,16 +313,9 @@ export const SETTINGS: SettingDef[] = [
     help: "The lead waits for /plan approve before dispatching work.",
     type: { kind: "bool" },
   },
-  // Agents
+  // ── Agents
   { key: "defaults.worker", section: "Agents", label: "Default worker", help: "Adapter used by /spawn without arguments.", type: { kind: "adapter" } },
-  {
-    key: "defaults.approval",
-    section: "Agents",
-    label: "Worker autonomy",
-    help: "How freely workers act on their own (Baton's policy still sees every request).",
-    type: e("ask", "auto-edit", "auto", "yolo"),
-  },
-  // Workspaces
+  // ── Workspaces
   {
     key: "workspace.isolation",
     section: "Workspaces",
@@ -195,7 +327,7 @@ export const SETTINGS: SettingDef[] = [
     key: "workspace.review",
     section: "Workspaces",
     label: "Reviews",
-    help: "suggested: the lead gets cross-vendor reviews · required: merges need an approving review.",
+    help: "suggested: the lead gets cross-vendor reviews · required: merges need an approving review of the exact changes.",
     type: e("off", "suggested", "required"),
   },
   {
@@ -233,50 +365,7 @@ export const SETTINGS: SettingDef[] = [
     help: "Check overlapping edits between workers while they work.",
     type: { kind: "bool" },
   },
-  // Safety
-  {
-    key: "policy.preset",
-    section: "Safety & budget",
-    label: "Approval policy",
-    help: "strict: only reads auto-approved · balanced: reads + edits; risky commands ask · yolo: everything.",
-    type: e("strict", "balanced", "yolo"),
-  },
-  {
-    key: "policy.timeout_s",
-    section: "Safety & budget",
-    label: "Auto-deny after",
-    help: "Seconds before an unanswered approval is denied (0 = wait forever).",
-    type: { kind: "number", min: 0, max: 3600, step: 30 },
-  },
-  {
-    key: "budget.run_usd",
-    section: "Safety & budget",
-    label: "Run budget ($)",
-    help: "Interrupt everything at this spend (empty = none).",
-    type: { kind: "number", min: 0, step: 1, optional: true },
-  },
-  {
-    key: "budget.per_agent_usd",
-    section: "Safety & budget",
-    label: "Per-agent budget ($)",
-    help: "Interrupt an agent at this spend.",
-    type: { kind: "number", min: 0, step: 0.5, optional: true },
-  },
-  {
-    key: "budget.max_agents",
-    section: "Safety & budget",
-    label: "Max agents",
-    help: "Upper bound on simultaneously running agents.",
-    type: { kind: "number", min: 1, max: 64 },
-  },
-  {
-    key: "budget.max_depth",
-    section: "Safety & budget",
-    label: "Spawn depth",
-    help: "How deep agents may spawn agents (0 = only the lead spawns).",
-    type: { kind: "number", min: 0, max: 5 },
-  },
-  // Notifications
+  // ── Notifications
   {
     key: "notify.desktop",
     section: "Notifications",
@@ -298,7 +387,7 @@ export const SETTINGS: SettingDef[] = [
     key: "notify.events",
     section: "Notifications",
     label: "Notify on",
-    help: "Which events notify you.",
+    help: "Which events notify you: approval · done · error · merge.",
     type: { kind: "list", options: ["approval", "done", "error", "merge"] },
     ui: true,
   },
@@ -323,15 +412,29 @@ export const SETTINGS: SettingDef[] = [
     help: "Shell command per notification (JSON on stdin, $BATON_TITLE / $BATON_BODY).",
     type: { kind: "string", optional: true, placeholder: "none" },
   },
-  // Bus
+  // ── Advanced
+  {
+    key: "ui.fps",
+    section: "Advanced",
+    label: "Frame rate",
+    help: "Max redraws per second (lower = less CPU, e.g. over SSH). Restart to apply.",
+    type: { kind: "number", min: 5, max: 120, step: 5, unit: "fps" },
+  },
+  { key: "ui.mouse", section: "Advanced", label: "Mouse", help: "Click to focus, double-click to zoom. Restart to apply.", type: { kind: "bool" } },
   {
     key: "bus.heartbeat_s",
-    section: "Bus",
-    label: "Heartbeat (s)",
+    section: "Advanced",
+    label: "Heartbeat",
     help: "Workers report liveness/progress to the lead this often (0 = off).",
-    type: { kind: "number", min: 0, max: 600, step: 5 },
+    type: { kind: "number", min: 0, max: 600, step: 5, unit: "s" },
   },
-  { key: "bus.contact", section: "Bus", label: "Who may message whom", help: "open: anyone · tree: only parent/children/siblings.", type: e("open", "tree") },
+  {
+    key: "bus.contact",
+    section: "Advanced",
+    label: "Who may message whom",
+    help: "open: anyone · tree: only parent/children/siblings.",
+    type: e("open", "tree"),
+  },
 ]
 
-export const SETTING_SECTIONS = [...new Set(SETTINGS.map((s) => s.section))]
+export const SETTING_SECTIONS = SECTIONS.map((s) => s.name)

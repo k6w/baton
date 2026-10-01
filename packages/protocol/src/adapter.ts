@@ -92,6 +92,12 @@ export interface AgentSession {
   interrupt(): Promise<void>
   respondPermission(requestId: string, optionId: string | null): Promise<void>
   setModel?(model: string): Promise<void>
+  /**
+   * Change how freely the agent acts, mid-session (autonomy switches). Takes effect for the
+   * agent's next action/turn. Adapters without it keep their start-up mode; Baton's policy
+   * still decides every permission request they surface.
+   */
+  setApproval?(mode: ApprovalMode): Promise<void>
   /** Native id usable with SessionConfig.resumeId. */
   resumeId(): string | undefined
   close(): Promise<void>

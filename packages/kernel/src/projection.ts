@@ -56,6 +56,8 @@ export class RunState {
   projectName = ""
   branch: string | undefined
   mode = "orchestrator"
+  /** Run-wide autonomy level (normal = per-agent settings). */
+  autonomy: "normal" | "ask" | "auto" | "yolo" = "normal"
   orchestratorId: string | undefined
   agents = new Map<string, AgentView>()
   feeds = new Map<string, AgentFeed>()
@@ -142,6 +144,9 @@ export class RunState {
         break
       case "orch.mode":
         this.mode = e.data.mode
+        break
+      case "run.autonomy":
+        this.autonomy = e.data.mode
         break
       case "agent.spawned": {
         const d = e.data
@@ -499,6 +504,7 @@ export class RunState {
       projectName: this.projectName,
       branch: this.branch,
       mode: this.mode,
+      autonomy: this.autonomy,
       orchestratorId: this.orchestratorId,
       agents: [...this.agents.values()],
       tasks: [...this.tasks.values()],

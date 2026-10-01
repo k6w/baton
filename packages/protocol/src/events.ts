@@ -290,6 +290,8 @@ export const EventSchemas = {
 
   // orchestrator / misc
   "orch.mode": z.object({ mode: z.string() }),
+  /** Run-wide autonomy level (applies to every agent, including ones already running). */
+  "run.autonomy": z.object({ mode: z.enum(["normal", "ask", "auto", "yolo"]) }),
   "orch.note": z.object({ text: z.string(), level: z.enum(["info", "warn", "error"]).default("info") }),
   error: z.object({ message: z.string(), detail: z.string().optional(), fatal: z.boolean().optional() }),
   log: z.object({ level: z.enum(["debug", "info", "warn", "error"]), message: z.string() }),

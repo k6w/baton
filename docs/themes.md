@@ -1,4 +1,38 @@
-# Themes & appearance
+# Themes, styles & appearance
+
+Baton separates **colors** (the theme) from **shapes** (the style). Any style works with any theme.
+
+## Styles
+
+`/style` (or settings → Looks → Style) opens a gallery: moving through it previews each style on the whole app and
+in a miniature, Enter keeps it, Escape puts back exactly what you had.
+
+| Style | Frames | Status bar | Background |
+|---|---|---|---|
+| `classic` (default) | rounded boxes, titles in the border | plain bar | theme |
+| `modern` | filled title bars over raised panels | chips | theme |
+| `minimal` | a title rule only | plain text | terminal |
+| `accent` | a stripe in each agent's brand color | chips | theme |
+| `tabs` | titles in filled tabs on single-line boxes | chips | theme |
+| `neon` | heavy boxes glowing in each agent's color, tabbed titles | chips | theme |
+| `retro` | double-line boxes, compact | plain bar | theme |
+| `zen` | title rules, compact cards | plain text | terminal |
+
+A style is a preset over these settings, each of which can be changed on its own (the style then shows as
+`custom`):
+
+| Setting | Options |
+|---|---|
+| `ui.frame` (`/frame`) | `line` boxes · `tab` titles in filled tabs · `bar` filled title bars · `minimal` title rule · `accent` colored stripe |
+| `ui.border` | box lines for `line` / `tab` frames: `rounded single heavy double ascii none` |
+| `ui.status_style` | `plain` bar · `blocks` (chips) · `powerline` (needs a Nerd / Powerline font) · `minimal` (text only) |
+| `ui.background` (`/background`) | `theme`: Baton paints the theme background · `terminal`: no background at all — your terminal's color, transparency and blur show through |
+| `ui.brand_borders` | tint every agent card with its brand color |
+| `ui.spinner`, `ui.density` | as below |
+
+`style = "modern"` in a config file is enough: style keys you don't set yourself follow the chosen style.
+
+## Themes
 
 Pick a theme live with `ctrl+t`: moving the selection previews the theme and Enter keeps it. You can also use
 `/theme nord`, `baton theme set nord`, `[ui] theme = "nord"` or `BATON_THEME=nord`. `baton theme list` shows

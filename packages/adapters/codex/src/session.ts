@@ -6,9 +6,9 @@
  * JSON-RPC ids (needed to correlate `serverRequest/resolved`).
  */
 import { appendFileSync } from "node:fs"
-import type { AdapterContext, AgentSession, PromptInput, SessionConfig } from "@batonsh/protocol"
+import type { AdapterContext, AgentSession, ApprovalMode, PromptInput, SessionConfig } from "@batonsh/protocol"
 import { augmentedPath, deferred, type JsonRpcMessage, JsonRpcPeer, readLines } from "@batonsh/protocol"
-import { approvalSettings, appServerArgs, promptText } from "./config.ts"
+import { type ApprovalSettings, approvalSettings, appServerArgs, promptText, sandboxPolicyFor } from "./config.ts"
 import type { InitializeParams } from "./generated/InitializeParams.ts"
 import type { ThreadForkParams } from "./generated/v2/ThreadForkParams.ts"
 import type { ThreadItem } from "./generated/v2/ThreadItem.ts"
@@ -50,6 +50,7 @@ export class CodexSession implements AgentSession {
   private running = false
   private queue: PromptInput[] = []
   private interruptRequested = false
+  private approvalOverride: ApprovalSettings | undefined
   private closing = false
   /** Set once the app-server process has exited (for whatever reason). */
   private dead = false
@@ -269,6 +270,11 @@ export class CodexSession implements AgentSession {
     const text = promptText(input)
     this.translator.notePrompt(input.text)
     const params: TurnStartParams = { threadId: this.threadId, input: textInput(text), model: this.model ?? null }
+    // autonomy switched mid-session: override approval + sandbox from this turn on
+    if (this.approvalOverride) {
+      params.approvalPolicy = this.approvalOverride.approvalPolicy
+      params.sandboxPolicy = sandboxPolicyFor(this.approvalOverride.sandbox)
+    }
     try {
       if (this.snapshots) this.baseline = await this.snapshots.snapshot()
       const res = await this.peer.request<TurnStartResponse>("turn/start", params, REQUEST_TIMEOUT_MS)
@@ -338,6 +344,12 @@ export class CodexSession implements AgentSession {
       return
     }
     this.write({ id: r.rpcId, result: r.result })
+  }
+
+  /** Applies from the next turn (Codex takes approval/sandbox overrides per turn/start). */
+  async setApproval(mode: ApprovalMode): Promise<void> {
+    this.assertAlive()
+    this.approvalOverride = approvalSettings(mode, this.cfg.options)
   }
 
   async setModel(model: string): Promise<void> {

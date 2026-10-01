@@ -14,6 +14,8 @@ interface Fake {
   emit: (ev: AgentEvent) => void
   prompts: PromptInput[]
   failPrompts: boolean
+  approvals: string[]
+  responses: (string | null)[]
 }
 
 function fakeAdapter(sessions: Map<string, Fake>): AgentAdapter {
@@ -36,7 +38,7 @@ function fakeAdapter(sessions: Map<string, Fake>): AgentAdapter {
       models: [],
     }),
     async start(cfg, ctx: AdapterContext): Promise<AgentSession> {
-      const f: Fake = { emit: ctx.emit, prompts: [], failPrompts: false }
+      const f: Fake = { emit: ctx.emit, prompts: [], failPrompts: false, approvals: [cfg.approval], responses: [] }
       sessions.set(cfg.name, f)
       return {
         async prompt(input) {
@@ -45,7 +47,12 @@ function fakeAdapter(sessions: Map<string, Fake>): AgentAdapter {
           ctx.emit({ type: "turn.started", data: { turnId: `t${f.prompts.length}`, prompt: input.text } })
         },
         async interrupt() {},
-        async respondPermission() {},
+        async respondPermission(_id, optionId) {
+          f.responses.push(optionId)
+        },
+        async setApproval(mode) {
+          f.approvals.push(mode)
+        },
         resumeId: () => undefined,
         async close() {},
       }
@@ -183,5 +190,31 @@ describe("runtime lifecycle", () => {
     rt.watchdog(Date.now() + 5000)
     expect(rt.agents.get(w.agentId)?.flagged).toBe("stalled")
     endTurn(fake("w"))
+  })
+
+  test("autonomy switches every live agent, new spawns and waiting approvals", async () => {
+    const { rt, fake } = setup()
+    await rt.spawn({ adapter: "fake", isOrchestrator: true })
+    const w = await rt.spawn({ adapter: "fake", name: "w" })
+    expect(fake("w").approvals).toEqual(["ask"])
+    fake("w").emit({
+      type: "permission.requested",
+      data: { requestId: "r1", title: "Bash(rm -rf build)", kind: "execute", options: [{ optionId: "ok", name: "Allow", kind: "allow_once" }] },
+    })
+    await Bun.sleep(5)
+    expect(rt.state.approvals.size).toBe(1)
+    const r = await rt.setAutonomy("yolo")
+    expect(r.live.sort()).toEqual(["orchestrator", "w"])
+    expect(fake("w").approvals.at(-1)).toBe("yolo")
+    expect(rt.state.autonomy).toBe("yolo")
+    expect(rt.state.agents.get(w.agentId)?.approval).toBe("yolo")
+    expect(rt.state.approvals.size).toBe(0)
+    expect(fake("w").responses).toEqual(["ok"])
+    const late = await rt.spawn({ adapter: "fake", name: "late" })
+    expect(late.approval).toBe("yolo")
+    // back to normal: everyone returns to their own setting
+    await rt.setAutonomy("normal")
+    expect(fake("w").approvals.at(-1)).toBe("ask")
+    expect(fake("orchestrator").approvals.at(-1)).toBe("auto-edit")
   })
 })

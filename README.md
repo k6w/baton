@@ -53,11 +53,13 @@ Then type what you want. The orchestrator decides how many agents to use, which 
 | `/merge <agent\|all>` · `/undo` · `/sync` · `/review <agent> [reviewer]` · `/diff` · `/plan approve\|reject` | land worker branches, undo a merge, resolve conflicts, cross-vendor review, approve plans |
 | `/recipe <name> <task>` · `/settings` · `/guide` · `/history` · `/costs` | workflows, settings, lessons, past runs, spend |
 | `/kill`, `/interrupt`, `/model`, `/label`, `/rename`, `/mode`, `/agents`, `/approve`, `/deny` | daemon commands; Tab completes names and arguments |
-| `/theme`, `/layout`, `/icons`, `/border`, `/look`, `/bus`, `/thoughts`, `/zoom` | UI commands |
+| `/autonomy <normal\|ask\|auto\|yolo>` · `/yolo` | how freely **every** agent acts — also `shift+tab` |
+| `/style`, `/theme`, `/background`, `/frame`, `/layout`, `/icons`, `/border`, `/look`, `/bus`, `/thoughts`, `/zoom` | UI commands |
 
 Keys: `ctrl+p` command palette · `ctrl+a` **inbox** of everything that needs you (`ctrl+n` jumps to the next) ·
 `ctrl+s` settings · `ctrl+t` theme picker with live preview · `ctrl+d` changes and diffs · `ctrl+g` task plan ·
 `ctrl+r` history · `ctrl+e` costs ·
+`shift+tab` cycle autonomy (normal → auto → YOLO → ask) ·
 `ctrl+y` approve the oldest request · `tab` focus the agent grid (then `hjkl`/arrows, `space` peek & reply, `z` zoom,
 `m` message, `d` diff, `x` interrupt) · `ctrl+l` cycle layouts · `?` all shortcuts · `/guide` short lessons. Every binding can be changed
 ([docs/keybindings.md](docs/keybindings.md)).
@@ -69,9 +71,11 @@ Keys: `ctrl+p` command palette · `ctrl+a` **inbox** of everything that needs yo
   - They show as ⚑ in the status bar and the terminal tab title.
   - `ctrl+n` takes you to the next one. `space` peeks at an agent and lets you answer it in place.
   - Desktop notifications and/or the terminal bell fire when Baton isn't focused.
+- **One autonomy dial.** `shift+tab` switches every agent — lead and workers, even running ones — between normal, auto, YOLO (no prompts, no sandbox) and ask-first. Your deny rules always hold.
+- **Looks, not just colors.** 8 styles (classic, modern, minimal, accent, tabs, neon, retro, zen) change frames, status bar and background; ~30 themes change colors; any mix works. `background = terminal` keeps your terminal's own (transparent) background.
 - **Teaching built in.**
-  - A first-run welcome lists your installed agents and suggests starter tasks drawn from your repo.
-  - A hint bar shows the keys that matter right now, `/guide` has short lessons, and `?` lists every key.
+  - A four-step welcome tour: how it works, pick your look (live), pick your autonomy level, start with a task suggested from your repo.
+  - A hint bar shows the keys that matter right now, `/guide` has illustrated lessons you can try on the spot, and `?` lists every key.
 - **Recipes.** `/recipe best-of-3 <task>` and others:
   - `plan-execute`: plan, your approval, parallel execution.
   - `research-implement`, `implement-review`, `debug-hypotheses`, `test-first`, `shard`.
@@ -83,7 +87,7 @@ Keys: `ctrl+p` command palette · `ctrl+a` **inbox** of everything that needs yo
   - Search, copy (OSC 52 / native clipboard) and save transcripts from the zoom view.
 - **Guard rails.**
   - Parallel spawns need a stated reason, and more agents than your soft limit need your OK.
-  - A YOLO warning appears whenever the policy is lax.
+  - The autonomy level is always visible; YOLO turns the lead's frame red.
   - Merges can be undone three-way (`/undo`), and each worker gets its own ports.
   - Colour-blind-safe themes are included.
 

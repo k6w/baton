@@ -1,7 +1,8 @@
 /**
- * Settings screen: every setting, grouped by section, showing the effective value and which
- * layer set it. Edits are written to the project or global config file (comments preserved);
- * appearance changes apply instantly, agent-side ones are reloaded into the daemon.
+ * Settings screen: every setting, grouped into sections with a short explanation, each drawn
+ * with a control that shows what it is (toggle, choice dots, slider, swatch). Edits are written
+ * to the project or global config file (comments preserved); looks apply instantly, agent-side
+ * settings are reloaded into the daemon. Style and theme open their live galleries.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
@@ -11,23 +12,25 @@ import {
   getPath,
   loadConfig,
   projectPaths,
-  SETTING_SECTIONS,
+  SECTIONS,
   SETTINGS,
   type SettingDef,
   setTomlValue,
   trustEntries,
   trustSurface,
 } from "@batonsh/kernel"
-import { listThemes } from "@batonsh/themes"
+import { listThemes, STYLES } from "@batonsh/themes"
 import type { InputRenderable } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
 import { createMemo, createSignal, Show } from "solid-js"
+import { agentLook } from "../agent-style.ts"
 import { useUi } from "../context.ts"
 import { keyString } from "../keymap.ts"
 import { clip, type Line, type Seg, width as sw, wrap } from "../lines.ts"
-import type { Prefs } from "../state.ts"
+import { PREF_KEYS, type Prefs } from "../state.ts"
 import { toStyled } from "../ui/styled.ts"
 import { Txt } from "../ui/Txt.tsx"
+import { choice, keycap, slider, swatch, toggle } from "../ui/widgets.ts"
 import { Modal } from "./Overlays.tsx"
 
 const ADAPTERS = [
@@ -47,7 +50,7 @@ const ADAPTERS = [
   "opencode-acp",
   "mock",
 ]
-const PREF_KEYS = new Set(["theme", "appearance", "layout", "icons", "border", "density", "render_style", "show_bus", "show_thoughts", "animations", "spinner"])
+const PREFS = new Set<string>(PREF_KEYS)
 
 type Scope = "project" | "global"
 
@@ -62,6 +65,15 @@ export function formatValue(v: unknown): string {
   return String(v)
 }
 
+/** Settings whose change also moves other keys (a style preset sets all of its shapes). */
+function expand(s: SettingDef, v: unknown): [string, unknown][] {
+  if (s.key === "ui.style") {
+    const st = STYLES.find((x) => x.name === v)
+    if (st) return [["ui.style", v], ...Object.entries(st.prefs).map(([k, val]) => [`ui.${k}`, val] as [string, unknown])]
+  }
+  return [[s.key, v]]
+}
+
 export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name: string) => void }) {
   const ui = useUi()
   const dims = useTerminalDimensions()
@@ -74,7 +86,6 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
   const [filter, setFilter] = createSignal<string | null>(null)
   const [tick, setTick] = createSignal(0)
   let editRef: InputRenderable | undefined
-  let _searchRef: InputRenderable | undefined
   const themes = listThemes({ global: join(configDir(), "themes"), project: join(projectPaths(root).dir, "themes") }).map((t) => t.name)
 
   // fresh config + provenance from disk (re-read after every write)
@@ -82,15 +93,16 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
     tick()
     return loadConfig({ projectRoot: root })
   })
+  const isPref = (s: SettingDef) => s.key.startsWith("ui.") && PREFS.has(s.key.slice(3))
   const value = (s: SettingDef): unknown => {
-    const k = s.key.split(".")[1] as string
-    if (s.key.startsWith("ui.") && PREF_KEYS.has(k)) return (ui.prefs as Record<string, unknown>)[k]
+    if (isPref(s)) return (ui.prefs as Record<string, unknown>)[s.key.slice(3)]
+    if (s.key === "policy.autonomy") return ui.run.autonomy
     return getPath(loaded().config, s.key)
   }
   const source = (s: SettingDef): string => {
-    const k = s.key.split(".")[1] as string
     const fromFile = loaded().provenance[s.key]
-    if (s.key.startsWith("ui.") && PREF_KEYS.has(k) && getPath(loaded().config, s.key) !== value(s)) return "session"
+    if (isPref(s) && getPath(loaded().config, s.key) !== value(s)) return "this session"
+    if (s.key === "policy.autonomy" && ui.run.autonomy !== loaded().config.policy.autonomy) return "this run"
     return fromFile ?? "default"
   }
 
@@ -112,15 +124,21 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
         .sort((a, b) => b.n - a.n)
         .map((x) => x.s)
     }
-    return SETTINGS.filter((s) => s.section === SETTING_SECTIONS[section()])
+    return SETTINGS.filter((s) => s.section === SECTIONS[section()]!.name)
   })
   const current = () => visible()[Math.min(row(), visible().length - 1)]
 
   const write = (s: SettingDef, v: unknown) => {
     const path = scopePath(scope(), root)
     mkdirSync(dirname(path), { recursive: true })
-    const text = existsSync(path) ? readFileSync(path, "utf8") : ""
-    const next = setTomlValue(text, s.key, v)
+    const changes = expand(s, v)
+    let next = existsSync(path) ? readFileSync(path, "utf8") : ""
+    try {
+      for (const [key, val] of changes) next = setTomlValue(next, key, val)
+    } catch (e) {
+      ui.toast(`can't update ${path}: ${e instanceof Error ? e.message : String(e)}`, "error")
+      return
+    }
     // validate the whole file before writing so a bad value can't break the config
     let data: Record<string, unknown>
     try {
@@ -135,25 +153,28 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
       return
     }
     writeFileSync(path, next)
-    // you set this value yourself, so it doesn't need `baton trust`
+    // you set these values yourself, so they don't need `baton trust`
     if (scope() !== "global")
       trustEntries(
         root,
-        trustSurface(root, data).filter((e) => e.path === s.key),
+        trustSurface(root, data).filter((e) => changes.some(([k]) => e.path === k)),
       )
     setTick((t) => t + 1)
     // apply live
-    const [sec, key] = s.key.split(".") as [string, string]
-    if (sec === "ui" && PREF_KEYS.has(key)) {
-      ui.setPrefs(key as keyof Prefs, (v ?? getPath(loaded().config, s.key)) as never)
-      ui.persistPrefs()
-      if (key === "theme" || key === "appearance") props.applyTheme(ui.prefs.theme)
+    for (const [key] of changes) {
+      const [sec, k] = key.split(".") as [string, string]
+      const fresh = getPath(loaded().config, key)
+      if (sec === "ui" && PREFS.has(k)) {
+        ui.setPrefs(k as keyof Prefs, fresh as never)
+        if (k === "theme" || k === "appearance") props.applyTheme(ui.prefs.theme)
+      }
+      ;(ui.setConfig as unknown as (a: string, b: string, c: unknown) => void)(sec, k, fresh)
     }
-    const fresh = getPath(loaded().config, s.key)
-    ;(ui.setConfig as any)(sec, key, fresh)
+    ui.persistPrefs()
     ui.bump()
+    if (s.key === "policy.autonomy") void ui.client?.call("run.autonomy", { mode: (v ?? "normal") as "normal" })
     if (!s.ui) void ui.client?.call("config.reload", {}).then((r) => r.errors.length && ui.toast(r.errors[0]!, "warn"))
-    ui.toast(`${s.label}: ${formatValue(v ?? fresh)} (${scope()})`)
+    ui.toast(`${s.label}: ${formatValue(v ?? getPath(loaded().config, s.key))} → ${scope()} config`)
   }
 
   const cycle = (s: SettingDef, dir: 1 | -1) => {
@@ -167,6 +188,8 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
         return write(s, !v)
       case "theme":
         return write(s, step(["system", ...themes]))
+      case "style":
+        return write(s, step(STYLES.map((x) => x.name)))
       case "adapter":
         return write(s, step(ADAPTERS))
       case "number": {
@@ -201,6 +224,17 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
     write(s, text)
   }
 
+  const open = (s: SettingDef) => {
+    if (s.type.kind === "theme") {
+      props.onClose()
+      ui.setOverlay("theme")
+    } else if (s.type.kind === "style") {
+      props.onClose()
+      ui.setOverlay("style")
+    } else if (s.type.kind === "string" || s.type.kind === "number" || s.type.kind === "list") setTimeout(() => setEditing(s), 0)
+    else cycle(s, 1)
+  }
+
   useKeyboard((k) => {
     if (editing()) {
       if (k.name === "escape") setEditing(null)
@@ -231,8 +265,8 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
     }
     if (ks === "s") return setScope((s) => (s === "project" ? "global" : "project"))
     if (pane() === "sections" && filter() === null) {
-      if (k.name === "down" || ks === "j") setSection((i) => (i + 1) % SETTING_SECTIONS.length)
-      else if (k.name === "up" || ks === "k") setSection((i) => (i - 1 + SETTING_SECTIONS.length) % SETTING_SECTIONS.length)
+      if (k.name === "down" || ks === "j") setSection((i) => (i + 1) % SECTIONS.length)
+      else if (k.name === "up" || ks === "k") setSection((i) => (i - 1 + SECTIONS.length) % SECTIONS.length)
       else if (k.name === "right" || ks === "l" || k.name === "return" || k.name === "enter") {
         setPane("settings")
         setRow(0)
@@ -245,118 +279,223 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
     else if (
       (k.name === "left" || ks === "h") &&
       s &&
-      (s.type.kind === "number" || s.type.kind === "enum" || s.type.kind === "theme" || s.type.kind === "adapter")
+      (s.type.kind === "number" || s.type.kind === "enum" || s.type.kind === "theme" || s.type.kind === "adapter" || s.type.kind === "style")
     )
       cycle(s, -1)
     else if (k.name === "left" || ks === "h") setPane("sections")
     else if (!s) return
     else if (k.name === "right" || ks === "l" || ks === "space" || k.name === "space") cycle(s, 1)
-    else if (k.name === "return" || k.name === "enter") {
-      if (s.type.kind === "theme") {
-        props.onClose()
-        ui.setOverlay("theme")
-      } else if (s.type.kind === "string" || s.type.kind === "number" || s.type.kind === "list") setTimeout(() => setEditing(s), 0)
-      else cycle(s, 1)
-    } else if (ks === "r") write(s, undefined)
+    else if (k.name === "return" || k.name === "enter") open(s)
+    else if (ks === "r") write(s, undefined)
   })
 
-  const W = () => Math.min(110, dims().width - 4)
-  const H = () => Math.min(30, dims().height - 2)
-  const leftW = 20
-  const rightW = () => W() - leftW - 5
+  const W = () => Math.min(120, dims().width - 4)
+  const H = () => Math.min(36, dims().height - 2)
+  const leftW = 27
+  const rightW = () => W() - leftW - 7
+  const bodyH = () => H() - 9
 
   const sectionLines = createMemo<Line[]>(() => {
     const t = ui.theme()
-    return SETTING_SECTIONS.map((name, i) => {
+    const out: Line[] = SECTIONS.map((sec, i) => {
       const active = i === section() && filter() === null
       const focused = pane() === "sections" && active
+      const bg = focused ? t.selection : undefined
+      const count = SETTINGS.filter((s) => s.section === sec.name).length
       return {
-        bg: focused ? t.selection : undefined,
-        segs: [{ text: `${active ? "▸ " : "  "}${name}`, fg: active ? t.text : t.textMuted, bold: active, bg: focused ? t.selection : undefined }],
+        bg,
+        segs: [
+          { text: active ? "▌" : " ", fg: t.primary, bg },
+          { text: ` ${sec.icon} `, fg: active ? t.primary : t.textSubtle, bg },
+          { text: clip(sec.name, leftW - 9).padEnd(leftW - 8), fg: active ? t.text : t.textMuted, bold: active, bg },
+          { text: String(count).padStart(3), fg: t.textSubtle, bg },
+        ],
       }
     })
+    out.push({ segs: [] })
+    const quick: [string, string][] = [
+      ["ctrl+t", "themes"],
+      ["/style", "style gallery"],
+      ["shift+tab", "autonomy"],
+    ]
+    out.push({ segs: [{ text: "  quick keys", fg: t.textSubtle }] })
+    for (const [key, what] of quick) out.push({ segs: [{ text: "  " }, keycap(t, key), { text: ` ${what}`, fg: t.textMuted }] })
+    return out
   })
+
+  // every control starts with the 2-column slot choices use for their ‹ › arrows
+  const control = (s: SettingDef, active: boolean, width: number): Seg[] => {
+    const c = rawControl(s, active, width - 2)
+    return s.type.kind === "enum" ? c : [{ text: "  " }, ...c]
+  }
+  const rawControl = (s: SettingDef, active: boolean, width: number): Seg[] => {
+    const t = ui.theme()
+    const v = value(s)
+    const ty = s.type
+    switch (ty.kind) {
+      case "bool":
+        return toggle(t, !!v, active)
+      case "enum": {
+        const idx = ty.options.indexOf(String(v))
+        const label = ty.labels?.[String(v)] ?? String(v ?? "—")
+        const color = s.key === "policy.autonomy" ? (v === "yolo" ? t.error : v === "auto" ? t.warning : v === "ask" ? t.info : t.accent) : t.accent
+        const widest = Math.max(...ty.options.map((o) => sw(ty.labels?.[o] ?? o)))
+        return choice(t, label, Math.max(0, idx), ty.options.length, active, color, widest)
+      }
+      case "number": {
+        const unit = ty.unit ? (ty.unit === "$" ? "" : ` ${ty.unit}`) : ""
+        const shown = v === undefined || v === null ? "—" : `${ty.unit === "$" ? "$" : ""}${v}${unit}`
+        if (typeof v === "number" && ty.min !== undefined && ty.max !== undefined && width >= 22)
+          return [...slider(t, v, ty.min, ty.max, 10), { text: `  ${shown}`, fg: t.accent, bold: active }]
+        return [{ text: shown, fg: v === undefined ? t.textSubtle : t.accent, bold: active }]
+      }
+      case "theme":
+        return [{ text: String(v), fg: t.accent, bold: active }, { text: "  " }, ...swatch(t), { text: active ? "   enter: gallery" : "", fg: t.textSubtle }]
+      case "style": {
+        const st = STYLES.find((x) => x.name === v)
+        return [
+          { text: st?.title ?? String(v), fg: t.accent, bold: active },
+          { text: `  ${clip(st ? st.description : "your own mix of frames, borders and status bar", Math.max(0, width - 14))}`, fg: t.textSubtle },
+        ]
+      }
+      case "adapter": {
+        const look = agentLook(ui, { adapter: String(v), name: String(v) })
+        return [
+          { text: `${look.glyph} `, fg: look.color, bold: true },
+          { text: String(v), fg: t.accent, bold: active },
+        ]
+      }
+      case "list": {
+        const items = Array.isArray(v) ? (v as string[]) : []
+        if (!items.length) return [{ text: "none", fg: t.textSubtle }]
+        return items.flatMap((x, i) => [
+          { text: i ? " " : "" },
+          { text: ` ${x} `, fg: t.text, bg: t.backgroundElement === "transparent" ? undefined : t.backgroundElement },
+        ])
+      }
+      default: {
+        const str = v === undefined || v === null || v === "" ? undefined : String(v)
+        return str
+          ? [{ text: clip(str, width), fg: t.accent, bold: active }]
+          : [{ text: (ty as { placeholder?: string }).placeholder ?? "—", fg: t.textSubtle, italic: true }]
+      }
+    }
+  }
 
   const settingLines = createMemo<Line[]>(() => {
     tick()
     ui.version()
     const t = ui.theme()
     const rw = rightW()
-    const labelW = 22
-    const srcW = 9
+    const labelW = 24
+    const srcW = 13
     const list = visible()
-    const height = H() - 8
+    const out: Line[] = []
+    if (filter() === null) {
+      const sec = SECTIONS[section()]!
+      out.push({ segs: [{ text: `${sec.icon} ${sec.name}`, fg: t.primary, bold: true }] })
+      for (const l of wrap(sec.blurb, rw).slice(0, 2)) out.push({ segs: [{ text: l, fg: t.textMuted }] })
+      out.push({ segs: [] })
+    } else {
+      out.push({ segs: [{ text: `${list.length} match${list.length === 1 ? "" : "es"}`, fg: t.textMuted }] })
+      out.push({ segs: [] })
+    }
+    const height = bodyH() - out.length
     const sel = Math.min(row(), list.length - 1)
     const start = Math.max(0, Math.min(sel - Math.floor(height / 2), list.length - height))
-    return list.slice(start, start + height).map((s, i) => {
+    for (const [i, s] of list.slice(start, start + height).entries()) {
       const active = start + i === sel && pane() === "settings"
       const bg = active ? t.selection : undefined
       const src = source(s)
-      const v = formatValue(value(s))
-      const valW = rw - labelW - srcW - 4
-      const val: Seg =
-        s.type.kind === "bool"
-          ? { text: value(s) ? "● on" : "○ off", fg: value(s) ? t.success : t.textMuted, bg }
-          : { text: clip(v, valW), fg: v === "—" ? t.textSubtle : t.accent, bg }
-      const gap = Math.max(1, rw - labelW - sw(val.text) - srcW - 2)
-      return {
+      const changed = src !== "default"
+      const ctrlW = rw - labelW - srcW - 3
+      const ctrl = control(s, active, ctrlW).map((x) => ({ ...x, bg: x.bg ?? bg }))
+      const ctrlUsed = ctrl.reduce((n, x) => n + sw(x.text), 0)
+      const prefix = filter() !== null ? `${SECTIONS.find((x) => x.name === s.section)?.icon ?? " "} ` : ""
+      const gap = Math.max(1, rw - 2 - labelW - Math.min(ctrlUsed, ctrlW) - srcW)
+      out.push({
         bg,
         segs: [
-          { text: clip(s.label, labelW - 1).padEnd(labelW), fg: active ? t.text : t.textMuted, bold: active, bg },
-          val,
+          { text: changed ? "• " : "  ", fg: t.accent, bg },
+          { text: clip(`${prefix}${s.label}`, labelW - 1).padEnd(labelW), fg: active ? t.text : t.textMuted, bold: active, bg },
+          ...ctrl,
           { text: " ".repeat(gap), bg },
-          { text: src.padStart(srcW), fg: src === "default" ? t.textSubtle : src === "session" ? t.warning : t.info, bg },
+          { text: changed ? clip(src, srcW).padStart(srcW) : " ".repeat(srcW), fg: src.startsWith("this") ? t.warning : t.info, bg },
         ],
-      }
-    })
+      })
+    }
+    if (!list.length) out.push({ segs: [{ text: "no matching settings", fg: t.textMuted }] })
+    return out
   })
 
   const helpLines = createMemo<Line[]>(() => {
     const t = ui.theme()
     const s = current()
-    if (!s) return [{ segs: [{ text: filter() !== null ? "no matching settings" : "", fg: t.textMuted }] }]
-    const kindHint =
-      s.type.kind === "enum" || s.type.kind === "theme" || s.type.kind === "adapter"
-        ? "←→ / space change"
-        : s.type.kind === "bool"
-          ? "space toggle"
-          : s.type.kind === "number"
-            ? "←→ adjust · enter type a value"
-            : "enter edit"
+    if (!s) return []
+    const src = source(s)
     return [
       {
         segs: [
-          { text: s.key, fg: t.textSubtle },
-          { text: `   ${kindHint} · r reset`, fg: t.textSubtle },
+          { text: s.label, fg: t.text, bold: true },
+          { text: `  ${s.key}`, fg: t.textSubtle },
+          { text: src === "default" ? "  · default" : `  · set in ${src}`, fg: src === "default" ? t.textSubtle : t.info },
         ],
       },
       ...wrap(s.help, W() - 4)
-        .slice(0, 2)
+        .slice(0, 3)
         .map((l) => ({ segs: [{ text: l, fg: t.textMuted }] })),
     ]
   })
 
+  const hint = () => {
+    const s = current()
+    if (editing()) return "enter save · empty = unset · esc cancel"
+    if (pane() === "sections") return "↑↓ section · → settings · / search · esc close"
+    const kind = s?.type.kind
+    const change =
+      kind === "bool"
+        ? "space toggle"
+        : kind === "theme" || kind === "style"
+          ? "←→ change · enter gallery"
+          : kind === "number"
+            ? "←→ adjust · enter type"
+            : kind === "string" || kind === "list"
+              ? "enter edit"
+              : "←→ change"
+    return `↑↓ move · ${change} · r reset · s scope · / search · esc`
+  }
+
   const header = (): Line[] => {
     const t = ui.theme()
     const f = filter()
+    const crumb = f !== null ? `search: ${f}` : `${SECTIONS[section()]!.icon} ${SECTIONS[section()]!.name}${current() ? `  ›  ${current()!.label}` : ""}`
+    const scopeSegs: Seg[] = [
+      { text: "save to ", fg: t.textMuted },
+      { text: scope() === "project" ? "◉ project" : "○ project", fg: scope() === "project" ? t.accent : t.textSubtle, bold: scope() === "project" },
+      { text: "  " },
+      { text: scope() === "global" ? "◉ global" : "○ global", fg: scope() === "global" ? t.accent : t.textSubtle, bold: scope() === "global" },
+      { text: "  " },
+      keycap(t, "s"),
+    ]
+    const sw2 = scopeSegs.reduce((n, x) => n + sw(x.text), 0)
     return [
       {
         segs: [
-          { text: f !== null ? `/ ${f}` : "Settings apply instantly where possible.", fg: f !== null ? t.text : t.textMuted },
-          { text: " ".repeat(Math.max(1, W() - 4 - (f !== null ? f.length + 2 : 40) - 28)) },
-          { text: "write to: ", fg: t.textMuted },
-          { text: scope() === "project" ? "▸project" : " project", fg: scope() === "project" ? t.accent : t.textSubtle, bold: scope() === "project" },
-          { text: scope() === "global" ? " ▸global" : "  global", fg: scope() === "global" ? t.accent : t.textSubtle, bold: scope() === "global" },
+          { text: clip(crumb, W() - 8 - sw2), fg: t.text, bold: true },
+          { text: " ".repeat(Math.max(1, W() - 4 - sw(clip(crumb, W() - 8 - sw2)) - sw2)) },
+          ...scopeSegs,
         ],
       },
     ]
   }
 
+  const rule = () => toStyled([{ segs: [{ text: "─".repeat(Math.max(0, W() - 4)), fg: ui.theme().borderSubtle }] }], W() - 4)
+
   return (
-    <Modal title="Settings" width={W()} height={H()} hint="↑↓ select · ←→ change · enter edit · / search · tab sections · s scope · r reset · esc">
+    <Modal title="Settings" width={W()} height={H()} hint={hint()}>
       <Show when={filter() !== null} fallback={<Txt value={toStyled(header(), W() - 4)} />}>
         <box height={1} flexDirection="row">
-          <Txt value={toStyled([{ segs: [{ text: "/ ", fg: ui.theme().primary }] }], 2)} />
+          <Txt value={toStyled([{ segs: [{ text: "/ ", fg: ui.theme().primary, bold: true }] }], 2)} />
           <input
             flexGrow={1}
             focused
@@ -364,10 +503,7 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
             focusedBackgroundColor="transparent"
             textColor={ui.theme().text}
             focusedTextColor={ui.theme().text}
-            placeholder="search settings…"
-            ref={(r: InputRenderable) => {
-              _searchRef = r
-            }}
+            placeholder="search settings — try 'yolo', 'background', 'budget'…"
             onInput={(v: string) => {
               setFilter(v)
               setRow(0)
@@ -377,31 +513,29 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
               (() => {
                 // Enter in the search box acts on the highlighted result
                 const s = current()
-                if (!s) return
-                if (s.type.kind === "string" || s.type.kind === "number" || s.type.kind === "list") setTimeout(() => setEditing(s), 0)
-                else cycle(s, 1)
+                if (s) open(s)
               }) as never
             }
           />
         </box>
       </Show>
-      <Txt value={toStyled([{ segs: [{ text: "─".repeat(Math.max(0, W() - 4)), fg: ui.theme().borderSubtle }] }], W() - 4)} />
-      <box flexDirection="row" height={H() - 8}>
+      <Txt value={rule()} />
+      <box flexDirection="row" height={bodyH()}>
         <box width={leftW} flexDirection="column">
-          <Txt value={toStyled(sectionLines(), leftW, H() - 8)} />
+          <Txt value={toStyled(sectionLines(), leftW, bodyH())} />
         </box>
         <Txt
           value={toStyled(
-            Array.from({ length: H() - 8 }, () => ({ segs: [{ text: "│ ", fg: ui.theme().borderSubtle }] })),
+            Array.from({ length: bodyH() }, () => ({ segs: [{ text: "│ ", fg: ui.theme().borderSubtle }] })),
             2,
           )}
         />
         <box width={rightW() + 2} paddingLeft={1}>
-          <Txt value={toStyled(settingLines(), rightW(), H() - 8)} />
+          <Txt value={toStyled(settingLines(), rightW(), bodyH())} />
         </box>
       </box>
-      <Txt value={toStyled([{ segs: [{ text: "─".repeat(Math.max(0, W() - 4)), fg: ui.theme().borderSubtle }] }], W() - 4)} />
-      <Show when={editing()} fallback={<Txt value={toStyled(helpLines(), W() - 4, 3)} height={3} />}>
+      <Txt value={rule()} />
+      <Show when={editing()} fallback={<Txt value={toStyled(helpLines(), W() - 4, 4)} height={4} />}>
         <box height={1} flexDirection="row">
           <Txt value={toStyled([{ segs: [{ text: `${editing()!.label}: `, fg: ui.theme().primary, bold: true }] }], editing()!.label.length + 2)} />
           <input

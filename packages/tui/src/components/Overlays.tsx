@@ -1,17 +1,16 @@
-/** Modal overlays: command palette, theme picker, approvals inbox, help. */
+/** Modal overlays: command palette, approvals inbox, help. */
 
-import { join } from "node:path"
-import { type AttentionItem, type AttentionKind, attentionItems, configDir, projectBatonDir } from "@batonsh/kernel"
-import { listThemes, loadTheme } from "@batonsh/themes"
+import { type AttentionItem, type AttentionKind, attentionItems } from "@batonsh/kernel"
 import type { InputRenderable } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
-import { createMemo, createSignal, For, type JSX, onCleanup, Show } from "solid-js"
+import { createMemo, createSignal, For, type JSX, Show } from "solid-js"
 import { agentLook } from "../agent-style.ts"
 import { useUi } from "../context.ts"
 import { keyString } from "../keymap.ts"
 import { clip, type Line, type Seg, width as sw, wrap } from "../lines.ts"
 import { segs, toStyled } from "../ui/styled.ts"
 import { Txt } from "../ui/Txt.tsx"
+import { keycap } from "../ui/widgets.ts"
 
 export interface PaletteItem {
   id: string
@@ -149,66 +148,6 @@ export function CommandPalette(props: { items: PaletteItem[]; onClose: () => voi
   )
 }
 
-export function ThemePicker(props: { onClose: () => void; onPick: (name: string) => void }) {
-  const ui = useUi()
-  const dirs = { global: join(configDir(), "themes"), project: ui.run.projectRoot ? join(projectBatonDir(ui.run.projectRoot), "themes") : undefined }
-  const themes = listThemes(dirs)
-  const original = ui.theme()
-  const startIdx = Math.max(
-    0,
-    themes.findIndex((t) => t.name === ui.prefs.theme),
-  )
-  const [sel, setSel] = createSignal(startIdx)
-  const preview = (i: number) => {
-    const t = themes[i]
-    if (!t) return
-    ui.setTheme(loadTheme(t.name, { appearance: t.appearance ?? ui.prefs.appearance, dirs }))
-  }
-  let done = false
-  onCleanup(() => {
-    if (!done) ui.setTheme(original)
-  })
-  useKeyboard((k) => {
-    const n = themes.length
-    if (k.name === "escape") {
-      ui.setTheme(original)
-      done = true
-      props.onClose()
-    } else if (k.name === "down" || k.name === "j") {
-      const i = (sel() + 1) % n
-      setSel(i)
-      preview(i)
-    } else if (k.name === "up" || k.name === "k") {
-      const i = (sel() - 1 + n) % n
-      setSel(i)
-      preview(i)
-    } else if (k.name === "return" || k.name === "enter") {
-      done = true
-      props.onPick(themes[sel()]!.name)
-      props.onClose()
-    }
-  })
-  const swatch = (name: string): Seg[] => {
-    const entry = themes.find((t) => t.name === name)
-    if (!entry) return []
-    const t = loadTheme(name, { appearance: entry.appearance, dirs })
-    return ["primary", "accent", "success", "warning", "error", "agentClaude"].map((k) => ({ text: "■", fg: (t as Record<string, string>)[k] }))
-  }
-  return (
-    <Modal title="Theme" width={56} height={24} hint="↑↓ preview · enter keep · esc revert">
-      <ListView
-        items={themes.map((t) => ({
-          label: [...swatch(t.name), { text: `  ${t.name}`, fg: ui.theme().text }],
-          right: t.source === "builtin" ? (t.appearance ?? "") : t.source,
-        }))}
-        selected={sel()}
-        width={52}
-        height={21}
-      />
-    </Modal>
-  )
-}
-
 const KIND_STYLE: Record<AttentionKind, { glyph: string; token: "warning" | "error" | "info" | "success" | "accent" }> = {
   approval: { glyph: "?", token: "warning" },
   plan: { glyph: "◆", token: "warning" },
@@ -328,50 +267,69 @@ export function Inbox(props: { onClose: () => void; onJump: (item: AttentionItem
 
 export function HelpOverlay(props: { onClose: () => void }) {
   const ui = useUi()
+  const dims = useTerminalDimensions()
   useKeyboard((k) => {
     if (k.name === "escape" || k.name === "q" || k.name === "?") props.onClose()
   })
-  const lines = () => {
+  // two columns when the terminal is wide enough, so everything fits on one screen
+  const twoCols = () => dims().width >= 124
+  const W = () => (twoCols() ? Math.min(150, dims().width - 4) : Math.min(92, dims().width - 4))
+  const colW = () => (twoCols() ? Math.floor((W() - 7) / 2) : W() - 4)
+  const block = (ctx: string, title: string): Seg[][] => {
     const t = ui.theme()
-    const out: Seg[][] = []
-    const groups: [string, string][] = [
-      ["global", "Everywhere"],
-      ["input", "While typing"],
-      ["grid", "Agent grid (tab to focus)"],
-      ["zoom", "Zoomed agent"],
-    ]
-    for (const [ctx, title] of groups) {
-      out.push([{ text: title, fg: t.primary, bold: true }])
-      for (const c of ui.keymap.commands.filter((x) => x.context === ctx && x.keys.length)) {
-        out.push([
-          { text: `  ${c.keys.join(", ").padEnd(22)}`, fg: t.text },
-          { text: c.title, fg: t.textMuted },
-        ])
-      }
+    const out: Seg[][] = [[{ text: title, fg: t.primary, bold: true }]]
+    for (const c of ui.keymap.commands.filter((x) => x.context === ctx && x.keys.length)) {
+      const caps: Seg[] = c.keys.slice(0, 2).flatMap((k, i) => [...(i ? [{ text: " " }] : []), keycap(t, k)])
+      const used = caps.reduce((n, x) => n + sw(x.text), 0)
+      out.push([{ text: " " }, ...caps, { text: " ".repeat(Math.max(1, 20 - used)) }, { text: clip(c.title, colW() - 22), fg: t.textMuted }])
     }
-    out.push([{ text: "Input", fg: t.primary, bold: true }])
-    out.push([
-      { text: "  @name text".padEnd(24), fg: t.text },
-      { text: "talk to one agent directly (@all, @role:x)", fg: t.textMuted },
-    ])
-    out.push([
-      { text: "  !name".padEnd(24), fg: t.text },
-      { text: "interrupt an agent (!all)", fg: t.textMuted },
-    ])
-    out.push([
-      { text: "  /command".padEnd(24), fg: t.text },
-      { text: "/spawn /kill /mode /theme /layout … (tab completes)", fg: t.textMuted },
-    ])
+    out.push([])
+    return out
+  }
+  const inputBlock = (): Seg[][] => {
+    const t = ui.theme()
+    const row = (k: string, d: string): Seg[] => {
+      const cap = keycap(t, k)
+      return [{ text: " " }, cap, { text: " ".repeat(Math.max(1, 20 - sw(cap.text))) }, { text: clip(d, colW() - 22), fg: t.textMuted }]
+    }
+    const out: Seg[][] = [
+      [{ text: "In the input", fg: t.primary, bold: true }],
+      row("@name text", "talk to one agent directly (@all, @role:x)"),
+      row("!name", "interrupt an agent (!all)"),
+      row("/command", "/spawn /style /autonomy /merge … (tab completes)"),
+    ]
     const conflicts = ui.keymap.conflicts()
     if (conflicts.length) {
-      out.push([{ text: "Conflicting bindings", fg: t.warning, bold: true }])
+      out.push([], [{ text: "Conflicting bindings", fg: t.warning, bold: true }])
       for (const c of conflicts) out.push([{ text: `  ${c}`, fg: t.warning }])
     }
     return out
   }
+  const columns = createMemo(() => {
+    const left = block("global", "Everywhere")
+    const right = [...block("input", "While typing"), ...block("grid", "Agent grid (tab to focus)"), ...block("zoom", "Zoomed agent"), ...inputBlock()]
+    return twoCols() ? [left, right] : [[...left, ...right]]
+  })
+  const rows = () => Math.max(...columns().map((c) => c.length))
+  const H = () => Math.min(dims().height - 2, rows() + 3)
   return (
-    <Modal title="Keyboard shortcuts" width={78} height={Math.min(40, lines().length + 3)} hint="esc close · rebind any key in config [keys]">
-      <For each={lines()}>{(l) => <Txt wrapMode="none" value={segs(...l)} />}</For>
+    <Modal title="Keyboard shortcuts" width={W()} height={H()} hint="esc close · rebind any key in config [keys]">
+      <box flexDirection="row" height={H() - 3}>
+        <For each={columns()}>
+          {(col, i) => (
+            <box width={colW() + (i() === 0 && twoCols() ? 3 : 0)} paddingRight={i() === 0 && twoCols() ? 3 : 0}>
+              <Txt
+                wrapMode="none"
+                value={toStyled(
+                  col.map((l) => ({ segs: l })),
+                  colW(),
+                  H() - 3,
+                )}
+              />
+            </box>
+          )}
+        </For>
+      </box>
     </Modal>
   )
 }

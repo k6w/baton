@@ -1,6 +1,6 @@
 /** Input completion: @mentions, /commands and their arguments. */
 import type { BatonConfig, RunState } from "@batonsh/kernel"
-import { listThemes } from "@batonsh/themes"
+import { FRAME_STYLES, listThemes, STYLES } from "@batonsh/themes"
 
 export interface Completion {
   /** Full input value after accepting. */
@@ -11,6 +11,9 @@ export interface Completion {
 
 export const LOCAL_COMMANDS: Record<string, string> = {
   theme: "/theme <name> — switch theme (ctrl+t for the picker)",
+  style: "/style <classic|modern|minimal|accent|tabs|neon|retro|zen> — the look (shapes, not colors)",
+  background: "/background <theme|terminal> — paint the theme background or keep your terminal's",
+  frame: "/frame <line|tab|bar|minimal|accent> — how panes are framed",
   layout: "/layout <grid|list|focus|swarm|wide>",
   icons: "/icons <auto|unicode|nerd|ascii>",
   border: "/border <rounded|single|heavy|double|ascii|none>",
@@ -35,6 +38,8 @@ export const REMOTE_COMMANDS: Record<string, string> = {
   kill: "/kill <name|all>",
   interrupt: "/interrupt <name|all>",
   mode: "/mode <orchestrator|…>",
+  autonomy: "/autonomy <normal|ask|auto|yolo> — how freely every agent acts (shift+tab)",
+  yolo: "/yolo — toggle YOLO: no prompts, no sandbox, every agent",
   model: "/model <agent> <model>",
   label: "/label <agent> <text>",
   rename: "/rename <agent> <new-name>",
@@ -145,6 +150,26 @@ export function completions(input: string, run: RunState, config: BatonConfig): 
         break
       case "look":
         options = ["native", "unified"].map((v) => ({ v, d: "" }))
+        break
+      case "style":
+        options = STYLES.map((s) => ({ v: s.name, d: s.description }))
+        break
+      case "background":
+        options = [
+          { v: "theme", d: "Baton paints the theme's background" },
+          { v: "terminal", d: "your terminal's own background shows through" },
+        ]
+        break
+      case "frame":
+        options = FRAME_STYLES.map((v) => ({ v, d: "" }))
+        break
+      case "autonomy":
+        options = [
+          { v: "normal", d: "each agent uses its own setting" },
+          { v: "ask", d: "everyone asks before acting" },
+          { v: "auto", d: "agents act; destructive commands ask" },
+          { v: "yolo", d: "no prompts, no sandbox" },
+        ]
         break
       case "approve":
       case "deny":

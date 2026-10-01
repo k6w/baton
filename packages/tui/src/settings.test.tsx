@@ -53,12 +53,12 @@ test("settings: browse, toggle, cycle, edit, scope — written to the config fil
   let f = await frame()
   if (process.env.BATON_PRINT) console.log(f)
   expect(f).toContain("Settings")
-  expect(f).toContain("Appearance")
+  expect(f).toContain("Looks")
   expect(f).toContain("Theme")
   expect(f).toContain("Notifications")
 
-  // Appearance → "Animations" is the 9th entry: toggle it off
-  for (let i = 0; i < 8; i++) t.mockInput.pressArrow("down")
+  // Looks → "Animations" is the 12th entry: toggle it off
+  for (let i = 0; i < 11; i++) t.mockInput.pressArrow("down")
   await frame()
   t.mockInput.pressKey(" ")
   await frame()
@@ -67,8 +67,13 @@ test("settings: browse, toggle, cycle, edit, scope — written to the config fil
   expect(cfgText()).toContain("animations = false")
   expect(cfgText()).toContain("# keep this comment")
 
-  // cycle the layout (3rd entry) with →
-  for (let i = 0; i < 6; i++) t.mockInput.pressArrow("up")
+  // Layout section (2nd): its first entry is the layout — cycle it with →
+  t.mockInput.pressTab()
+  await frame()
+  t.mockInput.pressArrow("down")
+  await frame()
+  t.mockInput.pressEnter()
+  await frame()
   t.mockInput.pressArrow("right")
   await frame()
   expect(ui.prefs.layout).toBe("list")
@@ -90,7 +95,7 @@ test("settings: browse, toggle, cycle, edit, scope — written to the config fil
   await frame()
   t.mockInput.pressKey("s")
   f = await frame()
-  expect(f).toContain("▸global")
+  expect(f).toContain("◉ global")
   t.mockInput.pressEscape()
   await frame()
   expect(ui.overlay()).toBeNull()

@@ -60,6 +60,16 @@ export const AgentStyle = z.object({
 
 export const UiConfig = z.object({
   theme: z.string().default("baton"),
+  /** Style preset (shapes, not colors): classic · modern · minimal · accent · tabs · neon · retro · zen. Sets the keys below. */
+  style: z.string().default("classic"),
+  /** Pane frames: line (boxes) · tab · bar (filled title bars) · minimal (title rule only) · accent (colored stripe). */
+  frame: z.enum(["line", "tab", "bar", "minimal", "accent"]).default("line"),
+  /** Status bar: plain · blocks (chips) · powerline (needs a Nerd Font) · minimal (no fill). */
+  status_style: z.enum(["plain", "blocks", "powerline", "minimal"]).default("plain"),
+  /** theme: paint the theme background · terminal: keep your terminal's own background (transparent). */
+  background: z.enum(["theme", "terminal"]).default("theme"),
+  /** Tint each agent card's border with the agent's brand color. */
+  brand_borders: z.boolean().default(false),
   appearance: z.enum(["auto", "dark", "light"]).default("auto"),
   layout: z.enum(["grid", "list", "focus", "swarm", "wide"]).default("grid"),
   icons: z.enum(["auto", "unicode", "nerd", "ascii"]).default("auto"),
@@ -126,11 +136,18 @@ export const BatonConfig = z.object({
   policy: z
     .object({
       preset: z.enum(["strict", "balanced", "yolo"]).default("balanced"),
+      /**
+       * One dial for every agent in the run (lead + workers, also ones already running):
+       * normal = use the per-agent settings · ask = everyone asks first · auto = agents act on
+       * their own, destructive commands still ask · yolo = no prompts, no sandbox.
+       * Switch live with shift+tab or /autonomy.
+       */
+      autonomy: z.enum(["normal", "ask", "auto", "yolo"]).default("normal"),
       rules: z.array(PolicyRule).default([]),
       /** Seconds before an unanswered approval is auto-denied (0 = never). */
       timeout_s: z.number().int().nonnegative().default(0),
     })
-    .default({ preset: "balanced", rules: [], timeout_s: 0 }),
+    .default({ preset: "balanced", autonomy: "normal", rules: [], timeout_s: 0 }),
   bus: z
     .object({
       heartbeat_s: z.number().int().nonnegative().default(15),

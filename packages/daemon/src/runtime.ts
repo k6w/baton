@@ -11,6 +11,7 @@ import {
   type AgentEvent,
   type AgentInfo,
   type AgentSession,
+  type ApprovalMode,
   type BatonEvent,
   type BusKind,
   type Delivery,
@@ -22,7 +23,7 @@ import {
 } from "@batonsh/protocol"
 import { Collaboration } from "./collab.ts"
 import { identityBlock, loadPlaybook } from "./playbooks.ts"
-import { PolicyEngine, pickOption } from "./policy.ts"
+import { type Autonomy, PolicyEngine, pickOption } from "./policy.ts"
 import { AdapterRegistry } from "./registry.ts"
 
 export interface AgentRuntime {
@@ -57,6 +58,8 @@ export interface AgentRuntime {
   openTools: Set<string>
   /** Retry timer for messages held back by the delivery rate limit. */
   flushTimer?: ReturnType<typeof setTimeout>
+  /** Approval the agent would have without a run-wide autonomy override. */
+  baseApproval: ApprovalMode
   /** agent.exited side effects (results, tasks, workspace) — started once, awaited by kill(). */
   exitHandled?: Promise<void>
 }
@@ -95,6 +98,8 @@ export class Runtime {
   private runWarned = false
   /** Run budget exceeded: no new prompts or auto-deliveries until the budget is raised. */
   private runStopped = false
+  /** Run-wide autonomy (normal = per-agent settings). */
+  autonomy: Autonomy = "normal"
   private closed = false
   readonly projectRoot: string
   readonly collab: Collaboration
@@ -113,6 +118,11 @@ export class Runtime {
     this.state.branch = git.branch
     this.store.subscribe((e) => this.state.apply(e))
     this.emit({ type: "run.started", data: { cwd: opts.projectRoot, mode: opts.config.orchestrator.mode } })
+    if (opts.config.policy.autonomy !== "normal") {
+      this.autonomy = opts.config.policy.autonomy
+      this.policy.setAutonomy(this.autonomy)
+      this.emit({ type: "run.autonomy", data: { mode: this.autonomy } })
+    }
     this.watchdogTimer = setInterval(() => this.watchdog(), 30_000)
     this.watchdogTimer.unref?.()
     if (opts.config.bus.heartbeat_s > 0) {
@@ -199,7 +209,8 @@ export class Runtime {
     const agentId = newId("ag")
     const name = params.isOrchestrator ? "orchestrator" : this.allocateName(adapterId, params.name ?? (profile ? params.adapter : undefined))
     const detected = await this.registry.detect(adapterId)
-    const approval = params.approval ?? profile?.approval ?? (params.isOrchestrator ? this.config.orchestrator.approval : this.config.defaults.approval)
+    const baseApproval = params.approval ?? profile?.approval ?? (params.isOrchestrator ? this.config.orchestrator.approval : this.config.defaults.approval)
+    const approval = effectiveApproval(baseApproval, this.autonomy)
     const tierModel = params.tier ? this.config.routing[adapterId]?.[params.tier] : undefined
     const model = params.model ?? profile?.model ?? tierModel ?? (params.isOrchestrator ? this.config.orchestrator.model : undefined)
     const info: AgentInfo = {
@@ -229,6 +240,7 @@ export class Runtime {
       busy: false,
       closing: false,
       budgetWarned: false,
+      baseApproval,
       lastEventAt: Date.now(),
       toolRepeats: 0,
       blocked: 0,
@@ -936,10 +948,12 @@ export class Runtime {
 
   /** Swap in a freshly loaded config (settings screen / file edits). New agents use it; running ones keep theirs. */
   applyConfig(next: BatonConfig) {
+    const autonomyChanged = next.policy.autonomy !== this.config.policy.autonomy
     this.config = next
     this.policy.configure(next.policy.preset, next.policy.rules)
     this.collab.workspaces.configure(next.workspace)
     this.recheckBudgetStops()
+    if (autonomyChanged) void this.setAutonomy(next.policy.autonomy)
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
     this.heartbeatTimer = undefined
     if (next.bus.heartbeat_s > 0) {
@@ -950,6 +964,60 @@ export class Runtime {
 
   setMode(mode: string) {
     this.emit({ type: "orch.mode", data: { mode } })
+  }
+
+  /**
+   * Switch the run-wide autonomy level. Every live agent is moved to the matching approval
+   * mode in place when its adapter supports it (`live`); the rest keep their native sandbox
+   * until restarted (`pending`) — Baton's policy still auto-decides what they ask. Pending
+   * approvals are re-decided under the new level.
+   */
+  async setAutonomy(mode: Autonomy): Promise<{ mode: Autonomy; live: string[]; pending: string[] }> {
+    const live: string[] = []
+    const pending: string[] = []
+    const changed = mode !== this.autonomy
+    this.autonomy = mode
+    this.policy.setAutonomy(mode)
+    if (changed) this.emit({ type: "run.autonomy", data: { mode } })
+    for (const rt of this.agents.values()) {
+      if (rt.closing || !rt.session) continue
+      const next = effectiveApproval(rt.baseApproval, mode)
+      if (next === rt.info.approval) continue
+      if (!rt.session.setApproval) {
+        pending.push(rt.info.name)
+        continue
+      }
+      try {
+        await rt.session.setApproval(next)
+        rt.info.approval = next
+        this.emit({ type: "agent.updated", data: { approval: next } }, rt.info.agentId)
+        live.push(rt.info.name)
+      } catch (e) {
+        pending.push(rt.info.name)
+        this.emit(
+          { type: "log", data: { level: "warn", message: `[${rt.info.name}] autonomy switch failed: ${e instanceof Error ? e.message : e}` } },
+          rt.info.agentId,
+        )
+      }
+    }
+    // questions already waiting may not need a human any more
+    for (const p of [...this.state.approvals.values()]) {
+      if (this.asks.has(p.requestId)) continue
+      const rt = this.agents.get(p.agentId)
+      if (!rt) continue
+      const decision = this.policy.decide({
+        agentId: p.agentId,
+        agentName: rt.info.name,
+        adapter: rt.info.adapter,
+        title: p.title,
+        kind: p.kind,
+        detail: p.detail,
+      })
+      if (decision === "ask") continue
+      const opt = pickOption(p.options, decision)
+      await this.resolvePermission(p.agentId, p.requestId, opt?.optionId ?? null, "policy")
+    }
+    return { mode, live, pending }
   }
 
   async close(): Promise<void> {
@@ -976,4 +1044,18 @@ function workspacePolicy(c: BatonConfig): string {
   if (w.verify) lines.push(`- Merges run \`${w.verify}\` in the worktree first; failures block the merge.`)
   if (c.orchestrator.plan_approval) lines.push("- The user approves plans: call plan_tasks before spawning workers and wait for the verdict.")
   return lines.join("\n")
+}
+
+/** Approval an agent runs with under a run-wide autonomy level. */
+export function effectiveApproval(base: ApprovalMode, autonomy: Autonomy): ApprovalMode {
+  switch (autonomy) {
+    case "ask":
+      return "ask"
+    case "auto":
+      return base === "yolo" ? "yolo" : "auto"
+    case "yolo":
+      return "yolo"
+    default:
+      return base
+  }
 }

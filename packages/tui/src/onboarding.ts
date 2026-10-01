@@ -7,6 +7,8 @@ import { stateDir } from "@batonsh/kernel"
 
 interface Onboarding {
   welcomed?: boolean
+  /** Guide lessons already opened (ids). */
+  lessons?: string[]
 }
 
 function file(): string {

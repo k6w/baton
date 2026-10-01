@@ -50,7 +50,7 @@ function parseArgs(argv: string[]): Args {
       else if (
         argv[i + 1] &&
         !argv[i + 1]!.startsWith("-") &&
-        ["root", "theme", "layout", "timeout", "approve", "workers", "speed", "orchestrator", "format"].includes(k)
+        ["root", "theme", "layout", "timeout", "approve", "workers", "speed", "orchestrator", "format", "autonomy"].includes(k)
       )
         out.flags[k] = argv[++i] as string
       else out.flags[k] = true
@@ -78,6 +78,14 @@ function overridesFrom(flags: Args["flags"]): Record<string, unknown> {
   return o
 }
 
+/** --yolo / --autonomy <level>: applied to the running daemon (it may already be up). */
+async function applyAutonomyFlag(client: BatonClient, flags: Args["flags"]) {
+  const want = flags.yolo ? "yolo" : typeof flags.autonomy === "string" ? flags.autonomy : undefined
+  if (!want) return
+  if (!["normal", "ask", "auto", "yolo"].includes(want)) throw new Error(`--autonomy must be normal, ask, auto or yolo (got ${want})`)
+  await client.call("run.autonomy", { mode: want as "normal" | "ask" | "auto" | "yolo" })
+}
+
 async function startTui(client: BatonClient, root: string, flags: Args["flags"]): Promise<void> {
   // The daemon's resolved config is authoritative (it may run with different overrides, e.g. demo);
   // UI-only flags from this invocation are layered on top.
@@ -101,6 +109,7 @@ async function cmdStart(args: Args) {
     await initProject({ root, yes: !!args.flags.yes })
   }
   const client = await connect({ cwd: root, daemonCommand: (r) => [...selfCommand(), "daemon", "--root", r], clientName: "tui" })
+  await applyAutonomyFlag(client, args.flags)
   const task = args._.slice(0).join(" ").trim()
   let submitError: unknown
   if (task) client.submit(task).catch((e) => (submitError = e))
@@ -147,7 +156,7 @@ async function cmdDaemon(args: Args) {
 async function cmdRun(args: Args) {
   const task = args._.join(" ").trim()
   if (!task) {
-    console.error('usage: baton run "<task>" [--json] [--approve all|none] [--timeout 3600]')
+    console.error('usage: baton run "<task>" [--json] [--approve all|none] [--yolo] [--timeout 3600]')
     process.exit(2)
   }
   const approve = args.flags.approve ?? "ask"
@@ -159,6 +168,7 @@ async function cmdRun(args: Args) {
   // headless never creates a git repo on its own — that needs -y
   if (!isInitialized(root)) await initProject({ root, yes: true, gitInit: !!args.flags.yes, quiet: !!args.flags.json })
   const client = await connect({ cwd: root, daemonCommand: (r) => [...selfCommand(), "daemon", "--root", r], clientName: "cli" })
+  await applyAutonomyFlag(client, args.flags)
   const code = await runHeadless(client, task, {
     json: !!args.flags.json,
     timeoutS: Number(args.flags.timeout) || undefined,
@@ -369,6 +379,7 @@ ${b("Examples")}
   baton                                   ${d("start (or re-attach) in this project; sets it up on first run")}
   baton "add tests for src/auth.ts"       ${d("start with a task for the orchestrator")}
   baton demo                              ${d("see it work with simulated agents (no tokens)")}
+  baton --yolo                            ${d("every agent acts without asking (no sandbox) — shift+tab in the app cycles")}
   baton run "update the changelog" --approve all --json   ${d("headless, for scripts/CI")}
 
 ${b("Commands")}
@@ -380,10 +391,12 @@ ${b("Commands")}
   baton config get|explain|path|schema|defaults            baton theme list|set <name>
 
 ${b("Flags")}
-  --theme <name>  --layout <grid|list|focus|swarm|wide>  --orchestrator <adapter>  -y/--yes  --help  --version
+  --theme <name>  --layout <grid|list|focus|swarm|wide>  --orchestrator <adapter>  --autonomy <normal|ask|auto|yolo>  --yolo
+  -y/--yes  --help  --version
 
 ${b("In the app")}
-  @name talk to an agent · / commands · ctrl+a inbox · ctrl+d changes · ctrl+s settings · ? all keys · /guide lessons
+  @name talk to an agent · / commands · shift+tab autonomy · ctrl+a inbox · ctrl+d changes · ctrl+s settings
+  ctrl+t themes · /style looks · ? all keys · /guide lessons
 
 Docs: README.md and docs/ in the Baton repository.`)
 }

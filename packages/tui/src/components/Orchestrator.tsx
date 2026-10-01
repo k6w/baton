@@ -9,6 +9,7 @@ import { formatCost } from "@batonsh/kernel"
 import type { InputRenderable } from "@opentui/core"
 import { createEffect, createMemo, createSignal, Show } from "solid-js"
 import { agentLook, whoFn } from "../agent-style.ts"
+import { AUTONOMY_INFO, currentAutonomy } from "../autonomy.ts"
 import { type Completion, completions } from "../completion.ts"
 import { useUi } from "../context.ts"
 import { clip, type Line, renderFeed, type Seg, statusLine, width as sw, wrap } from "../lines.ts"
@@ -77,7 +78,10 @@ export function Orchestrator(props: OrchestratorProps) {
     return out
   }
 
-  const inner = () => innerSize(props.width, props.height, ui.prefs.border)
+  const autonomy = () => currentAutonomy(ui)
+  const yolo = () => autonomy() === "yolo"
+
+  const inner = () => innerSize(props.width, props.height, ui.prefs.border, 1, ui.prefs.frame)
 
   const suggestions = createMemo<Completion[]>(() => {
     ui.version()
@@ -109,6 +113,13 @@ export function Orchestrator(props: OrchestratorProps) {
         segs: [
           { text: "mode: ", fg: t.textMuted },
           { text: ui.run.mode, fg: t.text },
+          { text: "  ·  autonomy: ", fg: t.textMuted },
+          {
+            text: `${AUTONOMY_INFO[autonomy()].glyph} ${AUTONOMY_INFO[autonomy()].label}`,
+            fg: autonomy() === "normal" ? t.text : t[AUTONOMY_INFO[autonomy()].token],
+            bold: autonomy() !== "normal",
+          },
+          { text: "  shift+tab", fg: t.textSubtle },
         ],
       },
     ]
@@ -374,7 +385,9 @@ export function Orchestrator(props: OrchestratorProps) {
         width={props.width}
         height={props.height}
         border={ui.prefs.border}
-        borderColor={ui.config.policy.preset === "yolo" ? ui.theme().error : props.focused ? ui.theme().borderActive : ui.theme().border}
+        borderColor={yolo() ? ui.theme().error : props.focused ? ui.theme().borderActive : ui.theme().border}
+        focused={props.focused}
+        accent={yolo() ? ui.theme().error : ui.theme().primary}
         icon={{ text: orch() ? agentLook(ui, orch()!).glyph : "✱", fg: ui.theme().primary, bold: true }}
         logo={orch() ? agentLook(ui, orch()!).logo : undefined}
         title={[{ text: "orchestrator", fg: ui.theme().text, bold: true }]}

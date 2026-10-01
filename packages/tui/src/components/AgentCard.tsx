@@ -2,6 +2,7 @@
 
 import { attentionItems } from "@batonsh/kernel"
 import type { AgentView } from "@batonsh/protocol"
+import { mix } from "@batonsh/themes"
 import { createMemo } from "solid-js"
 import { agentLook, whoFn } from "../agent-style.ts"
 import { useUi } from "../context.ts"
@@ -27,7 +28,7 @@ export function AgentCard(props: { agentId: string; width: number; height: numbe
     const a = agent()
     return a ? agentLook(ui, a) : undefined
   })
-  const inner = () => innerSize(props.width, props.height, ui.prefs.border)
+  const inner = () => innerSize(props.width, props.height, ui.prefs.border, 1, ui.prefs.frame)
 
   const wsLine = createMemo(() => {
     ver()
@@ -81,10 +82,13 @@ export function AgentCard(props: { agentId: string; width: number; height: numbe
   const borderColor = () => {
     const t = ui.theme()
     const a = agent()
-    if (props.focused) return t.borderActive
+    if (props.focused) return ui.prefs.brand_borders && look() ? look()!.color : t.borderActive
     if (a?.status === "awaiting_approval") return t.stateWaiting
     if (a?.status === "error") return t.stateError
     if (a?.status === "exited") return t.borderSubtle
+    // brand borders: each card glows in its agent's color (dimmer when not focused)
+    if (ui.prefs.brand_borders && look() && t.background.startsWith("#")) return mix(look()!.color, t.background, 0.4)
+    if (ui.prefs.brand_borders && look()) return look()!.color
     return t.border
   }
 
@@ -126,6 +130,8 @@ export function AgentCard(props: { agentId: string; width: number; height: numbe
       height={props.height}
       border={ui.prefs.border}
       borderColor={borderColor()}
+      focused={props.focused}
+      accent={look()?.color}
       icon={look() ? { text: look()!.glyph, fg: look()!.color, bold: true } : undefined}
       logo={look()?.logo}
       title={[{ text: agent()?.name ?? "?", fg: ui.theme().text, bold: true }]}

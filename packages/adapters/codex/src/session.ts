@@ -7,7 +7,7 @@
  */
 import { appendFileSync } from "node:fs"
 import type { AdapterContext, AgentSession, ApprovalMode, PromptInput, SessionConfig } from "@batonsh/protocol"
-import { augmentedPath, deferred, type JsonRpcMessage, JsonRpcPeer, readLines } from "@batonsh/protocol"
+import { augmentedPath, deferred, type JsonRpcMessage, JsonRpcPeer, killProcessTree, readLines } from "@batonsh/protocol"
 import { type ApprovalSettings, approvalSettings, appServerArgs, promptText, sandboxPolicyFor } from "./config.ts"
 import type { InitializeParams } from "./generated/InitializeParams.ts"
 import type { ThreadForkParams } from "./generated/v2/ThreadForkParams.ts"
@@ -83,7 +83,7 @@ export class CodexSession implements AgentSession {
   async start(): Promise<void> {
     const { args, env, modelProvider } = appServerArgs(this.cfg)
     this.ctx.emit({ type: "agent.status", data: { status: "starting" } })
-    this.ctx.log("info", `spawning ${this.opts.bin} ${args.filter((a) => !a.includes("http_headers")).join(" ")}`)
+    this.ctx.log("info", `spawning ${this.opts.bin} ${args.join(" ")}`)
     this.proc = Bun.spawn([this.opts.bin, ...args], {
       cwd: this.cfg.cwd,
       env: { ...process.env, PATH: augmentedPath(), ...env, ...this.cfg.env },
@@ -398,14 +398,6 @@ export class CodexSession implements AgentSession {
   }
 
   private killTree(sig: NodeJS.Signals): void {
-    const pid = this.proc?.pid
-    if (!pid) return
-    try {
-      process.kill(-pid, sig)
-      return
-    } catch {}
-    try {
-      this.proc.kill(sig)
-    } catch {}
+    killProcessTree(this.proc?.pid, sig, this.proc)
   }
 }

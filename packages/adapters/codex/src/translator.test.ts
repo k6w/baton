@@ -137,10 +137,10 @@ describe("fixture: apply-patch (fileChange items)", () => {
 describe("fixture: interrupt", () => {
   const { events } = replay("interrupt")
 
-  test("interrupted turn closes open content and reports turn.interrupted + cancelled", () => {
+  test("interrupted turn closes open content and ends with turn.interrupted alone", () => {
     const types = events.map((e) => e.type).filter((t) => t.startsWith("turn.") || t === "message.completed")
-    expect(types).toEqual(["turn.started", "message.completed", "turn.interrupted", "turn.completed"])
-    expect(ofType(events, "turn.completed")[0]?.data.stopReason).toBe("cancelled")
+    expect(types).toEqual(["turn.started", "message.completed", "turn.interrupted"])
+    expect(ofType(events, "turn.completed")).toEqual([])
     expect(ofType(events, "agent.status").at(-1)?.data.status).toBe("ready")
   })
 })

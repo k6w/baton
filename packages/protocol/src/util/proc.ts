@@ -39,13 +39,21 @@ export function augmentedPath(): string {
   return parts.join(delimiter)
 }
 
-/** Signal a child's whole process group (spawned with `detached: true`), falling back to the pid itself. */
-export function killProcessTree(pid: number | undefined, signal: NodeJS.Signals | number = "SIGTERM"): void {
+/**
+ * Signal a child's whole process group (spawned with `detached: true`), falling back to the pid
+ * itself — but not once `proc` reports it has exited (the pid may already belong to someone else).
+ */
+export function killProcessTree(
+  pid: number | undefined,
+  signal: NodeJS.Signals | number = "SIGTERM",
+  proc?: { exitCode: number | null; signalCode?: string | null },
+): void {
   if (!pid) return
   try {
     process.kill(-pid, signal)
     return
   } catch {}
+  if (proc && (proc.exitCode !== null || (proc.signalCode ?? null) !== null)) return
   try {
     process.kill(pid, signal)
   } catch {}

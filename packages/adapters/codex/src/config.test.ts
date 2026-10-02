@@ -27,20 +27,21 @@ describe("approval mapping", () => {
 })
 
 describe("MCP injection", () => {
-  test("streamable HTTP servers become -c mcp_servers overrides", () => {
-    expect(
-      mcpConfigArgs([
-        { name: "baton", url: "http://127.0.0.1:4100/mcp", headers: { Authorization: 'Bearer t"k', "X-Agent": "a1" } },
-        { name: "my server.v2", url: "https://x/mcp" },
-      ]),
-    ).toEqual([
+  test("streamable HTTP servers become -c mcp_servers overrides; header values go to env, never argv", () => {
+    const r = mcpConfigArgs([
+      { name: "baton", url: "http://127.0.0.1:4100/mcp", headers: { Authorization: 'Bearer t"k', "X-Agent": "a1" } },
+      { name: "my server.v2", url: "https://x/mcp" },
+    ])
+    expect(r.args).toEqual([
       "-c",
       'mcp_servers.baton.url="http://127.0.0.1:4100/mcp"',
       "-c",
-      'mcp_servers.baton.http_headers={"Authorization"="Bearer t\\"k","X-Agent"="a1"}',
+      'mcp_servers.baton.env_http_headers={"Authorization"="BATON_MCP_BATON_H0","X-Agent"="BATON_MCP_BATON_H1"}',
       "-c",
       'mcp_servers.my_server_v2.url="https://x/mcp"',
     ])
+    expect(r.env).toEqual({ BATON_MCP_BATON_H0: 'Bearer t"k', BATON_MCP_BATON_H1: "a1" })
+    expect(r.args.join(" ")).not.toContain("Bearer")
   })
 
   test("appServerArgs puts app-server first and user args last", () => {

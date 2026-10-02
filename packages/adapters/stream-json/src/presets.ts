@@ -1,8 +1,8 @@
 /**
  * Built-in stream-json presets: Claude Code CLI, Amp, Qwen Code.
  */
-import { existsSync } from "node:fs"
-import { homedir } from "node:os"
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import type { McpServerSpec, SessionConfig } from "../../../protocol/src/index.ts"
 import { runCapture } from "../../../protocol/src/index.ts"
@@ -22,6 +22,36 @@ function mcpMap(servers: McpServerSpec[], shape: (s: McpServerSpec) => Record<st
   for (const s of servers) out[s.name] = shape(s)
   return out
 }
+
+/**
+ * MCP configs carry the agent's bearer token, so they are handed over as a private file
+ * (0600, in a 0700 directory) instead of a command-line argument that `ps` would show.
+ * One file per agent, reused across respawns, removed when the session closes.
+ */
+const privateDirs = new Map<string, string>()
+
+export function privateConfigFile(owner: string, data: unknown): string {
+  let dir = privateDirs.get(owner)
+  if (!dir || !existsSync(dir)) {
+    dir = mkdtempSync(join(tmpdir(), "baton-mcp-"))
+    chmodSync(dir, 0o700)
+    privateDirs.set(owner, dir)
+  }
+  const file = join(dir, "mcp.json")
+  writeFileSync(file, JSON.stringify(data), { mode: 0o600 })
+  return file
+}
+
+export function removePrivateConfig(owner: string): void {
+  const dir = privateDirs.get(owner)
+  if (!dir) return
+  privateDirs.delete(owner)
+  rmSync(dir, { recursive: true, force: true })
+}
+
+process.once("exit", () => {
+  for (const dir of privateDirs.values()) rmSync(dir, { recursive: true, force: true })
+})
 
 // ───────────────────────────── Claude Code CLI ─────────────────────────────
 
@@ -60,7 +90,9 @@ export const claudeCliPreset: StreamJsonPreset = {
     if (cfg.mcpServers.length)
       args.push(
         "--mcp-config",
-        JSON.stringify({ mcpServers: mcpMap(cfg.mcpServers, (s) => ({ type: "http", url: s.url, ...(s.headers ? { headers: s.headers } : {}) })) }),
+        privateConfigFile(cfg.agentId, {
+          mcpServers: mcpMap(cfg.mcpServers, (s) => ({ type: "http", url: s.url, ...(s.headers ? { headers: s.headers } : {}) })),
+        }),
       )
     args.push(
       "-p",
@@ -142,7 +174,13 @@ export const ampPreset: StreamJsonPreset = {
     const mode = opt(cfg, "mode", isStr) ?? (cfg.model && AMP_MODES.includes(cfg.model) ? cfg.model : undefined)
     if (mode) args.push("--mode", mode)
     if (cfg.mcpServers.length)
-      args.push("--mcp-config", JSON.stringify(mcpMap(cfg.mcpServers, (s) => ({ url: s.url, ...(s.headers ? { headers: s.headers } : {}) }))))
+      args.push(
+        "--mcp-config",
+        privateConfigFile(
+          cfg.agentId,
+          mcpMap(cfg.mcpServers, (s) => ({ url: s.url, ...(s.headers ? { headers: s.headers } : {}) })),
+        ),
+      )
     if (opt(cfg, "thinking", isTrue)) args.push("--stream-json-thinking")
     return args
   },

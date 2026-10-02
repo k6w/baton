@@ -453,6 +453,26 @@ describe("translator: synthetic edge cases", () => {
     expect(done[0]?.data.stopReason).toBe("end_turn")
   })
 
+  test("late error for a message from before the turn — never seen by the adapter — does not fail it", () => {
+    const t = mk()
+    const out = [...t.beginTurn("go", "turn_1")]
+    out.push(
+      ...[
+        { type: "session.status", properties: { sessionID: SID, status: { type: "busy" } } },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: SID,
+            info: { id: "msg_old", role: "assistant", time: { created: Date.now() - 60_000 }, error: { name: "APIError", data: { message: "stale" } } },
+          },
+        },
+        { type: "message.updated", properties: { sessionID: SID, info: { id: "msg_new", role: "assistant", time: { created: Date.now() }, finish: "stop" } } },
+        { type: "session.idle", properties: { sessionID: SID } },
+      ].flatMap((e) => t.handle(e as OcEvent)),
+    )
+    expect(of(out, "turn.completed")[0]?.data.stopReason).toBe("end_turn")
+  })
+
   test("aborted assistant message → turn.interrupted even without local interrupt", () => {
     const t = mk()
     const out = [

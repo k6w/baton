@@ -86,17 +86,28 @@ export function sanitizeKey(name: string): string {
 /**
  * `-c` overrides registering each baton MCP server as a streamable-HTTP server:
  *   -c mcp_servers.<name>.url="https://…"
- *   -c mcp_servers.<name>.http_headers={"Authorization"="Bearer …"}
- * (verified against `codex mcp get <name> --json` for codex 0.162.1).
+ *   -c mcp_servers.<name>.env_http_headers={"Authorization"="BATON_MCP_<NAME>_H0"}
+ * Header *values* (the agent's bearer token) go into the app-server's environment, never onto
+ * its command line where `ps` would show them (verified with `codex mcp get --json`, 0.162.1).
  */
-export function mcpConfigArgs(servers: McpServerSpec[]): string[] {
+export function mcpConfigArgs(servers: McpServerSpec[]): { args: string[]; env: Record<string, string> } {
   const args: string[] = []
+  const env: Record<string, string> = {}
   for (const s of servers) {
-    const key = `mcp_servers.${sanitizeKey(s.name)}`
+    const name = sanitizeKey(s.name)
+    const key = `mcp_servers.${name}`
     args.push("-c", `${key}.url=${tomlString(s.url)}`)
-    if (s.headers && Object.keys(s.headers).length) args.push("-c", `${key}.http_headers=${tomlStringTable(s.headers)}`)
+    const headers = Object.entries(s.headers ?? {})
+    if (!headers.length) continue
+    const refs: Record<string, string> = {}
+    headers.forEach(([h, v], i) => {
+      const envVar = `BATON_MCP_${name.toUpperCase().replace(/-/g, "_")}_H${i}`
+      env[envVar] = v
+      refs[h] = envVar
+    })
+    args.push("-c", `${key}.env_http_headers=${tomlStringTable(refs)}`)
   }
-  return args
+  return { args, env }
 }
 
 /** Env var through which a provider API key is handed to codex (never put on the command line). */
@@ -129,8 +140,9 @@ export function providerSettings(p: ProviderSpec | undefined): { args: string[];
 /** Full argv (after the binary) for `codex app-server`. */
 export function appServerArgs(cfg: SessionConfig): { args: string[]; env: Record<string, string>; modelProvider?: string } {
   const prov = providerSettings(cfg.provider)
-  const args = ["app-server", ...mcpConfigArgs(cfg.mcpServers ?? []), ...prov.args, ...(cfg.args ?? [])]
-  return { args, env: prov.env, modelProvider: prov.modelProvider }
+  const mcp = mcpConfigArgs(cfg.mcpServers ?? [])
+  const args = ["app-server", ...mcp.args, ...prov.args, ...(cfg.args ?? [])]
+  return { args, env: { ...mcp.env, ...prov.env }, modelProvider: prov.modelProvider }
 }
 
 /** Render a prompt for the thread, attributing non-user senders. */

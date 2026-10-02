@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { readFileSync, realpathSync } from "node:fs"
+import { readFileSync, realpathSync, statSync } from "node:fs"
 import { join } from "node:path"
 import type { AgentAdapter, SessionConfig } from "../../../protocol/src/index.ts"
 import { type Harness, startHarness, tempWorkspace } from "../../testkit/src/index.ts"
@@ -107,7 +107,11 @@ describe("stream-json: claude dialect (fake CLI)", () => {
     expect(argv.join(" ")).toContain("--permission-mode acceptEdits")
     expect(argv.join(" ")).toContain("--permission-prompt-tool stdio")
     expect(argv.join(" ")).toContain("--model sonnet")
-    const mcp = JSON.parse(argv[argv.indexOf("--mcp-config") + 1] ?? "{}")
+    // the token travels in a private file, never on the command line
+    expect(argv.join(" ")).not.toContain("Bearer")
+    const mcpFile = argv[argv.indexOf("--mcp-config") + 1] ?? ""
+    expect(statSync(mcpFile).mode & 0o777).toBe(0o600)
+    const mcp = JSON.parse(readFileSync(mcpFile, "utf8"))
     expect(mcp).toEqual({ mcpServers: { baton: { type: "http", url: "http://127.0.0.1:9/mcp", headers: { authorization: "Bearer x" } } } })
     const stdin = r.stdin()
     expect(stdin[0]).toMatchObject({ type: "control_request", request: { subtype: "initialize" } })
@@ -259,7 +263,7 @@ describe("stream-json: amp dialect (fake CLI)", () => {
     await h.waitTurn(10_000)
     const argv = r.logged().find((l) => l.argv)?.argv ?? []
     expect(argv.slice(0, 4)).toEqual(["--execute", "--stream-json", "--stream-json-input", "--dangerously-allow-all"])
-    expect(JSON.parse(argv[argv.indexOf("--mcp-config") + 1] ?? "{}")).toEqual({ baton: { url: "http://127.0.0.1:9/mcp" } })
+    expect(JSON.parse(readFileSync(argv[argv.indexOf("--mcp-config") + 1] ?? "", "utf8"))).toEqual({ baton: { url: "http://127.0.0.1:9/mcp" } })
     const user = r.stdin().find((m) => m.type === "user")
     expect(user?.message.content[0].text).toBe("<system-instructions>\nCoordinate via baton.\n</system-instructions>\n\nfix the typo")
     expect(user?.steer).toBeUndefined()

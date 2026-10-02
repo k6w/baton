@@ -59,15 +59,17 @@ export async function startHarness(adapter: AgentAdapter, cfg: Partial<SessionCo
         listeners.add(l)
       })
     },
+    // a turn ends with turn.completed — or turn.interrupted alone when it was stopped
     async waitTurn(timeoutMs = 180_000) {
-      const before = events.filter((e) => e.type === "turn.completed").length
+      const ended = () => events.filter((e) => e.type === "turn.completed" || e.type === "turn.interrupted").length
+      const before = ended()
       await new Promise<void>((resolve, reject) => {
         const t = setTimeout(() => {
           listeners.delete(l)
           reject(new Error(`timeout waiting for turn; got: ${events.map((e) => e.type).join(",")}`))
         }, timeoutMs)
         const l = () => {
-          if (events.filter((e) => e.type === "turn.completed").length > before) {
+          if (ended() > before) {
             clearTimeout(t)
             listeners.delete(l)
             resolve()

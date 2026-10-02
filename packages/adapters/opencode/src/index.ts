@@ -4,7 +4,7 @@
  * SSE `/event` stream into BEP.
  */
 import type { AdapterCapabilities, AdapterContext, AgentAdapter, AgentEvent, AgentSession, DetectResult, PromptInput, SessionConfig } from "@batonsh/protocol"
-import { augmentedPath, deferred, defineAdapter, parseVersion, readLines, runCapture, which } from "@batonsh/protocol"
+import { augmentedPath, deferred, defineAdapter, killProcessTree, parseVersion, readLines, runCapture, which } from "@batonsh/protocol"
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2"
 import { buildConfig, splitModel } from "./config.ts"
 import { type OcEvent, OpencodeTranslator, replyFor } from "./translate.ts"
@@ -61,18 +61,8 @@ function groupAlive(pgid: number): boolean {
 }
 
 /** Signal the process group of a {@link spawnWatched} process (falls back to the pid itself). */
-export function killGroup(proc: { pid: number; kill(sig?: NodeJS.Signals | number): void }, sig: NodeJS.Signals): void {
-  try {
-    process.kill(-proc.pid, sig)
-    return
-  } catch {
-    // group already gone or not a group leader
-  }
-  try {
-    proc.kill(sig)
-  } catch {
-    // already exited
-  }
+export function killGroup(proc: { pid: number; exitCode?: number | null; kill(sig?: NodeJS.Signals | number): void }, sig: NodeJS.Signals): void {
+  killProcessTree(proc.pid, sig, proc.exitCode === undefined ? undefined : { exitCode: proc.exitCode })
 }
 
 function randomPassword(): string {

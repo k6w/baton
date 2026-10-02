@@ -6,9 +6,10 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { isAbsolute, resolve } from "node:path"
 import type { AdapterContext, AgentEvent, AgentSession, PermissionOptionKind, PromptInput, SessionConfig } from "../../../protocol/src/index.ts"
-import { augmentedPath, DEFAULT_PERMISSION_OPTIONS, deferred, newId, readLines } from "../../../protocol/src/index.ts"
+import { augmentedPath, DEFAULT_PERMISSION_OPTIONS, deferred, killProcessTree, newId, readLines } from "../../../protocol/src/index.ts"
 import { ClaudeTranslator } from "../../claude/src/translator.ts"
 import { frameError, type NormalizedTool, normalizeMessage, normalizeTool } from "./dialect.ts"
+import { removePrivateConfig } from "./presets.ts"
 import type { StreamJsonPreset } from "./types.ts"
 
 type Input = Record<string, unknown>
@@ -326,15 +327,7 @@ export async function startSession(
   }
 
   /** Signal the CLI's process group (falls back to the pid alone). */
-  const killTree = (p: Proc, sig: NodeJS.Signals) => {
-    try {
-      process.kill(-p.pid, sig)
-      return
-    } catch {}
-    try {
-      p.kill(sig)
-    } catch {}
-  }
+  const killTree = (p: Proc, sig: NodeJS.Signals) => killProcessTree(p.pid, sig, p)
 
   const launch = (resumeId: string | undefined) => {
     const myGen = ++gen
@@ -516,6 +509,7 @@ export async function startSession(
       await withTimeout(exitedD.promise, KILL_TIMEOUT_MS)
       // Whatever the CLI left behind in its process group goes with it.
       killTree(proc, "SIGKILL")
+      removePrivateConfig(cfg.agentId)
     },
   }
 

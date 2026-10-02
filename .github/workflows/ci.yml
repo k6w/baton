@@ -10,6 +10,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -19,6 +20,8 @@ jobs:
       - run: bunx tsc -p tsconfig.json --noEmit
       - run: bunx biome check .
       - run: bun test
+        # a full run takes ~1 minute; anything longer is a hang, not a slow test
+        timeout-minutes: 8
       - run: bun scripts/build.ts
       - run: ./dist/baton --version
 

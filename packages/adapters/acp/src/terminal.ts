@@ -4,7 +4,7 @@
  * `outputByteLimit` (as the spec requires, at a character boundary).
  */
 import { isAbsolute, resolve } from "node:path"
-import { augmentedPath, newId, which } from "@batonsh/protocol"
+import { augmentedPath, killProcessTree, newId, which } from "@batonsh/protocol"
 
 export interface TerminalExit {
   exitCode: number | null
@@ -39,14 +39,7 @@ const PIPE_DRAIN_MS = 200
  * falling back to the pid itself while it is still running. Errors (already gone) are ignored.
  */
 export function killTree(proc: { pid: number; exitCode: number | null; signalCode: string | null }, signal: NodeJS.Signals = "SIGTERM"): void {
-  try {
-    process.kill(-proc.pid, signal)
-    return
-  } catch {}
-  if (proc.exitCode !== null || proc.signalCode !== null) return
-  try {
-    process.kill(proc.pid, signal)
-  } catch {}
+  killProcessTree(proc.pid, signal, proc)
 }
 
 export class TerminalManager {

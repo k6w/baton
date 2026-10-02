@@ -310,9 +310,9 @@ export class CodexTranslator {
     this.tools.clear()
     for (const id of [...this.pending.keys()]) this.dropPending(id, "cancelled")
 
+    // an interrupted turn ends with turn.interrupted alone (it is the terminal event, as in every adapter)
     if (turn.status === "interrupted") {
       this.emit({ type: "turn.interrupted", data: { turnId: turn.id } })
-      this.emit({ type: "turn.completed", data: { turnId: turn.id, stopReason: "cancelled" } })
     } else if (turn.status === "failed") {
       this.emit({
         type: "error",
@@ -340,7 +340,7 @@ export class CodexTranslator {
     this.tools.clear()
     for (const id of [...this.pending.keys()]) this.dropPending(id, "cancelled")
     if (stopReason === "cancelled") this.emit({ type: "turn.interrupted", data: { turnId } })
-    this.emit({ type: "turn.completed", data: { turnId, stopReason } })
+    else this.emit({ type: "turn.completed", data: { turnId, stopReason } })
     this.activeTurnId = undefined
   }
 

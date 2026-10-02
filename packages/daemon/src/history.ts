@@ -62,9 +62,10 @@ export function listRunSummaries(rt: Runtime, limit = 30): RunSummary[] {
     .filter((s): s is RunSummary => !!s)
 }
 
-export function exportRun(rt: Runtime, runId: string, format: "md" | "jsonl"): string {
+export function exportRun(rt: Runtime, runId: string, format: "md" | "jsonl" | "html"): string {
   const events = rt.store.query({ runId })
   if (format === "jsonl") return `${events.map((e) => JSON.stringify(e)).join("\n")}\n`
+  if (format === "html") return exportHtml(rt, runId, events)
   const st = fold(events)
   const s = summarize(rt, runId)
   const out: string[] = []
@@ -160,4 +161,134 @@ export async function resumeRun(rt: Runtime, runId: string): Promise<string[]> {
     }
   }
   return started
+}
+
+// ───────────────────────────── HTML export ─────────────────────────────
+
+const BRAND: Record<string, string> = {
+  claude: "#d97757",
+  codex: "#9aa3b2",
+  opencode: "#f5a623",
+  gemini: "#4f8ef7",
+  cursor: "#a78bfa",
+  copilot: "#6cc644",
+  goose: "#ff6f61",
+  qwen: "#7c5cff",
+  amp: "#f59e0b",
+}
+
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] ?? c)
+
+/** A run as one self-contained, shareable page: summary, then every agent's work on one timeline. */
+function exportHtml(rt: Runtime, runId: string, events: BatonEvent[]): string {
+  const st = fold(events)
+  const s = summarize(rt, runId)
+  // senders are recorded by id or by name
+  const find = (ref?: string) => (ref ? (st.agents.get(ref) ?? st.findAgent(ref)) : undefined)
+  const agentName = (id?: string) => (id ? (find(id)?.name ?? id) : "baton")
+  const color = (id?: string) => {
+    const a = find(id)
+    if (!a) return "#8a93a5"
+    if (a.isOrchestrator) return "#e8774e"
+    const key = Object.keys(BRAND).find((k) => a.adapter.startsWith(k))
+    return key ? (BRAND[key] as string) : "#7aa2f7"
+  }
+  const who = (id?: string) => `<span class="who" style="color:${color(id)}">${esc(agentName(id))}</span>`
+  type Row = { ts: number; html: string }
+  const rows: Row[] = []
+  for (const [id] of st.agents) {
+    for (const it of st.feed(id).items) {
+      switch (it.kind) {
+        case "user":
+          if (it.text.startsWith("[baton]")) break
+          rows.push({
+            ts: it.ts,
+            html: `<div class="ev user">${who(it.from && it.from !== "user" ? it.from : undefined).replace(">baton<", ">you<")} → ${who(id)}<div class="txt">${esc(it.text)}</div></div>`,
+          })
+          break
+        case "message":
+          if (it.role === "assistant" && it.text.trim())
+            rows.push({ ts: it.ts, html: `<div class="ev msg">${who(id)}<div class="txt">${esc(it.text)}</div></div>` })
+          break
+        case "tool": {
+          const diffs = it.diffs
+            .map(
+              (d) =>
+                `<div class="path">${esc(d.path)} <span class="add">+${d.added}</span> <span class="del">−${d.removed}</span></div><pre class="diff">${d.lines
+                  .slice(0, 200)
+                  .map((l) => `<span class="${l.kind}">${l.kind === "add" ? "+" : l.kind === "del" ? "-" : " "} ${esc(l.text)}</span>`)
+                  .join("\n")}</pre>`,
+            )
+            .join("")
+          const body = diffs || (it.output ? `<pre>${esc(it.output.slice(-4000))}</pre>` : "")
+          const mark = it.status === "completed" ? "✓" : it.status === "failed" ? "✗" : "●"
+          const head = `${who(id)} <span class="st ${it.status}">${mark}</span> <code>${esc(it.title)}</code>${it.summary ? ` <span class="muted">${esc(it.summary)}</span>` : ""}`
+          rows.push({ ts: it.ts, html: body ? `<details class="ev tool"><summary>${head}</summary>${body}</details>` : `<div class="ev tool">${head}</div>` })
+          break
+        }
+        case "error":
+          rows.push({ ts: it.ts, html: `<div class="ev err">${who(id)} ✗ ${esc(it.text)}</div>` })
+          break
+      }
+    }
+  }
+  for (const m of st.bus) {
+    if (m.kind === "heartbeat" || m.kind === "progress") continue
+    rows.push({ ts: m.ts, html: `<div class="ev bus">⇄ ${who(m.from)} → ${who(m.to)} <span class="muted">${esc(m.body.split("\n")[0] ?? "")}</span></div>` })
+  }
+  for (const e of events) {
+    if (
+      e.type === "workspace.merge" &&
+      (e.data.status === "merged" || e.data.status === "failed" || e.data.status === "conflict" || e.data.status === "undone")
+    )
+      rows.push({
+        ts: e.ts,
+        html: `<div class="ev merge ${e.data.status}">⎇ merge ${e.data.status} · ${who(e.agentId)}${e.data.files?.length ? ` <span class="muted">${esc(e.data.files.join(", "))}</span>` : ""}${e.data.detail ? `<div class="txt">${esc(e.data.detail)}</div>` : ""}</div>`,
+      })
+    if (e.type === "review.verdict")
+      rows.push({
+        ts: e.ts,
+        html: `<div class="ev review">✎ review of ${who(e.data.author)} by ${who(e.data.reviewer)}: <b>${esc(e.data.verdict)}</b><div class="txt">${esc(e.data.notes)}</div></div>`,
+      })
+  }
+  rows.sort((a, b) => a.ts - b.ts)
+  const agents = [...st.agents.values()]
+    .map(
+      (a) =>
+        `<span class="chip" style="border-color:${color(a.agentId)}"><b style="color:${color(a.agentId)}">${esc(a.name)}</b> ${esc(a.adapter)}${a.model ? `/${esc(a.model)}` : ""}</span>`,
+    )
+    .join(" ")
+  const title = s?.title ?? runId
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(title)} · baton</title>
+<style>
+:root{--bg:#0f1117;--panel:#171a22;--line:#2a2f3d;--text:#e6e8ee;--muted:#9aa3b2;--ok:#8bd17c;--err:#f07178;--warn:#e6c15a}
+@media (prefers-color-scheme:light){:root{--bg:#f6f7f9;--panel:#fff;--line:#dfe3ea;--text:#1d2230;--muted:#5b6475;--ok:#2f8a3a;--err:#c8333d;--warn:#a77b00}}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+main{max-width:900px;margin:0 auto;padding:28px 18px 60px}
+h1{font-size:22px;margin:0 0 6px} .meta{color:var(--muted);font-size:14px} .logo{color:#e8774e;font-weight:800}
+.stats{display:flex;gap:10px;flex-wrap:wrap;margin:16px 0} .stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 12px}
+.stat b{display:block;font-size:18px} .chip{display:inline-block;border:1px solid;border-radius:999px;padding:2px 10px;margin:2px;font-size:13px}
+.ev{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin:8px 0}
+.ev.bus,.ev.tool{background:transparent;border-style:dashed} .who{font-weight:700} .muted{color:var(--muted)}
+.txt{white-space:pre-wrap;margin-top:4px} code{font:13px ui-monospace,Menlo,monospace}
+summary{cursor:pointer} .st.completed{color:var(--ok)} .st.failed{color:var(--err)}
+pre{font:12.5px/1.4 ui-monospace,Menlo,monospace;overflow:auto;background:var(--bg);border-radius:8px;padding:8px;margin:6px 0 0}
+.diff .add{color:var(--ok)} .diff .del{color:var(--err)} .diff .ctx{color:var(--muted)} .path{margin-top:8px;font:13px ui-monospace,Menlo,monospace}
+.add{color:var(--ok)} .del{color:var(--err)} .merge.merged{border-color:var(--ok)} .merge.failed,.merge.conflict,.err{border-color:var(--err)} .review{border-color:var(--warn)}
+footer{margin-top:30px;color:var(--muted);font-size:13px}
+</style></head><body><main>
+<div class="meta"><span class="logo">baton</span> · ${esc(st.projectName || rt.state.projectName || "project")} · ${new Date(s?.startedAt ?? 0).toLocaleString()}${s?.endedAt && s.startedAt ? ` · ${formatDuration(s.endedAt - s.startedAt)}` : ""}</div>
+<h1>${esc(title)}</h1>
+<div class="stats">
+<div class="stat"><b>${st.agents.size}</b>agents</div><div class="stat"><b>${st.totals.toolCalls}</b>tool calls</div>
+<div class="stat"><b><span class="add">+${st.totals.added}</span> <span class="del">−${st.totals.removed}</span></b>lines</div>
+<div class="stat"><b>${s?.merged ?? 0}</b>merges</div><div class="stat"><b>${esc(formatCost(st.totals.costUsd))}</b>cost</div>
+</div>
+<div>${agents}</div>
+${rows.map((r) => r.html).join("\n")}
+<footer>Exported from Baton · run ${esc(runId)}</footer>
+</main></body></html>
+`
 }

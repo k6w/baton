@@ -29,6 +29,11 @@ test("history: runs persist across daemon restarts, export to markdown, resume r
   const md = (await c.call("run.export", { runId: firstRun, format: "md" })).text
   expect(md).toContain("# pong")
   expect(md).toContain("**historian:** PONG")
+  const html = (await c.call("run.export", { runId: firstRun, format: "html" })).text
+  expect(html).toStartWith("<!doctype html>")
+  expect(html).toContain("<h1>pong</h1>")
+  expect(html).toContain("PONG")
+  expect(html).not.toContain("<script")
   const jsonl = (await c.call("run.export", { runId: firstRun, format: "jsonl" })).text
   expect(jsonl.trim().split("\n").length).toBeGreaterThan(5)
   const res = await c.call("run.resume", { runId: firstRun })

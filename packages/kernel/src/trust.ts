@@ -77,6 +77,9 @@ export function trustSurface(root: string, data: Record<string, unknown>): Trust
     }
   if (isObj(data.workspace)) for (const k of ["setup", "verify", "dir"]) push(`workspace.${k}`, data.workspace[k])
   if (isObj(data.notify)) for (const k of ["command", "webhook"]) push(`notify.${k}`, data.notify[k])
+  // exposing the run on the network is the user's call, not the repository's
+  if (isObj(data.remote))
+    for (const k of ["autostart", "lan", "public_url"]) if (data.remote[k] !== undefined && data.remote[k] !== false) push(`remote.${k}`, data.remote[k])
   if (isObj(data.telemetry)) for (const k of ["otlp_endpoint", "headers"]) push(`telemetry.${k}`, data.telemetry[k])
   if (isObj(data.policy)) {
     if (data.policy.preset === "yolo") push("policy.preset", "yolo")

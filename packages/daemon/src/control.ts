@@ -17,6 +17,7 @@ import type { Socket } from "bun"
 import { exportRun, listRunSummaries, resumeRun } from "./history.ts"
 import { handleInput } from "./input.ts"
 import { listRecipes } from "./recipes.ts"
+import { ensureRemote, qrLines, stopRemote } from "./remote.ts"
 import type { Runtime } from "./runtime.ts"
 
 export const DAEMON_VERSION = "0.1.0"
@@ -96,6 +97,14 @@ export function startControlServer(
     },
     "run.autonomy": (p) => rt.setAutonomy(p.mode),
     "config.get": () => ({ config: rt.config }),
+    "remote.start": (p) => {
+      const s = ensureRemote(rt, p ?? {})
+      return { url: s.url, openUrl: s.openUrl, lanUrls: s.lanUrls, lan: s.lan, qr: qrLines(s.openUrl) }
+    },
+    "remote.stop": () => {
+      stopRemote(rt)
+      return { ok: true }
+    },
     "config.reload": () => hooks.reloadConfig?.() ?? { errors: ["reload not supported"] },
     "workspace.merge": async (p) => {
       const r = await rt.collab.merge(p.agentId)

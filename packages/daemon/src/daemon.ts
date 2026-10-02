@@ -11,6 +11,7 @@ import { type ControlServer, startControlServer } from "./control.ts"
 import { attachDemoDirector } from "./demo.ts"
 import { type McpHttpServer, startMcpServer } from "./mcp.ts"
 import { loadPlugins } from "./plugins.ts"
+import { ensureRemote, stopRemote } from "./remote.ts"
 import { attachRemoteNotify } from "./remote-notify.ts"
 import { Runtime } from "./runtime.ts"
 import { TelemetryExporter } from "./telemetry.ts"
@@ -148,6 +149,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       if (stopping) return
       stopping = true
       stopDemo?.()
+      stopRemote(runtime)
       daemon.control.stop()
       await runtime.close()
       await telemetry?.stop()
@@ -186,6 +188,14 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   }
 
   const stopDemo = opts.demo ? attachDemoDirector(runtime, typeof opts.demo === "object" ? opts.demo : {}) : undefined
+
+  if (config.remote.autostart && !opts.ephemeral) {
+    try {
+      ensureRemote(runtime)
+    } catch (e) {
+      runtime.emit({ type: "log", data: { level: "warn", message: `web view: ${e instanceof Error ? e.message : e}` } })
+    }
+  }
 
   // autostart configured agents
   for (const [name, a] of Object.entries(config.agents)) {

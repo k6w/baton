@@ -128,6 +128,12 @@ export interface ControlMethods {
   }
   "permission.respond": { params: { agentId: string; requestId: string; optionId: string | null }; result: { ok: true } }
   "run.mode": { params: { mode: string }; result: { ok: true } }
+  /** Start (or report) the web view. `qr` is the open URL as a QR code drawn in text. */
+  "remote.start": {
+    params: { lan?: boolean; port?: number; rotate?: boolean } | undefined
+    result: { url: string; openUrl: string; lanUrls: string[]; lan: boolean; qr: string[] }
+  }
+  "remote.stop": { params: Record<string, never> | undefined; result: { ok: true } }
   /** Set the run-wide autonomy level. `live` = agents switched in place; `pending` = agents that keep their sandbox until restarted. */
   "run.autonomy": { params: { mode: "normal" | "ask" | "auto" | "yolo" }; result: { mode: string; live: string[]; pending: string[] } }
   "workspace.merge": { params: { agentId: string }; result: { status: string; files: string[]; detail?: string } }
@@ -158,7 +164,7 @@ export interface ControlMethods {
       }[]
     }
   }
-  "run.export": { params: { runId: string; format: "md" | "jsonl" }; result: { text: string } }
+  "run.export": { params: { runId: string; format: "md" | "jsonl" | "html" }; result: { text: string } }
   "run.resume": { params: { runId: string }; result: { agents: string[] } }
   "plan.decide": { params: { approved: boolean; notes?: string }; result: { ok: boolean } }
   "task.edit": { params: { taskId: string; title?: string; cancel?: boolean }; result: { ok: true } }

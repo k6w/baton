@@ -13,7 +13,9 @@
  *   baton theme …          list | set <name>
  *   baton trust            review + allow this project's commands/plugins (--revoke to undo)
  *   baton history          past runs of this project (resume them from the TUI: ctrl+r)
- *   baton export <run>     a run as Markdown (--format jsonl for raw events)
+ *   baton web [--lan]      web view for your phone: follow the run, approve, send tasks (QR code)
+ *   baton mcp              Baton as an MCP server (stdio) for other agents and apps
+ *   baton export <run>     a run as Markdown (--format html for a shareable page, jsonl for raw events)
  *   baton daemon           run the daemon in the foreground (normally started automatically)
  */
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync } from "node:fs"
@@ -50,7 +52,7 @@ function parseArgs(argv: string[]): Args {
       else if (
         argv[i + 1] &&
         !argv[i + 1]!.startsWith("-") &&
-        ["root", "theme", "layout", "timeout", "approve", "workers", "speed", "orchestrator", "format", "autonomy"].includes(k)
+        ["root", "theme", "layout", "timeout", "approve", "workers", "speed", "orchestrator", "format", "autonomy", "port"].includes(k)
       )
         out.flags[k] = argv[++i] as string
       else out.flags[k] = true
@@ -350,6 +352,43 @@ async function daemonClient(): Promise<BatonClient> {
   return connect({ cwd: root, daemonCommand: (r) => [...selfCommand(), "daemon", "--root", r], clientName: "cli" })
 }
 
+/** `baton mcp`: Baton as an MCP server on stdio. Nothing but protocol may reach stdout. */
+async function cmdMcp(args: Args) {
+  const root = resolve(typeof args.flags.root === "string" ? args.flags.root : findProjectRoot(process.cwd()))
+  console.log = console.error
+  if (!isInitialized(root)) await initProject({ root, yes: true, gitInit: false, quiet: true })
+  const client = await connect({ cwd: root, daemonCommand: (r) => [...selfCommand(), "daemon", "--root", r], clientName: "mcp" })
+  const { runMcp } = await import("./mcp.ts")
+  await runMcp(client)
+  client.close()
+  process.exit(0)
+}
+
+async function cmdWeb(args: Args) {
+  const cl = await daemonClient()
+  if (args.flags.stop) {
+    await cl.call("remote.stop", {})
+    cl.close()
+    return console.log("web view stopped")
+  }
+  const r = await cl.call("remote.start", {
+    lan: args.flags.lan ? true : undefined,
+    port: typeof args.flags.port === "string" ? Number(args.flags.port) : undefined,
+    rotate: !!args.flags.rotate,
+  })
+  cl.close()
+  console.log(`${c.bold("Baton web view")} ${c.dim(r.lan ? "· reachable from your network" : "· this machine only (add --lan for your phone)")}\n`)
+  // always light-on-dark, whatever the terminal's colors: scanners need the contrast the right way round
+  for (const l of r.qr) console.log(`  \x1b[97;40m${l}\x1b[0m`)
+  console.log(`\n  ${c.cyan(r.openUrl)}`)
+  for (const u of r.lanUrls.slice(1)) console.log(`  ${c.dim(u)}`)
+  console.log(
+    c.dim(`
+  The link carries an access token — treat it like a password (\`baton web --rotate\` makes a new one).
+  It keeps running in the daemon; \`baton web --stop\` turns it off.${r.lan ? "\n  Plain HTTP on your network: use it on networks you trust, or put it behind Tailscale / a tunnel (remote.public_url)." : ""}`),
+  )
+}
+
 async function cmdHistory() {
   const c = await daemonClient()
   const { runs } = await c.call("runs.list", { limit: 50 })
@@ -363,9 +402,9 @@ async function cmdHistory() {
 
 async function cmdExport(args: Args) {
   const runId = args._[0]
-  if (!runId) throw new Error("usage: baton export <run-id> [--format md|jsonl]   (ids: baton history)")
+  if (!runId) throw new Error("usage: baton export <run-id> [--format md|html|jsonl]   (ids: baton history)")
   const c = await daemonClient()
-  const format = args.flags.format === "jsonl" ? "jsonl" : "md"
+  const format = args.flags.format === "jsonl" ? "jsonl" : args.flags.format === "html" ? "html" : "md"
   process.stdout.write((await c.call("run.export", { runId, format })).text)
   c.close()
 }
@@ -386,8 +425,10 @@ ${b("Commands")}
   baton [task]          start or attach                    baton doctor          check terminal, agents, auth
   baton demo [task]     simulated agents                   baton agents          installed agent CLIs
   baton run "<task>"    headless run (--json)              baton history         past runs (resume: ctrl+r)
-  baton init            re-run project setup               baton export <run>    run as Markdown (--format jsonl)
+  baton init            re-run project setup               baton export <run>    run as Markdown / --format html
   baton ps | stop       daemon status / stop everything    baton trust           allow project commands
+  baton web [--lan]     follow & approve from your phone (QR code)
+  baton mcp             Baton as an MCP server: let Claude Desktop / Cursor / any agent run your team
   baton config get|explain|path|schema|defaults            baton theme list|set <name>
 
 ${b("Flags")}
@@ -445,6 +486,10 @@ async function main() {
       return cmdTrust(sub)
     case "history":
       return cmdHistory()
+    case "web":
+      return cmdWeb(sub)
+    case "mcp":
+      return cmdMcp(sub)
     case "watch": {
       const { runWatch } = await import("./watch.ts")
       const client = await daemonClient()

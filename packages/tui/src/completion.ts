@@ -29,6 +29,7 @@ export const LOCAL_COMMANDS: Record<string, string> = {
   guide: "/guide — short lessons on how Baton works",
   recipes: "/recipes — browse workflows",
   welcome: "/welcome — the first-run screen",
+  web: "/web — follow & approve from your phone (QR code)",
   quit: "/quit — leave (agents keep running)",
   shutdown: "/shutdown — stop the daemon and all agents",
 }

@@ -1,0 +1,372 @@
+/**
+ * Remote access: a small web app served by the daemon so you can follow a run and answer it from
+ * a phone or another machine — the inbox (approve / deny), the lead's thread, every agent's
+ * activity, a task input, the autonomy dial, merge and interrupt.
+ *
+ * Off until started (`baton web`, `/web`). Bound to 127.0.0.1 unless `lan` is asked for. Every
+ * request carries the project's access token (`Authorization: Bearer …`; the page keeps it in the
+ * URL fragment, which browsers never send to servers). One-tap approve/deny links in
+ * notifications use per-request HMAC signatures instead, so the token never leaves the machine.
+ */
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { networkInterfaces } from "node:os"
+import { join } from "node:path"
+import { attentionItems, type FeedItem, stateDir } from "@batonsh/kernel"
+import qrcode from "qrcode-generator"
+import { handleInput } from "./input.ts"
+import { pickOption } from "./policy.ts"
+import { REMOTE_PAGE } from "./remote-page.ts"
+import type { Runtime } from "./runtime.ts"
+
+export interface RemoteServer {
+  url: string
+  /** URL with the access token in the fragment — what you open / scan. */
+  openUrl: string
+  /** The same for every LAN address when bound to all interfaces. */
+  lanUrls: string[]
+  port: number
+  lan: boolean
+  stop(): void
+}
+
+interface Secrets {
+  token: string
+  secret: string
+}
+
+/** Token + signing secret per project, kept across restarts so bookmarks keep working. */
+export function remoteSecrets(projectRoot: string, rotate = false): Secrets {
+  const dir = join(stateDir(), "remote")
+  const file = join(dir, `${createHash("sha1").update(projectRoot).digest("hex").slice(0, 16)}.json`)
+  if (!rotate && existsSync(file)) {
+    try {
+      const s = JSON.parse(readFileSync(file, "utf8")) as Secrets
+      if (s.token && s.secret) return s
+    } catch {}
+  }
+  const s: Secrets = { token: randomBytes(24).toString("base64url"), secret: randomBytes(32).toString("base64url") }
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  writeFileSync(file, JSON.stringify(s), { mode: 0o600 })
+  return s
+}
+
+function same(a: string, b: string): boolean {
+  const x = Buffer.from(a)
+  const y = Buffer.from(b)
+  return x.length === y.length && timingSafeEqual(x, y)
+}
+
+export function signAction(secret: string, agentId: string, requestId: string, decision: "allow" | "deny"): string {
+  return createHmac("sha256", secret).update(`${agentId}|${requestId}|${decision}`).digest("base64url").slice(0, 32)
+}
+
+/** IPv4 addresses other devices on the network can reach. */
+export function lanAddresses(): string[] {
+  const out: string[] = []
+  for (const list of Object.values(networkInterfaces())) for (const a of list ?? []) if (a.family === "IPv4" && !a.internal) out.push(a.address)
+  return out
+}
+
+/** A QR code drawn with half blocks (two modules per character row), quiet zone included. */
+export function qrLines(text: string): string[] {
+  const q = qrcode(0, "M")
+  q.addData(text)
+  q.make()
+  const n = q.getModuleCount()
+  const dark = (r: number, c: number) => r >= 0 && c >= 0 && r < n && c < n && q.isDark(r, c)
+  const lines: string[] = []
+  for (let r = -2; r < n + 2; r += 2) {
+    let line = ""
+    for (let c = -2; c < n + 2; c++) {
+      const top = dark(r, c)
+      const bottom = dark(r + 1, c)
+      // light modules are drawn (█), dark ones left empty: scanners want dark-on-light
+      line += top && bottom ? " " : top ? "▄" : bottom ? "▀" : "█"
+    }
+    lines.push(line)
+  }
+  return lines
+}
+
+// ───────────────────────────── view model ─────────────────────────────
+
+type Item =
+  | { k: "text"; role: "assistant" | "thought"; text: string; ts: number }
+  | { k: "user"; text: string; from?: string; ts: number }
+  | {
+      k: "tool"
+      title: string
+      status: string
+      summary?: string
+      output?: string
+      diffs: { path: string; added: number; removed: number; lines: string[] }[]
+      ts: number
+    }
+  | { k: "bus"; from: string; to: string; body: string; ts: number }
+  | { k: "note" | "error" | "ask"; text: string; ts: number }
+
+function item(it: FeedItem, name: (id: string) => string): Item | undefined {
+  switch (it.kind) {
+    case "message":
+      return it.text.trim() ? { k: "text", role: it.role, text: it.text.slice(-4000), ts: it.ts } : undefined
+    case "user":
+      // messages Baton relays between agents already show as bus lines
+      if (it.text.startsWith("[baton]")) return undefined
+      return { k: "user", text: it.text.slice(0, 2000), from: it.from ? name(it.from) : undefined, ts: it.ts }
+    case "tool":
+      return {
+        k: "tool",
+        title: it.title,
+        status: it.status,
+        summary: it.summary,
+        output: it.output?.slice(-1500),
+        diffs: it.diffs.slice(0, 4).map((d) => ({
+          path: d.path,
+          added: d.added,
+          removed: d.removed,
+          lines: d.lines
+            .filter((l) => l.kind !== "ctx")
+            .slice(0, 24)
+            .map((l) => `${l.kind === "add" ? "+" : "-"} ${l.text}`),
+        })),
+        ts: it.ts,
+      }
+    case "bus":
+      return { k: "bus", from: name(it.from), to: name(it.to), body: it.body.slice(0, 1500), ts: it.ts }
+    case "permission":
+      return { k: "ask", text: `${it.title}${it.resolved ? ` — ${it.resolved}` : ""}`, ts: it.ts }
+    case "error":
+      return { k: "error", text: it.text, ts: it.ts }
+    case "note":
+      return { k: "note", text: it.text, ts: it.ts }
+  }
+}
+
+export function remoteView(rt: Runtime) {
+  const s = rt.state
+  const name = (id: string) => (id === "user" ? "you" : id === s.orchestratorId ? "lead" : (s.agents.get(id)?.name ?? s.findAgent(id)?.name ?? id))
+  const feedOf = (id: string, n: number) =>
+    s
+      .feed(id)
+      .items.slice(-n)
+      .map((it) => item(it, name))
+      .filter((x): x is Item => !!x)
+  const lead = s.orchestratorId
+  const thread: Item[] = lead ? feedOf(lead, 60) : []
+  for (const m of s.bus.slice(-120)) {
+    if (m.kind === "heartbeat" || m.kind === "progress" || m.from === lead || m.to === lead) continue
+    thread.push({ k: "bus", from: name(m.from), to: name(m.to), body: m.body.slice(0, 1500), ts: m.ts })
+  }
+  thread.sort((a, b) => a.ts - b.ts)
+  return {
+    project: s.projectName,
+    branch: s.branch,
+    autonomy: s.autonomy,
+    mode: s.mode,
+    totals: s.totals,
+    attention: attentionItems(s).map((a) => {
+      const p = a.requestId ? s.approvals.get(a.requestId) : undefined
+      return { ...a, agent: a.agentId ? name(a.agentId) : undefined, options: p?.options, detail: a.detail ?? p?.detail }
+    }),
+    lead: lead ? { id: lead, status: s.agents.get(lead)?.status, adapter: s.agents.get(lead)?.adapter } : undefined,
+    thread: thread.slice(-80),
+    agents: [...s.agents.values()]
+      .filter((a) => a.status !== "exited" && !a.isOrchestrator)
+      .map((a) => {
+        const ws = s.workspaces.get(a.agentId)
+        return {
+          id: a.agentId,
+          name: a.name,
+          adapter: a.adapter,
+          model: a.model,
+          label: a.label,
+          status: a.status,
+          detail: a.statusDetail,
+          approval: a.approval,
+          cost: a.usage.costUsd,
+          progress: a.progress,
+          workspace: ws
+            ? { mode: ws.mode, files: ws.files.length, added: ws.added, removed: ws.removed, merge: ws.merge?.status, conflicts: ws.conflicts.length }
+            : undefined,
+          feed: feedOf(a.agentId, 30),
+        }
+      }),
+  }
+}
+
+// ───────────────────────────── server ─────────────────────────────
+
+const json = (v: unknown, status = 200) =>
+  new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } })
+
+export function startRemoteServer(rt: Runtime, opts: { lan?: boolean; port?: number } = {}): RemoteServer {
+  const { token, secret } = remoteSecrets(rt.projectRoot)
+  const authed = (req: Request, url: URL) => {
+    const bearer = /^Bearer\s+(\S+)$/i.exec(req.headers.get("authorization") ?? "")?.[1]
+    const t = bearer ?? url.searchParams.get("t") ?? ""
+    return t !== "" && same(t, token)
+  }
+  const respond = async (agentId: string, requestId: string, decision: "allow" | "deny" | string) => {
+    const p = rt.state.approvals.get(requestId)
+    if (!p || p.agentId !== agentId) return false
+    const opt = decision === "allow" || decision === "deny" ? pickOption(p.options, decision) : p.options.find((o) => o.optionId === decision)
+    await rt.resolvePermission(agentId, requestId, opt?.optionId ?? null, "user")
+    return true
+  }
+  const server = Bun.serve({
+    hostname: opts.lan ? "0.0.0.0" : "127.0.0.1",
+    port: opts.port ?? 0,
+    idleTimeout: 0,
+    async fetch(req) {
+      const url = new URL(req.url)
+      const path = url.pathname
+      if (req.method === "GET" && (path === "/" || path === "/index.html"))
+        return new Response(REMOTE_PAGE, {
+          headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" },
+        })
+      // one-tap approve / deny from a notification: signed per request, no token needed
+      const act = /^\/act\/([\w-]+)\/([\w-]+)\/(allow|deny)$/.exec(path)
+      if (act) {
+        const [, agentId, requestId, decision] = act as unknown as [string, string, string, "allow" | "deny"]
+        if (!same(url.searchParams.get("sig") ?? "", signAction(secret, agentId, requestId, decision))) return new Response("bad signature", { status: 403 })
+        // GET only shows a confirm button: link previews (Slack, chat apps) fetch URLs and must not approve anything
+        if (req.method === "GET") {
+          const p = rt.state.approvals.get(requestId)
+          const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] ?? c)
+          const page = p
+            ? `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;margin:2em;max-width:36em"><p>${esc(rt.state.agents.get(agentId)?.name ?? "agent")} asks:</p><h3>${esc(p.title)}</h3><form method="post"><button style="font:inherit;padding:.6em 1.4em">${decision === "allow" ? "Allow" : "Deny"}</button></form>`
+            : "<!doctype html><p>Already answered.</p>"
+          return new Response(page, { headers: { "content-type": "text/html; charset=utf-8", "referrer-policy": "no-referrer" } })
+        }
+        if (req.method !== "POST") return new Response(null, { status: 405 })
+        const ok = await respond(agentId, requestId, decision)
+        return new Response(ok ? `${decision === "allow" ? "Allowed" : "Denied"} ✓` : "Already answered", {
+          headers: { "content-type": "text/plain; charset=utf-8" },
+        })
+      }
+      if (!path.startsWith("/api/")) return new Response("not found", { status: 404 })
+      if (!authed(req, url)) return json({ error: "unauthorized" }, 401)
+      try {
+        if (req.method === "GET" && path === "/api/view") return json(remoteView(rt))
+        if (req.method === "GET" && path === "/api/stream") return stream(rt, req.signal)
+        if (req.method !== "POST") return json({ error: "method not allowed" }, 405)
+        const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
+        switch (path) {
+          case "/api/submit": {
+            const text = String(body.text ?? "").trim()
+            if (!text) return json({ error: "empty" }, 400)
+            return json(await handleInput(rt, text))
+          }
+          case "/api/respond":
+            return json({ ok: await respond(String(body.agentId), String(body.requestId), String(body.decision ?? body.optionId)) })
+          case "/api/autonomy": {
+            const mode = String(body.mode)
+            if (!["normal", "ask", "auto", "yolo"].includes(mode)) return json({ error: "bad mode" }, 400)
+            return json(await rt.setAutonomy(mode as "normal"))
+          }
+          case "/api/merge":
+            return json(await rt.collab.merge(String(body.agentId)))
+          case "/api/interrupt":
+            await rt.interrupt(String(body.agentId))
+            return json({ ok: true })
+          case "/api/plan":
+            return json({ ok: rt.collab.decidePlan(body.approve === true, typeof body.notes === "string" ? body.notes : undefined) })
+        }
+        return json({ error: "not found" }, 404)
+      } catch (e) {
+        return json({ error: e instanceof Error ? e.message : String(e) }, 400)
+      }
+    },
+  })
+  const port = server.port as number
+  const local = `http://127.0.0.1:${port}`
+  const lanUrls = opts.lan ? lanAddresses().map((a) => `http://${a}:${port}/#t=${token}`) : []
+  return {
+    url: opts.lan && lanAddresses()[0] ? `http://${lanAddresses()[0]}:${port}` : local,
+    openUrl: lanUrls[0] ?? `${local}/#t=${token}`,
+    lanUrls,
+    port,
+    lan: !!opts.lan,
+    stop: () => server.stop(true),
+  }
+}
+
+/** Newline-delimited JSON views, pushed when the run changes (at most ~4 per second). */
+function stream(rt: Runtime, signal: AbortSignal): Response {
+  const enc = new TextEncoder()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let off: (() => void) | undefined
+  let ping: ReturnType<typeof setInterval> | undefined
+  const body = new ReadableStream<Uint8Array>({
+    start(ctrl) {
+      const send = () => {
+        timer = undefined
+        try {
+          ctrl.enqueue(enc.encode(`${JSON.stringify(remoteView(rt))}\n`))
+        } catch {}
+      }
+      send()
+      off = rt.store.subscribe(() => {
+        if (!timer) timer = setTimeout(send, 250)
+      })
+      // keep proxies / phones from closing an idle connection
+      ping = setInterval(() => {
+        try {
+          ctrl.enqueue(enc.encode("\n"))
+        } catch {}
+      }, 15_000)
+      signal.addEventListener("abort", () => {
+        off?.()
+        if (timer) clearTimeout(timer)
+        clearInterval(ping)
+        try {
+          ctrl.close()
+        } catch {}
+      })
+    },
+    cancel() {
+      off?.()
+      if (timer) clearTimeout(timer)
+      clearInterval(ping)
+    },
+  })
+  return new Response(body, { headers: { "content-type": "application/x-ndjson", "cache-control": "no-store" } })
+}
+
+// ───────────────────────────── lifecycle ─────────────────────────────
+
+const running = new WeakMap<Runtime, RemoteServer>()
+
+export function remoteServer(rt: Runtime): RemoteServer | undefined {
+  return running.get(rt)
+}
+
+/** Start the web view (or return the running one; a different `lan` setting restarts it). */
+export function ensureRemote(rt: Runtime, opts: { lan?: boolean; port?: number; rotate?: boolean } = {}): RemoteServer {
+  const lan = opts.lan ?? rt.config.remote.lan
+  const port = opts.port ?? rt.config.remote.port
+  const cur = running.get(rt)
+  if (cur && !opts.rotate && cur.lan === lan && (!port || cur.port === port)) return cur
+  cur?.stop()
+  if (opts.rotate) remoteSecrets(rt.projectRoot, true)
+  const s = startRemoteServer(rt, { lan, port: port || cur?.port || 0 })
+  running.set(rt, s)
+  rt.emit({ type: "log", data: { level: "info", message: `web view at ${s.url}${lan ? " (reachable on your network)" : ""}` } })
+  return s
+}
+
+export function stopRemote(rt: Runtime): void {
+  running.get(rt)?.stop()
+  running.delete(rt)
+}
+
+/** Signed one-tap approve / deny links for a pending request, if phones can reach the web view. */
+export function approvalLinks(rt: Runtime, agentId: string, requestId: string): { allow: string; deny: string } | undefined {
+  const s = running.get(rt)
+  const base = rt.config.remote.public_url?.replace(/\/$/, "") ?? (s?.lan ? s.url : undefined)
+  if (!base) return undefined
+  const { secret } = remoteSecrets(rt.projectRoot)
+  const link = (d: "allow" | "deny") => `${base}/act/${agentId}/${requestId}/${d}?sig=${signAction(secret, agentId, requestId, d)}`
+  return { allow: link("allow"), deny: link("deny") }
+}

@@ -104,6 +104,7 @@ export type Overlay =
   | "recipes"
   | "costs"
   | "style"
+  | "web"
 export type Focus = { kind: "input" } | { kind: "agent"; agentId: string }
 
 export interface Toast {

@@ -71,6 +71,8 @@ Keys: `ctrl+p` command palette · `ctrl+a` **inbox** of everything that needs yo
   - They show as ⚑ in the status bar and the terminal tab title.
   - `ctrl+n` takes you to the next one. `space` peeks at an agent and lets you answer it in place.
   - Desktop notifications and/or the terminal bell fire when Baton isn't focused.
+- **From your phone.** `baton web --lan` shows a QR code; the page has your inbox (approve or deny with one tap), the lead's thread, every agent, the autonomy dial and a task input. ntfy notifications get Allow / Deny buttons.
+- **Drive it from other agents.** `baton mcp` lets Claude Desktop, Cursor or any MCP client run a task on your Baton team, follow it, answer approvals, diff and merge.
 - **One autonomy dial.** `shift+tab` switches every agent — lead and workers, even running ones — between normal, auto, YOLO (no prompts, no sandbox) and ask-first. Your deny rules always hold.
 - **Looks, not just colors.** 8 styles (classic, modern, minimal, accent, tabs, neon, retro, zen) change frames, status bar and background; ~30 themes change colors; any mix works. `background = terminal` keeps your terminal's own (transparent) background.
 - **Teaching built in.**
@@ -126,6 +128,7 @@ Keys: `ctrl+p` command palette · `ctrl+a` **inbox** of everything that needs yo
 - [Agents, providers & plugins](docs/agents.md): supported agents, custom agents, model providers, writing adapters
 - [Themes & appearance](docs/themes.md): the theme format, every token, importing, logos, layouts
 - [Keybindings](docs/keybindings.md)
+- [Remote access](docs/remote.md): the phone / web view, approving from notifications, `baton mcp`, HTML export
 - [SDK & protocol](docs/sdk.md): scripting Baton, the event and control protocols
 - [Plan](PLAN.md) and [research notes](docs/research.md)
 
@@ -135,7 +138,9 @@ Keys: `ctrl+p` command palette · `ctrl+a` **inbox** of everything that needs yo
 baton [task]            start or attach in this project (sets the project up on the first run)
 baton demo [task]       simulated agents, no tokens         --workers 8 --speed 2
 baton run "<task>"      headless; streams progress          --json  --approve all|none  --timeout 600
-baton init | doctor | agents | ps | stop | trust | history | export <run>
+baton web [--lan]       follow, approve and send tasks from your phone (QR code)
+baton mcp               Baton as an MCP server for Claude Desktop, Cursor, other agents
+baton init | doctor | agents | ps | stop | trust | history | export <run> [--format md|html|jsonl]
 baton config get|explain|path|schema|defaults
 baton theme list|set <name>
 flags: --theme <name> --layout <grid|focus|swarm|wide> --orchestrator <adapter> -y

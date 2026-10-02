@@ -20,6 +20,7 @@ import { StylePicker, ThemePicker } from "./components/Looks.tsx"
 import { Orchestrator } from "./components/Orchestrator.tsx"
 import { CommandPalette, HelpOverlay, Inbox, type PaletteItem, Toasts } from "./components/Overlays.tsx"
 import { PeekOverlay } from "./components/Peek.tsx"
+import { RemoteOverlay } from "./components/Remote.tsx"
 import { SettingsOverlay } from "./components/Settings.tsx"
 import { StatusBar } from "./components/StatusBar.tsx"
 import { ChangesOverlay, DiffOverlay, TasksOverlay } from "./components/Workspace.tsx"
@@ -484,6 +485,9 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       case "style.pick":
         ui.setOverlay("style")
         break
+      case "web.open":
+        ui.setOverlay("web")
+        break
       case "autonomy.cycle": {
         const cur = ui.run.autonomy
         setAutonomy(AUTONOMY_CYCLE[(AUTONOMY_CYCLE.indexOf(cur) + 1) % AUTONOMY_CYCLE.length]!)
@@ -569,6 +573,9 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
         break
       case "welcome":
         ui.setOverlay("welcome")
+        break
+      case "web":
+        ui.setOverlay("web")
         break
       case "quit":
         props.onExit({ shutdown: false })
@@ -816,6 +823,9 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
               prefill(`/recipe ${name} `)
             }}
           />
+        </Match>
+        <Match when={ui.overlay() === "web"}>
+          <RemoteOverlay onClose={() => ui.setOverlay(null)} />
         </Match>
         <Match when={ui.overlay() === "style"}>
           <StylePicker onClose={() => ui.setOverlay(null)} onPick={applyStyle} />

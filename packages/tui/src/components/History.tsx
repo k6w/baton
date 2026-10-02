@@ -45,8 +45,8 @@ export function HistoryOverlay(props: { onClose: () => void }) {
       void act(ui.client?.call("run.resume", { runId: r.runId }), (v) =>
         v.agents.length ? `resumed ${v.agents.join(", ")}` : "nothing to resume (agents already running)",
       )
-    } else if (ks === "e" || ks === "shift+e") {
-      const format = ks === "e" ? "md" : "jsonl"
+    } else if (ks === "e" || ks === "shift+e" || ks === "h") {
+      const format = ks === "e" ? "md" : ks === "h" ? "html" : "jsonl"
       void act(ui.client?.call("run.export", { runId: r.runId, format }), (v) => {
         const dir = join(ui.run.projectRoot || process.cwd(), ".baton", "exports")
         mkdirSync(dir, { recursive: true })
@@ -82,8 +82,8 @@ export function HistoryOverlay(props: { onClose: () => void }) {
         segs: [
           {
             text: r.current
-              ? "this is the current run · e export markdown · E export jsonl"
-              : "enter resume (agents restart with their sessions) · e export md · E jsonl",
+              ? "this is the current run · e export markdown · h shareable html · E jsonl"
+              : "enter resume (agents restart with their sessions) · e markdown · h html · E jsonl",
             fg: t.textSubtle,
           },
         ],

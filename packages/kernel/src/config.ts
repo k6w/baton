@@ -240,6 +240,18 @@ export const BatonConfig = z.object({
       port_base: 4100,
       conflict_check: true,
     }),
+  remote: z
+    .object({
+      /** Start the web view with the daemon (otherwise: `baton web` / `/web`). */
+      autostart: z.boolean().default(false),
+      /** Listen on all interfaces so a phone on the same network can connect (default: this machine only). */
+      lan: z.boolean().default(false),
+      /** Fixed port (0 = pick a free one). A fixed port keeps bookmarks working. */
+      port: z.number().int().min(0).max(65535).default(0),
+      /** How phones reach the web view (e.g. a Tailscale / tunnel URL); used for one-tap approve buttons in notifications. */
+      public_url: z.string().optional(),
+    })
+    .default({ autostart: false, lan: false, port: 0 }),
   daemon: z
     .object({
       /** Keep the daemon alive after the last client detaches. */

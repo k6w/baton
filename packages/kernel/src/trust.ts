@@ -77,6 +77,13 @@ export function trustSurface(root: string, data: Record<string, unknown>): Trust
     }
   if (isObj(data.workspace)) for (const k of ["setup", "verify", "dir"]) push(`workspace.${k}`, data.workspace[k])
   if (isObj(data.notify)) for (const k of ["command", "webhook"]) push(`notify.${k}`, data.notify[k])
+  // a repo-chosen API endpoint would receive your GitHub token
+  if (isObj(data.github)) for (const k of ["api_url", "token"]) push(`github.${k}`, data.github[k])
+  if (isObj(data.a2a)) {
+    for (const k of ["autostart", "public_url"]) if (data.a2a[k] !== undefined && data.a2a[k] !== false) push(`a2a.${k}`, data.a2a[k])
+    if (data.a2a.host !== undefined && data.a2a.host !== "127.0.0.1") push("a2a.host", data.a2a.host)
+    if (data.a2a.token === false) push("a2a.token", false)
+  }
   // exposing the run on the network is the user's call, not the repository's
   if (isObj(data.remote))
     for (const k of ["autostart", "lan", "public_url"]) if (data.remote[k] !== undefined && data.remote[k] !== false) push(`remote.${k}`, data.remote[k])

@@ -21,6 +21,8 @@ import { Orchestrator } from "./components/Orchestrator.tsx"
 import { CommandPalette, HelpOverlay, Inbox, type PaletteItem, Toasts } from "./components/Overlays.tsx"
 import { PeekOverlay } from "./components/Peek.tsx"
 import { RemoteOverlay } from "./components/Remote.tsx"
+import { ReplayBar } from "./components/ReplayBar.tsx"
+import { ScoresOverlay } from "./components/Scores.tsx"
 import { SettingsOverlay } from "./components/Settings.tsx"
 import { StatusBar } from "./components/StatusBar.tsx"
 import { ChangesOverlay, DiffOverlay, TasksOverlay } from "./components/Workspace.tsx"
@@ -100,7 +102,9 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
   setTimeout(() => clearInterval(capPoll), 3000)
   onCleanup(() => clearInterval(capPoll))
 
-  const chromeH = () => (ui.config.ui.hints ? 2 : 1)
+  // focus mode is calmer: no hint bar
+  const showHints = () => ui.config.ui.hints && !ui.replay && ui.focusUntil() === undefined
+  const chromeH = () => (showHints() ? 2 : 1) + (ui.replay ? 2 : 0)
 
   const setPref = <K extends keyof Prefs>(k: K, v: Prefs[K]) => {
     ui.setPrefs(k, v as never)
@@ -488,6 +492,16 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       case "web.open":
         ui.setOverlay("web")
         break
+      case "scores.open":
+        ui.setOverlay("scores")
+        break
+      case "focus.toggle":
+        if (ui.focusUntil() !== undefined) ui.setFocusMode(undefined)
+        else {
+          ui.setFocusMode(25)
+          ui.toast("◐ Focus for 25 min: only approvals and errors get through")
+        }
+        break
       case "autonomy.cycle": {
         const cur = ui.run.autonomy
         setAutonomy(AUTONOMY_CYCLE[(AUTONOMY_CYCLE.indexOf(cur) + 1) % AUTONOMY_CYCLE.length]!)
@@ -576,6 +590,23 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
         break
       case "web":
         ui.setOverlay("web")
+        break
+      case "a2a":
+        void call(ui.client?.call("a2a.start", {}), (r) =>
+          ui.toast(`A2A agent at ${r.url} · card: /.well-known/agent-card.json${r.token ? " · token: baton a2a" : ""}`),
+        )
+        break
+      case "focus": {
+        if (ui.focusUntil() !== undefined && !arg) ui.setFocusMode(undefined)
+        else {
+          const mins = Number(arg) || 25
+          ui.setFocusMode(mins)
+          ui.toast(`◐ Focus for ${mins} min: only approvals and errors get through · /focus again to end`)
+        }
+        break
+      }
+      case "scores":
+        ui.setOverlay("scores")
         break
       case "quit":
         props.onExit({ shutdown: false })
@@ -731,7 +762,10 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
           </Switch>
         </Show>
       </box>
-      <Show when={ui.config.ui.hints}>
+      <Show when={ui.replay}>
+        <ReplayBar replay={ui.replay!} width={dims().width} onExit={() => props.onExit({ shutdown: false })} />
+      </Show>
+      <Show when={showHints()}>
         <HintBar width={dims().width} />
       </Show>
       <StatusBar width={dims().width} />
@@ -823,6 +857,9 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
               prefill(`/recipe ${name} `)
             }}
           />
+        </Match>
+        <Match when={ui.overlay() === "scores"}>
+          <ScoresOverlay onClose={() => ui.setOverlay(null)} />
         </Match>
         <Match when={ui.overlay() === "web"}>
           <RemoteOverlay onClose={() => ui.setOverlay(null)} />

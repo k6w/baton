@@ -6,6 +6,7 @@
  *   !name                  → interrupt that agent (!all for everyone)
  *   anything else          → the orchestrator
  */
+import { fetchIssue, issueTask, openPr, planPr } from "./github.ts"
 import { listRecipes, renderRecipe } from "./recipes.ts"
 import type { Runtime } from "./runtime.ts"
 
@@ -33,11 +34,14 @@ export const DAEMON_COMMANDS: Record<string, string> = {
   diff: "/diff <agent> — show what an agent changed",
   plan: "/plan approve|reject [notes] — decide on the orchestrator's proposed plan",
   recipe: "/recipe <name> <task> — run a proven multi-agent workflow (best-of-3, plan-execute, …)",
+  issue: "/issue <n|url> — hand a GitHub issue to the orchestrator",
+  pr: "/pr [title] — preview a pull request from what this run merged · /pr confirm [title] — push + open it",
   approve: "/approve [all] — approve the oldest (or all) pending requests",
   deny: "/deny [all] — deny the oldest (or all) pending requests",
 }
 
-export async function handleInput(rt: Runtime, raw: string): Promise<InputResult> {
+/** `who`: the person who typed it (shared runs) — the receiving agent's next turn is attributed to them. */
+export async function handleInput(rt: Runtime, raw: string, opts: { who?: string } = {}): Promise<InputResult> {
   const text = raw.trim()
   if (!text) return { routedTo: [] }
 
@@ -66,6 +70,7 @@ export async function handleInput(rt: Runtime, raw: string): Promise<InputResult
       const to = mention === "all" ? "*" : mention
       const recipients = rt.resolveRecipients(to)
       if (recipients.length === 0) throw new Error(`no agent matches @${mention}`)
+      if (opts.who) for (const r of recipients) rt.emit({ type: "user.input", data: { author: opts.who, agentId: r.info.agentId, text: rest } })
       rt.send({ from: "user", to, body: rest, kind: "chat", delivery: "steer" })
       routed.push(...recipients.map((r) => r.info.name))
     }
@@ -73,6 +78,7 @@ export async function handleInput(rt: Runtime, raw: string): Promise<InputResult
   }
 
   const orch = await rt.ensureOrchestrator()
+  if (opts.who) rt.emit({ type: "user.input", data: { author: opts.who, agentId: orch.info.agentId, text } })
   await rt.promptAgent(orch.info.agentId, text, { from: "user", delivery: orch.busy && orch.caps.steer ? "steer" : "queue" })
   return { routedTo: [orch.info.name] }
 }
@@ -111,6 +117,25 @@ async function handleCommand(rt: Runtime, text: string): Promise<InputResult> {
       const targets = !args[0] || args[0] === "all" ? [...rt.agents.values()].filter((a) => a.busy) : [byName(args[0])]
       for (const t of targets) await rt.interrupt(t.info.agentId)
       return { routedTo: targets.map((t) => t.info.name), command: cmd }
+    }
+    case "issue": {
+      if (!args[0]) throw new Error("usage: /issue <number|#n|owner/repo#n|url>")
+      const issue = await fetchIssue(rt, args[0])
+      const lead = await rt.ensureOrchestrator()
+      await rt.promptAgent(lead.info.agentId, issueTask(issue), { from: "user" })
+      return { routedTo: [lead.info.name], command: cmd, output: `issue #${issue.number}: ${issue.title} → orchestrator` }
+    }
+    case "pr": {
+      if (args[0] === "confirm") {
+        const r = await openPr(rt, args.slice(1).join(" ") || undefined)
+        return { routedTo: [], command: cmd, output: `opened ${r.url} (${r.files.length} files on ${r.branch})` }
+      }
+      const p = await planPr(rt, args.join(" ") || undefined)
+      return {
+        routedTo: [],
+        command: cmd,
+        output: `PR preview: "${p.title}" · ${p.files.length} file${p.files.length === 1 ? "" : "s"} (${p.files.slice(0, 6).join(", ")}${p.files.length > 6 ? ", …" : ""}) · ${p.repo.owner}/${p.repo.repo} ${p.branch} → ${p.base}${rt.config.github.draft ? " (draft)" : ""}. Your working tree and branch stay as they are. Run /pr confirm to push and open it.`,
+      }
     }
     case "autonomy":
     case "yolo": {

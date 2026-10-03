@@ -9,6 +9,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"
 import { z } from "zod"
 import type { AgentRuntime, Runtime } from "./runtime.ts"
+import { pickForTask } from "./scores.ts"
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean }
 
@@ -211,6 +212,23 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime, signal?: Abort
   }
 
   if (isLead) {
+    server.registerTool(
+      "pick_agent",
+      {
+        description:
+          "Who should do this task? Ranks the installed agents by their track record in THIS project on this kind of task (merged work, review verdicts, failures) and cost per success, and suggests a model tier. Use it before spawning for anything non-trivial.",
+        inputSchema: { task: z.string(), candidates: z.array(z.string()).optional().describe("adapters to compare (default: every installed one)") },
+      },
+      (a) =>
+        guard(async () => {
+          const { kind, picks } = await pickForTask(rt, a.task, a.candidates)
+          const lines = picks.map((p, i) => `${i + 1}. ${p.adapter}${p.model ? ` (${p.model})` : ""} — ${p.why}`)
+          return ok(
+            `task kind: ${kind} · suggested tier: ${picks[0]?.tier ?? "medium"}\n${lines.join("\n")}\nPrefer a different vendor than the author for reviews.`,
+          )
+        }),
+    )
+
     const agentRef = (name: string) => {
       const t = rt.findAgent(name)
       if (!t) throw new Error(`no agent "${name}"`)

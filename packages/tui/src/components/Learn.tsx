@@ -443,6 +443,21 @@ Everything that needs you — approvals, failed or stuck agents, conflicts, fini
 > Budgets (settings → Autonomy & safety) stop new work at a $ limit; the watchdog flags agents that go silent or loop.`,
   },
   {
+    id: "together",
+    icon: "◎",
+    title: "Teams, phones & GitHub",
+    try: { label: "open the phone / web view", action: "web.open" },
+    body: `## Beyond one terminal
+- \`/web\` (or \`baton web --lan\`) shows a QR code: follow the run, approve, merge and send tasks from your phone.
+- **Shared runs:** everyone who attaches (TUI or web) appears in the status bar (◎ dana). Messages and approvals show who did them.
+- \`/issue 42\` hands a GitHub issue to the lead; \`/pr\` previews a pull request from what the run merged, \`/pr confirm\` opens it as a draft. Your working tree and branch stay as they are.
+- \`baton mcp\` lets Claude Desktop, Cursor or another agent run your Baton team.
+
+## Learning who's good at what
+\`/scores\` shows each agent's track record in this project (merged, approved, setbacks, $ per success). The lead uses the same numbers (pick_agent) to choose who does what.
+> \`/focus 25\` holds everything but approvals and errors for 25 minutes. History (\`ctrl+r\`) → \`p\` replays any past run.`,
+  },
+  {
     id: "looks",
     icon: "◐",
     title: "Styles & themes",
@@ -450,7 +465,7 @@ Everything that needs you — approvals, failed or stuck agents, conflicts, fini
     body: `## Shapes and colors, separately
 A **style** sets the shapes: frames (boxes, tabs, title bars, rules, accent stripes), the status bar (bar, chips, powerline, plain text) and the background. A **theme** sets the colors. Mix any style with any of ~30 themes.
 
-- \`/style\` → gallery with a live preview: classic, modern, minimal, accent, tabs, neon, retro, zen.
+- \`/style\` → gallery with a live preview: classic, modern, minimal, accent, tabs, neon, retro, zen, paper, glass, brutalist.
 - \`ctrl+t\` → themes, previewed live. "system" uses your terminal's palette.
 - Settings → Looks → **Background: terminal** keeps your terminal's own background (and transparency).
 > Every part can be changed on its own afterwards; the style then shows as "custom".`,

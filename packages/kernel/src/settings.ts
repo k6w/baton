@@ -48,7 +48,7 @@ export const SETTINGS: SettingDef[] = [
     key: "ui.style",
     section: "Looks",
     label: "Style",
-    help: "The shape of everything: frames, status bar, background. classic · modern · minimal · accent · tabs · neon · retro · zen. Enter opens the gallery with a live preview.",
+    help: "The shape of everything: frames, status bar, background. classic · modern · minimal · accent · tabs · neon · retro · zen · paper · glass · brutalist. Enter opens the gallery with a live preview.",
     type: { kind: "style" },
     ui: true,
   },
@@ -375,6 +375,14 @@ export const SETTINGS: SettingDef[] = [
     ui: true,
   },
   { key: "notify.bell", section: "Notifications", label: "Terminal bell", help: "Ring the bell for the same events.", type: { kind: "bool" }, ui: true },
+  {
+    key: "notify.sound",
+    section: "Notifications",
+    label: "Sounds",
+    help: 'system: a different system sound for approvals, finished work, errors and merges (also while you\'re looking at Baton). Your own files: [notify.sounds] approval = "~/ding.wav".',
+    type: { kind: "enum", options: ["off", "system"] },
+    ui: true,
+  },
   {
     key: "notify.when_focused",
     section: "Notifications",

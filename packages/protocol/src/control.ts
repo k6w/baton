@@ -43,6 +43,12 @@ export interface TaskView {
   owner?: string
   deps: string[]
   note?: string
+  files?: string[]
+  acceptance?: string
+  /** Preferred agent (adapter or profile) set by the user. */
+  agent?: string
+  /** Position in the plan; tasks without one keep creation order. */
+  order?: number
 }
 
 export interface BusMessageView {
@@ -78,6 +84,9 @@ export interface Snapshot {
     output: number
   }
   lastSeq: number
+  /** Per-agent workspace state (worktree, unmerged files, merge / review status). */
+  workspaces?: Record<string, unknown>
+  viewers?: { name: string; via: string }[]
 }
 
 export interface SpawnParams {
@@ -101,7 +110,8 @@ export interface SpawnParams {
 
 export interface ControlMethods {
   hello: {
-    params: { client: string; version: number }
+    /** `user`: the human behind this client (shared runs show who is watching and who did what). */
+    params: { client: string; version: number; user?: string }
     result: { daemonVersion: string; protocol: number; runId: string; projectRoot: string; pid: number }
   }
   "state.snapshot": { params: Record<string, never> | undefined; result: Snapshot }
@@ -111,7 +121,8 @@ export interface ControlMethods {
   }
   "events.unsubscribe": { params: { subscriptionId: string }; result: { ok: true } }
   "events.query": {
-    params: { fromSeq?: number; toSeq?: number; types?: string[]; agentId?: string; limit?: number }
+    /** `runId`: any run of this project (default: the current one). */
+    params: { runId?: string; fromSeq?: number; toSeq?: number; types?: string[]; agentId?: string; limit?: number }
     result: { events: BatonEvent[] }
   }
   /** Submit a line from the main input; handles @mentions, /commands and orchestrator routing. */
@@ -134,6 +145,38 @@ export interface ControlMethods {
     result: { url: string; openUrl: string; lanUrls: string[]; lan: boolean; qr: string[] }
   }
   "remote.stop": { params: Record<string, never> | undefined; result: { ok: true } }
+  /** Serve this Baton team as an A2A agent (other agents send it tasks). */
+  "a2a.start": {
+    params: { port?: number; host?: string; publicUrl?: string; noToken?: boolean; rotate?: boolean } | undefined
+    result: { url: string; port: number; token?: string }
+  }
+  "a2a.stop": { params: Record<string, never> | undefined; result: { ok: true } }
+  /** Track record per agent (adapter · model) and task kind, from this project's runs. */
+  "scorecards.get": {
+    params: Record<string, never> | undefined
+    result: {
+      rows: {
+        key: string
+        adapter: string
+        model?: string
+        kind: string
+        agents: number
+        merged: number
+        mergeFailed: number
+        approved: number
+        changesRequested: number
+        failedTurns: number
+        interrupted: number
+        costUsd: number
+        score: number
+        costPerSuccess?: number
+      }[]
+    }
+  }
+  "agents.pick": {
+    params: { task: string; candidates?: string[] }
+    result: { kind: string; picks: { adapter: string; model?: string; tier?: string; score: number; costPerSuccess?: number; why: string }[] }
+  }
   /** Set the run-wide autonomy level. `live` = agents switched in place; `pending` = agents that keep their sandbox until restarted. */
   "run.autonomy": { params: { mode: "normal" | "ask" | "auto" | "yolo" }; result: { mode: string; live: string[]; pending: string[] } }
   "workspace.merge": { params: { agentId: string }; result: { status: string; files: string[]; detail?: string } }
@@ -167,7 +210,22 @@ export interface ControlMethods {
   "run.export": { params: { runId: string; format: "md" | "jsonl" | "html" }; result: { text: string } }
   "run.resume": { params: { runId: string }; result: { agents: string[] } }
   "plan.decide": { params: { approved: boolean; notes?: string }; result: { ok: boolean } }
-  "task.edit": { params: { taskId: string; title?: string; cancel?: boolean }; result: { ok: true } }
+  "task.edit": {
+    params: {
+      taskId: string
+      title?: string
+      description?: string
+      acceptance?: string
+      deps?: string[]
+      agent?: string
+      /** Move the task one place up / down in the plan. */
+      move?: "up" | "down"
+      cancel?: boolean
+    }
+    result: { ok: true }
+  }
+  /** Add a task to the plan (the user's own step). */
+  "task.add": { params: { title: string; description?: string; deps?: string[]; agent?: string; acceptance?: string }; result: { taskId: string } }
   "config.get": { params: { key?: string } | undefined; result: { config: unknown; provenance?: Record<string, string> } }
   /** Re-read config files (after the settings screen wrote them). */
   "config.reload": { params: Record<string, never> | undefined; result: { errors: string[] } }

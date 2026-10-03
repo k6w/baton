@@ -58,6 +58,10 @@ export class RunState {
   mode = "orchestrator"
   /** Run-wide autonomy level (normal = per-agent settings). */
   autonomy: "normal" | "ask" | "auto" | "yolo" = "normal"
+  /** Who is watching (shared runs). */
+  viewers: { name: string; via: string }[] = []
+  /** agentId → person whose message starts that agent's next turn. */
+  private pendingAuthor = new Map<string, { author: string; ts: number }>()
   orchestratorId: string | undefined
   agents = new Map<string, AgentView>()
   feeds = new Map<string, AgentFeed>()
@@ -78,6 +82,13 @@ export class RunState {
   busChatCount = 0
   /** Recent activity timestamps for sparklines. */
   activity: number[] = []
+
+  /** Back to an empty state (replay seeking backwards). */
+  reset(): void {
+    const fresh = new RunState()
+    for (const k of Object.keys(this) as (keyof this)[]) delete this[k]
+    Object.assign(this, fresh)
+  }
 
   static fromSnapshot(s: Snapshot): RunState {
     const r = new RunState()
@@ -148,6 +159,12 @@ export class RunState {
       case "run.autonomy":
         this.autonomy = e.data.mode
         break
+      case "run.presence":
+        this.viewers = e.data.viewers
+        break
+      case "user.input":
+        this.pendingAuthor.set(e.data.agentId, { author: e.data.author, ts: e.ts })
+        break
       case "agent.spawned": {
         const d = e.data
         this.agents.set(d.agentId, {
@@ -188,7 +205,12 @@ export class RunState {
           agent.turnStartedAt = e.ts
           agent.status = "busy"
         }
-        if (aid && e.data.prompt) this.push(aid, { kind: "user", id: `u_${e.id}`, text: e.data.prompt, ts: e.ts })
+        if (aid && e.data.prompt) {
+          const pa = this.pendingAuthor.get(aid)
+          const from = pa && e.ts - pa.ts < 30_000 ? pa.author : undefined
+          this.pendingAuthor.delete(aid)
+          this.push(aid, { kind: "user", id: `u_${e.id}`, text: e.data.prompt, ts: e.ts, ...(from ? { from } : {}) })
+        }
         break
       case "turn.completed":
       case "turn.interrupted":
@@ -331,7 +353,7 @@ export class RunState {
         this.approvals.delete(e.data.requestId)
         if (aid) {
           const it = this.feed(aid).index.get(e.data.requestId)
-          if (it && it.kind === "permission") it.resolved = `${e.data.kind ?? "cancelled"} (${e.data.by})`
+          if (it && it.kind === "permission") it.resolved = `${e.data.kind ?? "cancelled"} (${e.data.who ? `by ${e.data.who}` : e.data.by})`
         }
         break
       }
@@ -365,6 +387,9 @@ export class RunState {
           owner: e.data.owner,
           deps: e.data.deps,
           note: e.data.description,
+          files: e.data.files,
+          acceptance: e.data.acceptance,
+          order: this.tasks.size,
         })
         break
       case "task.state": {
@@ -479,6 +504,10 @@ export class RunState {
         if (t) {
           if (e.data.title) t.title = e.data.title
           if (e.data.description) t.note = e.data.description
+          if (e.data.acceptance !== undefined) t.acceptance = e.data.acceptance || undefined
+          if (e.data.deps) t.deps = e.data.deps
+          if (e.data.agent !== undefined) t.agent = e.data.agent || undefined
+          if (e.data.order !== undefined) t.order = e.data.order
         }
         break
       }
@@ -512,7 +541,17 @@ export class RunState {
       bus: this.bus.slice(-200),
       totals: { ...this.totals },
       lastSeq: this.lastSeq,
+      workspaces: Object.fromEntries(this.workspaces),
+      viewers: this.viewers,
     }
+  }
+
+  /** Tasks in plan order (user reordering first, creation order otherwise). */
+  orderedTasks(): TaskView[] {
+    return [...this.tasks.values()]
+      .map((t, i) => ({ t, k: t.order ?? i }))
+      .sort((a, b) => a.k - b.k)
+      .map((x) => x.t)
   }
 
   running(): AgentView[] {

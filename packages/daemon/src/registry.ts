@@ -15,6 +15,8 @@ const BUILTIN: Loader[] = [
   async () => (await import("@batonsh/adapter-acp")).acpAdapters,
   async () => (await import("@batonsh/adapter-stream-json")).streamJsonAdapters,
   async () => (await import("@batonsh/adapter-exec")).execAdapters,
+  async () => [(await import("@batonsh/adapter-native")).nativeAdapter],
+  async () => [(await import("@batonsh/adapter-a2a")).a2aAdapter],
 ]
 
 export class AdapterRegistry {

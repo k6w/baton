@@ -60,7 +60,7 @@ export const AgentStyle = z.object({
 
 export const UiConfig = z.object({
   theme: z.string().default("baton"),
-  /** Style preset (shapes, not colors): classic · modern · minimal · accent · tabs · neon · retro · zen. Sets the keys below. */
+  /** Style preset (shapes, not colors): classic · modern · minimal · accent · tabs · neon · retro · zen · paper · glass · brutalist. Sets the keys below. */
   style: z.string().default("classic"),
   /** Pane frames: line (boxes) · tab · bar (filled title bars) · minimal (title rule only) · accent (colored stripe). */
   frame: z.enum(["line", "tab", "bar", "minimal", "accent"]).default("line"),
@@ -87,8 +87,8 @@ export const UiConfig = z.object({
   show_bus: z.boolean().default(true),
   show_thoughts: z.boolean().default(false),
   card_fields: z.array(z.string()).default(["adapter", "version", "model", "dir", "approval"]),
-  status_left: z.string().default("{trust} {dot} {running}/{total} {noun} running · {calls} calls · {msgs} msgs  {attention}"),
-  status_right: z.string().default("{unmerged}  {cost}  {added} {removed}  {repo}@{branch}"),
+  status_left: z.string().default("{trust} {focus} {dot} {running}/{total} {noun} running · {calls} calls · {msgs} msgs  {attention}"),
+  status_right: z.string().default("{viewers}  {unmerged}  {cost}  {added} {removed}  {repo}@{branch}"),
   timestamp_format: z.enum(["ss.mmm", "hh:mm:ss", "relative"]).default("ss.mmm"),
   mouse: z.boolean().default(true),
   /** One-line hint bar with the keys that matter in the current context. */
@@ -191,6 +191,10 @@ export const BatonConfig = z.object({
       desktop: z.boolean().default(true),
       /** Ring the terminal bell. */
       bell: z.boolean().default(false),
+      /** Play a sound: system = a different system sound per kind (approval, done, error, merge). */
+      sound: z.enum(["off", "system"]).default("off"),
+      /** Your own sound files per kind, e.g. { approval = "~/sounds/ding.wav" }. */
+      sounds: z.record(z.string(), z.string()).default({}),
       /** Also notify while the Baton window has focus. */
       when_focused: z.boolean().default(false),
       /** approval = an agent needs you · done = the orchestrator finished · error = an agent failed · merge = a merge landed or failed */
@@ -202,7 +206,7 @@ export const BatonConfig = z.object({
       /** Shell command run per notification; receives JSON on stdin and BATON_TITLE/BATON_BODY env vars. */
       command: z.string().optional(),
     })
-    .default({ desktop: true, bell: false, when_focused: false, events: ["approval", "done", "error"], webhook_format: "json" }),
+    .default({ desktop: true, bell: false, sound: "off", sounds: {}, when_focused: false, events: ["approval", "done", "error"], webhook_format: "json" }),
   workspace: z
     .object({
       /** worktree: every worker gets its own git worktree; shared: everyone edits the project directly. */
@@ -240,6 +244,32 @@ export const BatonConfig = z.object({
       port_base: 4100,
       conflict_check: true,
     }),
+  github: z
+    .object({
+      /** API base (GitHub Enterprise: https://ghe.example.com/api/v3). */
+      api_url: z.string().default("https://api.github.com"),
+      /** Token reference (env:VAR · cmd:… · keychain:…). Default: $GITHUB_TOKEN / $GH_TOKEN / \`gh auth token\`. */
+      token: z.string().optional(),
+      /** Remote to push PR branches to. */
+      remote: z.string().default("origin"),
+      /** Open pull requests as drafts. */
+      draft: z.boolean().default(true),
+    })
+    .default({ api_url: "https://api.github.com", remote: "origin", draft: true }),
+  a2a: z
+    .object({
+      /** Serve the A2A endpoint with the daemon (otherwise: \`baton a2a\`). */
+      autostart: z.boolean().default(false),
+      host: z.string().default("127.0.0.1"),
+      port: z.number().int().min(0).max(65535).default(0),
+      /** Where other agents reach this endpoint (advertised in the agent card). */
+      public_url: z.string().optional(),
+      /** Require a bearer token (printed by \`baton a2a\`). */
+      token: z.boolean().default(true),
+      /** How long the team must be quiet before a task counts as done (ms). */
+      idle_ms: z.number().int().min(200).default(2000),
+    })
+    .default({ autostart: false, host: "127.0.0.1", port: 0, token: true, idle_ms: 2000 }),
   remote: z
     .object({
       /** Start the web view with the daemon (otherwise: `baton web` / `/web`). */

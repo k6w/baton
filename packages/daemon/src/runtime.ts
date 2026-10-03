@@ -868,11 +868,27 @@ export class Runtime {
     })
   }
 
-  async resolvePermission(agentId: string, requestId: string, optionId: string | null, by: "user" | "policy" | "timeout" | "cancelled" = "user") {
+  // ── presence (shared runs) ──
+  private viewers = new Map<string, { name: string; via: string }>()
+
+  joinViewer(id: string, name: string, via: string) {
+    this.viewers.set(id, { name, via })
+    this.emitPresence()
+  }
+
+  leaveViewer(id: string) {
+    if (this.viewers.delete(id)) this.emitPresence()
+  }
+
+  private emitPresence() {
+    if (!this.closed) this.emit({ type: "run.presence", data: { viewers: [...this.viewers.values()] } })
+  }
+
+  async resolvePermission(agentId: string, requestId: string, optionId: string | null, by: "user" | "policy" | "timeout" | "cancelled" = "user", who?: string) {
     const ask = this.asks.get(requestId)
     if (ask) {
       this.asks.delete(requestId)
-      this.emit({ type: "permission.resolved", data: { requestId, optionId, kind: optionId === "yes" ? "allow_once" : "reject_once", by } }, agentId)
+      this.emit({ type: "permission.resolved", data: { requestId, optionId, kind: optionId === "yes" ? "allow_once" : "reject_once", by, who } }, agentId)
       ask.resolve(optionId === "yes")
       return
     }
@@ -888,7 +904,7 @@ export class Runtime {
     }
     this.resolvedRequests.add(requestId)
     if (this.resolvedRequests.size > 5000) this.resolvedRequests.delete(this.resolvedRequests.values().next().value as string)
-    this.emit({ type: "permission.resolved", data: { requestId, optionId, kind: opt?.kind ?? null, by } }, agentId)
+    this.emit({ type: "permission.resolved", data: { requestId, optionId, kind: opt?.kind ?? null, by, who } }, agentId)
     try {
       await rt.session.respondPermission(requestId, optionId)
     } catch (e) {

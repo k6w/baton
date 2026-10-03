@@ -20,7 +20,9 @@
     "@batonsh/protocol": "workspace:*",
     "@modelcontextprotocol/sdk": "1.32.1",
     "qrcode-generator": "1.4.4",
-    "zod": "4.6.5"
+    "zod": "4.6.5",
+    "@batonsh/adapter-native": "workspace:*",
+    "@batonsh/adapter-a2a": "workspace:*"
   },
   "devDependencies": {
     "@batonsh/sdk": "workspace:*"

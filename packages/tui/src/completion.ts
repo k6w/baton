@@ -11,7 +11,7 @@ export interface Completion {
 
 export const LOCAL_COMMANDS: Record<string, string> = {
   theme: "/theme <name> — switch theme (ctrl+t for the picker)",
-  style: "/style <classic|modern|minimal|accent|tabs|neon|retro|zen> — the look (shapes, not colors)",
+  style: "/style <classic|modern|minimal|accent|tabs|neon|retro|zen|paper|glass|brutalist> — the look (shapes, not colors)",
   background: "/background <theme|terminal> — paint the theme background or keep your terminal's",
   frame: "/frame <line|tab|bar|minimal|accent> — how panes are framed",
   layout: "/layout <grid|list|focus|swarm|wide>",
@@ -30,6 +30,9 @@ export const LOCAL_COMMANDS: Record<string, string> = {
   recipes: "/recipes — browse workflows",
   welcome: "/welcome — the first-run screen",
   web: "/web — follow & approve from your phone (QR code)",
+  scores: "/scores — each agent's track record in this project",
+  a2a: "/a2a — serve this team as an A2A agent (shows its URL)",
+  focus: "/focus [minutes] — do not disturb: only approvals and errors get through (default 25)",
   quit: "/quit — leave (agents keep running)",
   shutdown: "/shutdown — stop the daemon and all agents",
 }
@@ -53,6 +56,8 @@ export const REMOTE_COMMANDS: Record<string, string> = {
   plan: "/plan approve|reject [notes]",
   recipe: "/recipe <name> <task> — proven workflows",
   approve: "/approve [all]",
+  issue: "/issue <n|url> — hand a GitHub issue to the lead",
+  pr: "/pr [title] — preview a PR from merged work · /pr confirm to open it",
   deny: "/deny [all]",
 }
 
@@ -171,6 +176,9 @@ export function completions(input: string, run: RunState, config: BatonConfig): 
           { v: "auto", d: "agents act; destructive commands ask" },
           { v: "yolo", d: "no prompts, no sandbox" },
         ]
+        break
+      case "pr":
+        options = [{ v: "confirm", d: "push a baton/… branch and open the pull request" }]
         break
       case "approve":
       case "deny":

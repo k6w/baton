@@ -64,3 +64,34 @@ Set `BATON_KEEP_RAW=1` to also store each adapter's raw native events, which hel
 ```sh
 baton run "update the changelog for v2.3" --approve all --json | jq -c 'select(.type=="tool.call") | .data.title'
 ```
+
+## Python
+
+`sdk-python/` is a client for the same protocol that uses only the standard library (Python 3.9+, `import baton`).
+It discovers the project and starts the daemon the same way `connect()` does, and it can fold the event stream into a live run state:
+
+```python
+import baton
+
+with baton.connect() as client:                        # autostarts `baton daemon` ($BATON_BIN or PATH)
+    run = client.run_state()                           # replay + live: agents, approvals, autonomy, totals
+
+    def approve_reads(e):                              # runs on a worker thread; may call the client
+        d = e["data"]
+        if d.get("kind") == "read":
+            allow = next(o["optionId"] for o in d["options"] if o["kind"] == "allow_once")
+            client.respond(e["agentId"], d["requestId"], allow)
+
+    client.on_event(approve_reads, types=["permission.requested"])
+    seq = run.last_seq
+    client.submit("migrate the tests to pytest")
+    run.wait_idle(timeout=900, since_seq=seq)
+    for a in run.agents.values():
+        print(a.name, a.status, a.diff, f"${a.cost:.3f}")
+    for e in client.events(types=["bus.*"], timeout=5):   # iterator; break to unsubscribe
+        print(e["data"]["body"])
+```
+
+Each control method has a wrapper (`submit`, `spawn`, `prompt`, `respond`, `send`, `set_autonomy`, `merge`, `diff`, `shutdown`, …), and `call(method, params)` reaches the rest.
+Errors raise `baton.BatonError(code, message, data)`.
+See `sdk-python/README.md` and `sdk-python/examples/`.

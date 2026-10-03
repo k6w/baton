@@ -24,6 +24,8 @@ export interface ConnectOptions {
   /** Wait this long for a freshly started daemon (ms). */
   startTimeoutMs?: number
   clientName?: string
+  /** The human behind this client (shown to everyone watching the run). */
+  user?: string
 }
 
 export function discoverSocket(projectRoot: string): string {
@@ -90,7 +92,7 @@ export class BatonClient {
     for (const h of this.closeHandlers) h(reason)
   }
 
-  static async open(socketPath: string, clientName = "sdk"): Promise<BatonClient> {
+  static async open(socketPath: string, clientName = "sdk", user?: string): Promise<BatonClient> {
     const c = new BatonClient()
     c.socket = await Bun.connect<undefined>({
       unix: socketPath,
@@ -116,7 +118,7 @@ export class BatonClient {
     })
     c.flush()
     try {
-      const hello = await c.call("hello", { client: clientName, version: CONTROL_PROTOCOL_VERSION }, 10_000)
+      const hello = await c.call("hello", { client: clientName, version: CONTROL_PROTOCOL_VERSION, ...(user ? { user } : {}) }, 10_000)
       c.projectRoot = hello.projectRoot
       c.runId = hello.runId
       c.daemonPid = hello.pid
@@ -261,10 +263,10 @@ export class LiveRun {
   }
 }
 
-async function tryOpen(socketPath: string, name: string): Promise<BatonClient | undefined> {
+async function tryOpen(socketPath: string, name: string, user?: string): Promise<BatonClient | undefined> {
   if (!existsSync(socketPath)) return undefined
   try {
-    return await BatonClient.open(socketPath, name)
+    return await BatonClient.open(socketPath, name, user)
   } catch {
     return undefined
   }
@@ -275,7 +277,7 @@ export async function connect(opts: ConnectOptions = {}): Promise<BatonClient> {
   const root = findProjectRoot(opts.cwd ?? process.cwd())
   const socketPath = opts.socketPath ?? discoverSocket(root)
   const name = opts.clientName ?? "sdk"
-  const existing = await tryOpen(socketPath, name)
+  const existing = await tryOpen(socketPath, name, opts.user)
   if (existing) return existing
   if (opts.autostart === false) throw new Error(`no baton daemon running for ${root}`)
   const cmd = opts.daemonCommand?.(root) ?? defaultDaemonCommand(root)
@@ -285,12 +287,12 @@ export async function connect(opts: ConnectOptions = {}): Promise<BatonClient> {
   while (Date.now() < deadline) {
     await Bun.sleep(80)
     const sp = opts.socketPath ?? discoverSocket(root)
-    const c = await tryOpen(sp, name)
+    const c = await tryOpen(sp, name, opts.user)
     if (c) return c
     // exited (by code or signal): one last look — another daemon may have won the start race
     if (proc.exitCode !== null || proc.signalCode !== null) {
       await Bun.sleep(150)
-      const late = await tryOpen(opts.socketPath ?? discoverSocket(root), name)
+      const late = await tryOpen(opts.socketPath ?? discoverSocket(root), name, opts.user)
       if (late) return late
       throw new Error(
         `baton daemon ${proc.signalCode ? `was killed (${proc.signalCode})` : `exited with code ${proc.exitCode}`} (see ${projectPaths(root).log})`,

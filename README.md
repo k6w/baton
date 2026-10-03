@@ -72,9 +72,11 @@ Keys: `ctrl+p` command palette · `ctrl+a` **inbox** of everything that needs yo
   - `ctrl+n` takes you to the next one. `space` peeks at an agent and lets you answer it in place.
   - Desktop notifications and/or the terminal bell fire when Baton isn't focused.
 - **From your phone.** `baton web --lan` shows a QR code; the page has your inbox (approve or deny with one tap), the lead's thread, every agent, the autonomy dial and a task input. ntfy notifications get Allow / Deny buttons.
+- **Teams and integrations.** Shared runs show who's watching and who did what. `/issue 42` → `/pr` turns a GitHub issue into a draft PR without touching your working tree. A2A in both directions, a Python SDK, and a built-in agent (`baton`) that runs on any model provider, local models included.
+- **It learns who's good at what.** Track record per agent and task kind (`/scores`); the lead picks agents with it, cheaper ones winning close calls. Replay any past run (`baton replay`), edit the plan as a table, focus mode and sounds.
 - **Drive it from other agents.** `baton mcp` lets Claude Desktop, Cursor or any MCP client run a task on your Baton team, follow it, answer approvals, diff and merge.
 - **One autonomy dial.** `shift+tab` switches every agent — lead and workers, even running ones — between normal, auto, YOLO (no prompts, no sandbox) and ask-first. Your deny rules always hold.
-- **Looks, not just colors.** 8 styles (classic, modern, minimal, accent, tabs, neon, retro, zen) change frames, status bar and background; ~30 themes change colors; any mix works. `background = terminal` keeps your terminal's own (transparent) background.
+- **Looks, not just colors.** 11 styles (classic, modern, minimal, accent, tabs, neon, retro, zen, paper, glass, brutalist) change frames, status bar and background; ~50 themes (all meeting WCAG contrast) change colors; any mix works. `background = terminal` keeps your terminal's own (transparent) background.
 - **Teaching built in.**
   - A four-step welcome tour: how it works, pick your look (live), pick your autonomy level, start with a task suggested from your repo.
   - A hint bar shows the keys that matter right now, `/guide` has illustrated lessons you can try on the spot, and `?` lists every key.
@@ -129,6 +131,8 @@ Keys: `ctrl+p` command palette · `ctrl+a` **inbox** of everything that needs yo
 - [Themes & appearance](docs/themes.md): the theme format, every token, importing, logos, layouts
 - [Keybindings](docs/keybindings.md)
 - [Remote access](docs/remote.md): the phone / web view, approving from notifications, `baton mcp`, HTML export
+- [Teamwork & integrations](docs/integrations.md): shared runs, GitHub issues → PRs, A2A, Python, track record, replay, focus mode
+- [The Baton agent](docs/native-agent.md): a built-in coding agent on any model provider · [A2A](docs/a2a.md)
 - [SDK & protocol](docs/sdk.md): scripting Baton, the event and control protocols
 - [Plan](PLAN.md) and [research notes](docs/research.md)
 
@@ -140,6 +144,9 @@ baton demo [task]       simulated agents, no tokens         --workers 8 --speed 
 baton run "<task>"      headless; streams progress          --json  --approve all|none  --timeout 600
 baton web [--lan]       follow, approve and send tasks from your phone (QR code)
 baton mcp               Baton as an MCP server for Claude Desktop, Cursor, other agents
+baton a2a [--stop]      serve this team as an A2A agent
+baton issue <n>         start with a GitHub issue · baton pr [-y]  PR from what the run merged
+baton replay [run]      play a past run back
 baton init | doctor | agents | ps | stop | trust | history | export <run> [--format md|html|jsonl]
 baton config get|explain|path|schema|defaults
 baton theme list|set <name>

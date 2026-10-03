@@ -41,6 +41,8 @@ export const DEFAULT_COMMANDS: CommandDef[] = [
   { id: "focus.prev", title: "Focus previous pane", context: "global", keys: ["shift+tab"] },
   { id: "autonomy.cycle", title: "Autonomy: cycle normal → auto → YOLO → ask (every agent)", context: "input", keys: ["shift+tab"] },
   { id: "autonomy.yolo", title: "Autonomy: toggle YOLO for every agent", context: "global", keys: [] },
+  { id: "focus.toggle", title: "Focus mode: hold everything but approvals and errors (25 min)", context: "global", keys: [] },
+  { id: "scores.open", title: "Track record: who delivers what in this project", context: "global", keys: [] },
   { id: "web.open", title: "Phone & web: follow and approve from a browser (QR code)", context: "global", keys: [] },
   { id: "style.pick", title: "Choose style (shapes: frames, status bar, background)…", context: "global", keys: [] },
   { id: "toggle.background", title: "Toggle background: theme / terminal", context: "global", keys: [] },

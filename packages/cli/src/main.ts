@@ -22,7 +22,18 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { runDaemonProcess, socketPathFor, startDaemon } from "@batonsh/daemon"
-import { BatonConfig, configDir, configJsonSchema, findProjectRoot, getPath, loadConfig, projectPaths, revokeTrust, trustEntries } from "@batonsh/kernel"
+import {
+  BatonConfig,
+  configDir,
+  configJsonSchema,
+  defaultUser,
+  findProjectRoot,
+  getPath,
+  loadConfig,
+  projectPaths,
+  revokeTrust,
+  trustEntries,
+} from "@batonsh/kernel"
 import { BatonClient, connect, discoverSocket } from "@batonsh/sdk"
 import { listThemes, loadTheme } from "@batonsh/themes"
 import { runHeadless } from "./headless.ts"
@@ -52,7 +63,22 @@ function parseArgs(argv: string[]): Args {
       else if (
         argv[i + 1] &&
         !argv[i + 1]!.startsWith("-") &&
-        ["root", "theme", "layout", "timeout", "approve", "workers", "speed", "orchestrator", "format", "autonomy", "port"].includes(k)
+        [
+          "root",
+          "theme",
+          "layout",
+          "timeout",
+          "approve",
+          "workers",
+          "speed",
+          "orchestrator",
+          "format",
+          "autonomy",
+          "port",
+          "title",
+          "host",
+          "public-url",
+        ].includes(k)
       )
         out.flags[k] = argv[++i] as string
       else out.flags[k] = true
@@ -88,7 +114,7 @@ async function applyAutonomyFlag(client: BatonClient, flags: Args["flags"]) {
   await client.call("run.autonomy", { mode: want as "normal" | "ask" | "auto" | "yolo" })
 }
 
-async function startTui(client: BatonClient, root: string, flags: Args["flags"]): Promise<void> {
+async function tuiConfig(client: BatonClient, root: string, flags: Args["flags"]) {
   // The daemon's resolved config is authoritative (it may run with different overrides, e.g. demo);
   // UI-only flags from this invocation are layered on top.
   const local = loadConfig({ projectRoot: root, overrides: overridesFrom(flags) }).config
@@ -96,13 +122,47 @@ async function startTui(client: BatonClient, root: string, flags: Args["flags"])
     .call("config.get", {})
     .then((r) => BatonConfig.safeParse(r.config))
     .catch(() => undefined)
-  const config = remote?.success ? { ...remote.data, ui: { ...remote.data.ui, ...(flags.theme || flags.layout ? local.ui : {}) }, keys: local.keys } : local
-  const live = await client.live()
+  return remote?.success ? { ...remote.data, ui: { ...remote.data.ui, ...(flags.theme || flags.layout ? local.ui : {}) }, keys: local.keys } : local
+}
+
+/** Play back a past run in the TUI (read-only). */
+async function replayRun(client: BatonClient, config: BatonConfig, runId: string): Promise<void> {
   const { runTui } = await import("@batonsh/tui")
-  const res = await runTui({ client, live, config })
-  if (res.shutdown) await client.shutdown().catch(() => {})
-  await live.stop().catch(() => {})
+  const { events } = await client.call("events.query", { runId })
+  if (!events.length) throw new Error(`no events for run ${runId} (baton history lists runs)`)
+  const runs = (await client.call("runs.list", { limit: 200 })).runs
+  const title = runs.find((r) => r.runId === runId)?.title ?? runId
+  await runTui({ client, config, replay: { events, title: `${title} · ${new Date(events[0]!.ts).toLocaleString()}` } })
+}
+
+async function startTui(client: BatonClient, root: string, flags: Args["flags"]): Promise<void> {
+  const config = await tuiConfig(client, root, flags)
+  const { runTui } = await import("@batonsh/tui")
+  for (;;) {
+    const live = await client.live()
+    const res = await runTui({ client, live, config })
+    await live.stop().catch(() => {})
+    // history → replay: show it, then come back to the live run
+    if (res.replay && !client.closed) {
+      await replayRun(client, config, res.replay).catch((e) => console.error(e instanceof Error ? e.message : e))
+      continue
+    }
+    if (res.shutdown) await client.shutdown().catch(() => {})
+    break
+  }
   client.close()
+}
+
+async function cmdReplay(args: Args) {
+  const root = findProjectRoot(process.cwd())
+  const client = await connect({ cwd: root, daemonCommand: (r) => [...selfCommand(), "daemon", "--root", r], clientName: "cli" })
+  const runs = (await client.call("runs.list", { limit: 200 })).runs
+  const want = args._[0]
+  const run = !want || want === "last" ? runs.find((r) => !r.current) : runs.find((r) => r.runId === want || r.runId.endsWith(want))
+  if (!run) throw new Error(want ? `no run ${want} (baton history)` : "no past runs yet")
+  await replayRun(client, await tuiConfig(client, root, args.flags), run.runId)
+  client.close()
+  process.exit(0)
 }
 
 async function cmdStart(args: Args) {
@@ -110,7 +170,7 @@ async function cmdStart(args: Args) {
   if (!isInitialized(root)) {
     await initProject({ root, yes: !!args.flags.yes })
   }
-  const client = await connect({ cwd: root, daemonCommand: (r) => [...selfCommand(), "daemon", "--root", r], clientName: "tui" })
+  const client = await connect({ cwd: root, daemonCommand: (r) => [...selfCommand(), "daemon", "--root", r], clientName: "tui", user: defaultUser() })
   await applyAutonomyFlag(client, args.flags)
   const task = args._.slice(0).join(" ").trim()
   let submitError: unknown
@@ -131,7 +191,7 @@ async function cmdDemo(args: Args) {
     demo: { workers: Number(args.flags.workers) || 5, speed: Number(args.flags.speed) || 1 },
     overrides: { project: { name: "portfolio" }, ...overridesFrom(args.flags) },
   })
-  const client = await BatonClient.open(socketPath, "tui")
+  const client = await BatonClient.open(socketPath, "tui", defaultUser())
   const task = args._.join(" ").trim() || "fix the typo in the README"
   setTimeout(() => void client.submit(task).catch(() => {}), 600)
   await startTui(client, root, args.flags)
@@ -169,7 +229,7 @@ async function cmdRun(args: Args) {
   const root = findProjectRoot(process.cwd())
   // headless never creates a git repo on its own — that needs -y
   if (!isInitialized(root)) await initProject({ root, yes: true, gitInit: !!args.flags.yes, quiet: !!args.flags.json })
-  const client = await connect({ cwd: root, daemonCommand: (r) => [...selfCommand(), "daemon", "--root", r], clientName: "cli" })
+  const client = await connect({ cwd: root, daemonCommand: (r) => [...selfCommand(), "daemon", "--root", r], clientName: "cli", user: defaultUser() })
   await applyAutonomyFlag(client, args.flags)
   const code = await runHeadless(client, task, {
     json: !!args.flags.json,
@@ -364,6 +424,30 @@ async function cmdMcp(args: Args) {
   process.exit(0)
 }
 
+async function cmdA2A(args: Args) {
+  const cl = await daemonClient()
+  if (args.flags.stop) {
+    await cl.call("a2a.stop", {})
+    cl.close()
+    return console.log("A2A endpoint stopped")
+  }
+  const r = await cl.call("a2a.start", {
+    port: typeof args.flags.port === "string" ? Number(args.flags.port) : undefined,
+    host: typeof args.flags.host === "string" ? args.flags.host : undefined,
+    publicUrl: typeof args.flags["public-url"] === "string" ? (args.flags["public-url"] as string) : undefined,
+    noToken: args.flags["no-token"] ? true : undefined,
+    rotate: !!args.flags.rotate,
+  })
+  cl.close()
+  console.log(`${c.bold("Baton as an A2A agent")} ${c.dim("— other agents can hand this team tasks")}\n`)
+  console.log(`  agent card  ${c.cyan(`${r.url}/.well-known/agent-card.json`)}`)
+  console.log(`  endpoint    ${c.cyan(r.url)}`)
+  if (r.token) console.log(`  token       ${r.token}  ${c.dim("(Authorization: Bearer …)")}`)
+  console.log(
+    c.dim('\n  Runs in the daemon; `baton a2a --stop` turns it off. Add another A2A agent to your team: [agents.x] adapter = "a2a", options = { url = "…" }'),
+  )
+}
+
 async function cmdWeb(args: Args) {
   const cl = await daemonClient()
   if (args.flags.stop) {
@@ -429,6 +513,9 @@ ${b("Commands")}
   baton ps | stop       daemon status / stop everything    baton trust           allow project commands
   baton web [--lan]     follow & approve from your phone (QR code)
   baton mcp             Baton as an MCP server: let Claude Desktop / Cursor / any agent run your team
+  baton a2a [--stop]    serve this team as an A2A agent (other agents send it tasks)
+  baton issue <n>       start with a GitHub issue        baton pr [-y]         PR from what the run merged
+  baton replay [run]    watch a past run play back (space pause · , . moments · - + speed)
   baton config get|explain|path|schema|defaults            baton theme list|set <name>
 
 ${b("Flags")}
@@ -490,6 +577,22 @@ async function main() {
       return cmdWeb(sub)
     case "mcp":
       return cmdMcp(sub)
+    case "a2a":
+      return cmdA2A(sub)
+    case "issue":
+      // start (or attach) with the issue as the orchestrator's task
+      if (!sub._[0]) throw new Error("usage: baton issue <number|url>")
+      return cmdStart({ _: ["/issue", ...sub._], flags: sub.flags })
+    case "replay":
+      return cmdReplay(sub)
+    case "pr": {
+      const cl = await daemonClient()
+      const title = typeof sub.flags.title === "string" ? ` ${sub.flags.title}` : ""
+      const r = await cl.submit(`/pr${sub.flags.yes ? " confirm" : ""}${title}`)
+      cl.close()
+      console.log(r.output ?? "")
+      return
+    }
     case "watch": {
       const { runWatch } = await import("./watch.ts")
       const client = await daemonClient()

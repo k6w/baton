@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { diffLines, parseUnifiedDiff } from "@batonsh/protocol"
-import { EventStore, envLayer, formatCount, loadConfig, RunState, template, trustEntries } from "./index.ts"
+import { classifyTask, EventStore, envLayer, formatCount, loadConfig, pickAgents, RunState, runRecords, scorecards, template, trustEntries } from "./index.ts"
 
 describe("EventStore", () => {
   test("append validates, assigns seq and replays in order", () => {
@@ -192,5 +192,38 @@ describe("protocol utils", () => {
   })
   test("template", () => {
     expect(template("{a}/{b} x{missing}", { a: 1, b: "2" })).toBe("1/2 x")
+  })
+})
+
+describe("scorecards", () => {
+  const ev = (seq: number, type: string, data: unknown, agentId?: string) => ({ id: `e${seq}`, seq, ts: seq, runId: "r", agentId, type, data }) as never
+  const spawn = (seq: number, id: string, adapter: string, label: string, model?: string) =>
+    ev(seq, "agent.spawned", { agentId: id, name: id, adapter, model, label, cwd: "/", approval: "ask" }, id)
+
+  test("track record per adapter and task kind; picks rank by success, then cost", () => {
+    const run1 = [
+      spawn(1, "a", "codex", "fix login bug"),
+      spawn(2, "b", "claude", "fix crash in parser"),
+      ev(3, "usage.updated", { input: 1, output: 1, costUsd: 0.5 }, "a"),
+      ev(4, "usage.updated", { input: 1, output: 1, costUsd: 2 }, "b"),
+      ev(5, "workspace.merge", { status: "merged", files: ["x.ts"] }, "a"),
+      ev(6, "review.verdict", { reviewId: "r1", author: "b", reviewer: "a", verdict: "changes_requested", notes: "no" }),
+      ev(7, "workspace.merge", { status: "conflict", files: ["y.ts"] }, "b"),
+    ]
+    const run2 = [spawn(1, "c", "codex", "fix the timeout bug"), ev(2, "workspace.merge", { status: "merged", files: ["z.ts"] }, "c")]
+    const rows = scorecards([...runRecords(run1), ...runRecords(run2)])
+    const codex = rows.find((r) => r.adapter === "codex" && r.kind === "bugfix")!
+    expect(codex.agents).toBe(2)
+    expect(codex.merged).toBe(2)
+    expect(codex.score).toBeCloseTo(3 / 4)
+    expect(codex.costPerSuccess).toBeCloseTo(0.25)
+    const claude = rows.find((r) => r.adapter === "claude" && r.kind === "all")!
+    expect(claude.changesRequested + claude.mergeFailed).toBe(2)
+    expect(classifyTask("Add focused tests for src/auth.ts")).toBe("tests")
+    expect(classifyTask("update the README")).toBe("docs")
+    const { kind, picks } = pickAgents(rows, "fix the null pointer bug", ["claude", "codex", "gemini"])
+    expect(kind).toBe("bugfix")
+    expect(picks[0]!.adapter).toBe("codex")
+    expect(picks.find((p) => p.adapter === "gemini")!.why).toContain("no track record")
   })
 })

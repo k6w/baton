@@ -39,6 +39,7 @@ export function ZoomView(props: { agentId: string; width: number; height: number
       maxDiffLines: Number.POSITIVE_INFINITY,
       maxOutputLines: 40,
       who: whoFn(ui),
+      me: ui.me,
     })
     return [...head, { segs: [{ text: "" }] }, ...feed]
   })

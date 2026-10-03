@@ -7,6 +7,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, unlin
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { type BatonConfig, loadConfig, projectPaths, type TrustEntry } from "@batonsh/kernel"
+import { ensureA2A, stopA2A } from "./a2a-server.ts"
 import { type ControlServer, startControlServer } from "./control.ts"
 import { attachDemoDirector } from "./demo.ts"
 import { type McpHttpServer, startMcpServer } from "./mcp.ts"
@@ -150,6 +151,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       stopping = true
       stopDemo?.()
       stopRemote(runtime)
+      stopA2A(runtime)
       daemon.control.stop()
       await runtime.close()
       await telemetry?.stop()
@@ -189,6 +191,13 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
 
   const stopDemo = opts.demo ? attachDemoDirector(runtime, typeof opts.demo === "object" ? opts.demo : {}) : undefined
 
+  if (config.a2a.autostart && !opts.ephemeral) {
+    try {
+      ensureA2A(runtime)
+    } catch (e) {
+      runtime.emit({ type: "log", data: { level: "warn", message: `A2A endpoint: ${e instanceof Error ? e.message : e}` } })
+    }
+  }
   if (config.remote.autostart && !opts.ephemeral) {
     try {
       ensureRemote(runtime)

@@ -25,9 +25,13 @@ describe("notifications", () => {
   test("settings decide desktop / bell / focus", () => {
     const cfg = BatonConfig.parse({}).notify
     const n = { kind: "approval" as const, title: "t", body: "b" }
-    expect(shouldNotify(n, cfg, false)).toEqual({ desktop: true, bell: false })
-    expect(shouldNotify(n, cfg, true)).toEqual({ desktop: false, bell: false })
-    expect(shouldNotify(n, { ...cfg, when_focused: true, bell: true }, true)).toEqual({ desktop: true, bell: true })
-    expect(shouldNotify({ ...n, kind: "merge" }, cfg, false)).toEqual({ desktop: false, bell: false })
+    expect(shouldNotify(n, cfg, false)).toEqual({ desktop: true, bell: false, sound: false })
+    expect(shouldNotify(n, cfg, true)).toEqual({ desktop: false, bell: false, sound: false })
+    expect(shouldNotify(n, { ...cfg, when_focused: true, bell: true }, true)).toEqual({ desktop: true, bell: true, sound: false })
+    expect(shouldNotify({ ...n, kind: "merge" }, cfg, false)).toEqual({ desktop: false, bell: false, sound: false })
+    // sounds play even while focused on Baton; focus mode lets only approvals and errors through
+    expect(shouldNotify(n, { ...cfg, sound: "system" }, true).sound).toBe(true)
+    expect(shouldNotify({ ...n, kind: "done" }, cfg, false, true)).toEqual({ desktop: false, bell: false, sound: false })
+    expect(shouldNotify({ ...n, kind: "approval" }, cfg, false, true).desktop).toBe(true)
   })
 })

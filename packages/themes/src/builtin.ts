@@ -54,10 +54,45 @@ function hexToRgb(h: string): [number, number, number] {
   return [Number.parseInt(full.slice(0, 2), 16), Number.parseInt(full.slice(2, 4), 16), Number.parseInt(full.slice(4, 6), 16)]
 }
 
+function channel(v: number): number {
+  const c = v / 255
+  return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+}
+
+/** WCAG 2.x relative luminance of a "#rrggbb" color. */
+export function relativeLuminance(hex: string): number {
+  const [r, g, b] = hexToRgb(hex)
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+}
+
+/** WCAG 2.x contrast ratio between two "#rrggbb" colors (1–21). */
+export function contrastRatio(a: string, b: string): number {
+  const la = relativeLuminance(a)
+  const lb = relativeLuminance(b)
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
+}
+
+/**
+ * Nudge `fg` toward white (dark `bg`) or black (light `bg`) just enough to reach `min`
+ * contrast against `bg`. Colors that already pass are returned unchanged.
+ */
+export function ensureContrast(fg: string, bg: string, min: number): string {
+  if (contrastRatio(fg, bg) >= min) return fg
+  const target = relativeLuminance(bg) < 0.18 ? "#ffffff" : "#000000"
+  for (let t = 0.02; t < 1; t += 0.02) {
+    const c = mix(fg, target, t)
+    if (contrastRatio(c, bg) >= min) return c
+  }
+  return target
+}
+
 export function paletteTheme(p: Palette): ThemeFile {
   const dark = p.appearance === "dark"
   const addBg = p.diffAddBg ?? mix(p.bg, p.green, dark ? 0.32 : 0.22)
   const delBg = p.diffDelBg ?? mix(p.bg, p.red, dark ? 0.32 : 0.2)
+  // Derived colors are kept readable; explicit palette colors are used as given.
+  const diffAdded = ensureContrast(dark ? mix(p.text, p.green, 0.15) : mix(p.text, p.green, 0.6), addBg, 4.5)
+  const diffRemoved = ensureContrast(dark ? mix(p.text, p.red, 0.15) : mix(p.text, p.red, 0.6), delBg, 4.5)
   const theme: Record<Token, string> = {
     primary: p.primary,
     secondary: p.secondary,
@@ -68,7 +103,7 @@ export function paletteTheme(p: Palette): ThemeFile {
     info: p.blue,
     text: p.text,
     textMuted: p.muted,
-    textSubtle: p.subtle ?? mix(p.muted, p.bg, 0.35),
+    textSubtle: p.subtle ?? ensureContrast(mix(p.muted, p.bg, 0.35), p.bg, 3),
     background: p.bg,
     backgroundPanel: p.panel ?? p.bg,
     backgroundElement: p.element,
@@ -77,8 +112,8 @@ export function paletteTheme(p: Palette): ThemeFile {
     borderActive: p.borderActive,
     borderSubtle: p.borderSubtle ?? mix(p.border, p.bg, 0.45),
     selection: p.selection ?? mix(p.bg, p.blue, 0.3),
-    diffAdded: dark ? mix(p.text, p.green, 0.15) : mix(p.text, p.green, 0.6),
-    diffRemoved: dark ? mix(p.text, p.red, 0.15) : mix(p.text, p.red, 0.6),
+    diffAdded,
+    diffRemoved,
     diffContext: p.muted,
     diffAddedBg: addBg,
     diffRemovedBg: delBg,
@@ -131,7 +166,7 @@ const BATON_DARK: Palette = {
   borderSubtle: "#2a3040",
   text: "#dde2ee",
   muted: "#8a92a8",
-  subtle: "#5d6479",
+  subtle: "#60677c", // was #5d6479, raised to 3:1 contrast
   primary: "#d97757",
   secondary: "#b4a5f5",
   accent: "#7fb4ff",
@@ -243,7 +278,7 @@ const P: Palette[] = [
     borderActive: "#babbf1",
     text: "#c6d0f5",
     muted: "#a5adce",
-    subtle: "#737994",
+    subtle: "#797e98", // was #737994, raised to 3:1 contrast
     primary: "#ca9ee6",
     secondary: "#8caaee",
     accent: "#f4b8e4",
@@ -264,8 +299,8 @@ const P: Palette[] = [
     border: "#bcc0cc",
     borderActive: "#7287fd",
     text: "#4c4f69",
-    muted: "#6c6f85",
-    subtle: "#9ca0b0",
+    muted: "#6a6d82", // was #6c6f85, raised to 4.5:1 contrast
+    subtle: "#868a97", // was #9ca0b0, raised to 3:1 contrast
     primary: "#8839ef",
     secondary: "#1e66f5",
     accent: "#ea76cb",
@@ -288,7 +323,7 @@ const P: Palette[] = [
     borderActive: "#7aa2f7",
     text: "#c0caf5",
     muted: "#a9b1d6",
-    subtle: "#565f89",
+    subtle: "#5d658e", // was #565f89, raised to 3:1 contrast
     primary: "#7aa2f7",
     secondary: "#bb9af7",
     accent: "#7dcfff",
@@ -310,7 +345,7 @@ const P: Palette[] = [
     borderActive: "#7aa2f7",
     text: "#c0caf5",
     muted: "#a9b1d6",
-    subtle: "#565f89",
+    subtle: "#6a7297", // was #565f89, raised to 3:1 contrast
     primary: "#7aa2f7",
     secondary: "#bb9af7",
     accent: "#7dcfff",
@@ -330,9 +365,9 @@ const P: Palette[] = [
     element: "#c4c8da",
     border: "#a8aecb",
     borderActive: "#2e7de9",
-    text: "#3760bf",
-    muted: "#6172b0",
-    subtle: "#848cb5",
+    text: "#28458a", // was #3760bf, raised to 7:1 contrast
+    muted: "#536297", // was #6172b0, raised to 4.5:1 contrast
+    subtle: "#777ea3", // was #848cb5, raised to 3:1 contrast
     primary: "#2e7de9",
     secondary: "#9854f1",
     accent: "#007197",
@@ -401,9 +436,9 @@ const P: Palette[] = [
     element: "#f2e9e1",
     border: "#dfdad9",
     borderActive: "#907aa9",
-    text: "#575279",
-    muted: "#797593",
-    subtle: "#9893a5",
+    text: "#524d72", // was #575279, raised to 7:1 contrast
+    muted: "#6f6c87", // was #797593, raised to 4.5:1 contrast
+    subtle: "#8f8a9b", // was #9893a5, raised to 3:1 contrast
     primary: "#d7827e",
     secondary: "#907aa9",
     accent: "#56949f",
@@ -447,8 +482,8 @@ const P: Palette[] = [
     border: "#d5c4a1",
     borderActive: "#504945",
     text: "#3c3836",
-    muted: "#7c6f64",
-    subtle: "#a89984",
+    muted: "#776b60", // was #7c6f64, raised to 4.5:1 contrast
+    subtle: "#948774", // was #a89984, raised to 3:1 contrast
     primary: "#af3a03",
     secondary: "#076678",
     accent: "#427b58",
@@ -559,9 +594,9 @@ const P: Palette[] = [
     element: "#e4d794",
     border: "#c9cbd1",
     borderActive: "#4d699b",
-    text: "#545464",
-    muted: "#716e61",
-    subtle: "#8a8980",
+    text: "#4c4c5a", // was #545464, raised to 7:1 contrast
+    muted: "#6c6a5d", // was #716e61, raised to 4.5:1 contrast
+    subtle: "#87867d", // was #8a8980, raised to 3:1 contrast
     primary: "#4d699b",
     secondary: "#624c83",
     accent: "#597b75",
@@ -607,9 +642,9 @@ const P: Palette[] = [
     element: "#2c313c",
     border: "#3e4451",
     borderActive: "#61afef",
-    text: "#abb2bf",
-    muted: "#828997",
-    subtle: "#5c6370",
+    text: "#b2b8c4", // was #abb2bf, raised to 7:1 contrast
+    muted: "#8f95a1", // was #828997, raised to 4.5:1 contrast
+    subtle: "#707681", // was #5c6370, raised to 3:1 contrast
     primary: "#61afef",
     secondary: "#c678dd",
     accent: "#56b6c2",
@@ -631,7 +666,7 @@ const P: Palette[] = [
     borderActive: "#4078f2",
     text: "#383a42",
     muted: "#696c77",
-    subtle: "#a0a1a7",
+    subtle: "#909196", // was #a0a1a7, raised to 3:1 contrast
     primary: "#4078f2",
     secondary: "#a626a4",
     accent: "#0184bc",
@@ -652,9 +687,9 @@ const P: Palette[] = [
     element: "#073642",
     border: "#2a4f58",
     borderActive: "#93a1a1",
-    text: "#93a1a1",
+    text: "#a9b4b4", // was #93a1a1, raised to 7:1 contrast
     muted: "#839496",
-    subtle: "#586e75",
+    subtle: "#5f747b", // was #586e75, raised to 3:1 contrast
     primary: "#268bd2",
     secondary: "#6c71c4",
     accent: "#2aa198",
@@ -674,9 +709,9 @@ const P: Palette[] = [
     element: "#eee8d5",
     border: "#d3cbb7",
     borderActive: "#586e75",
-    text: "#586e75",
-    muted: "#657b83",
-    subtle: "#93a1a1",
+    text: "#45565b", // was #586e75, raised to 7:1 contrast
+    muted: "#5f747b", // was #657b83, raised to 4.5:1 contrast
+    subtle: "#849191", // was #93a1a1, raised to 3:1 contrast
     primary: "#268bd2",
     secondary: "#6c71c4",
     accent: "#2aa198",
@@ -736,6 +771,464 @@ const P: Palette[] = [
     orange: "#bc4c00",
     diffAddBg: "#dafbe1",
     diffDelBg: "#ffebe9",
+  },
+  // Ayu — https://github.com/ayu-theme/ayu-colors (npm `ayu` 9.1.0, generated/{dark,mirage,light})
+  {
+    name: "ayu-dark",
+    appearance: "dark",
+    bg: "#10141c",
+    panel: "#0d1017",
+    element: "#141821",
+    overlay: "#1b1f29",
+    border: "#404953",
+    borderActive: "#e6b450",
+    text: "#bfbdb6",
+    muted: "#787f90", // upstream #5a6378, raised to 4.5:1 contrast
+    subtle: "#5a6673",
+    primary: "#e6b450",
+    secondary: "#d2a6ff",
+    accent: "#39bae6",
+    red: "#f07178",
+    green: "#aad94c",
+    yellow: "#ffb454",
+    blue: "#59c2ff",
+    cyan: "#95e6cb",
+    magenta: "#d2a6ff",
+    orange: "#ff8f40",
+  },
+  {
+    name: "ayu-mirage",
+    appearance: "dark",
+    bg: "#242936",
+    panel: "#1f2430",
+    element: "#282e3b",
+    overlay: "#1c212c",
+    border: mix("#242936", "#707a8c", 0.4),
+    borderActive: "#ffcc66",
+    text: "#cccac2",
+    muted: "#8a92a1", // upstream #707a8c, raised to 4.5:1 contrast
+    subtle: "#6e7c8f",
+    primary: "#ffcc66",
+    secondary: "#dfbfff",
+    accent: "#5ccfe6",
+    red: "#f28779",
+    green: "#d5ff80",
+    yellow: "#ffcd66",
+    blue: "#73d0ff",
+    cyan: "#95e6cb",
+    magenta: "#dfbfff",
+    orange: "#ffa659",
+  },
+  {
+    name: "ayu-light",
+    appearance: "light",
+    bg: "#fcfcfc",
+    panel: "#f8f9fa",
+    element: "#ebeef0",
+    border: mix("#fcfcfc", "#828e9f", 0.35),
+    borderActive: "#f29718",
+    text: "#53575c", // upstream #5c6166, raised to 7:1 contrast
+    muted: "#6b7482", // upstream #828e9f, raised to 4.5:1 contrast
+    subtle: "#919295", // upstream #adaeb1, raised to 3:1 contrast
+    primary: "#f29718",
+    secondary: "#a37acc",
+    accent: "#55b4d4",
+    red: "#e65050",
+    green: "#86b300",
+    yellow: "#eba400",
+    blue: "#22a4e6",
+    cyan: "#4cbf99",
+    magenta: "#a37acc",
+    orange: "#fa8532",
+  },
+  // Monokai Pro (Classic filter) — https://monokai.pro, palette as in helix runtime/themes/monokai_pro.toml
+  {
+    name: "monokai-pro",
+    appearance: "dark",
+    bg: "#2d2a2e",
+    panel: "#221f22",
+    element: "#403e41",
+    overlay: "#403e41",
+    border: "#5b595c",
+    borderActive: "#ffd866",
+    text: "#fcfcfa",
+    muted: "#939293",
+    subtle: "#757375", // upstream #727072, raised to 3:1 contrast
+    primary: "#ffd866",
+    secondary: "#ab9df2",
+    accent: "#78dce8",
+    red: "#ff6188",
+    green: "#a9dc76",
+    yellow: "#ffd866",
+    blue: "#78dce8",
+    cyan: "#78dce8",
+    magenta: "#ab9df2",
+    orange: "#fc9867",
+  },
+  // Night Owl / Light Owl — https://github.com/sdras/night-owl-vscode-theme
+  {
+    name: "night-owl",
+    appearance: "dark",
+    bg: "#011627",
+    panel: "#021320",
+    element: "#0b253a",
+    overlay: "#1d3b53",
+    border: "#1d3b53",
+    borderSubtle: "#122d42",
+    borderActive: "#7fdbca",
+    text: "#d6deeb",
+    muted: "#65839b", // upstream #5f7e97, raised to 4.5:1 contrast
+    subtle: "#637777",
+    primary: "#82aaff",
+    secondary: "#c792ea",
+    accent: "#7fdbca",
+    red: "#ef5350",
+    green: "#22da6e",
+    yellow: "#ffeb95",
+    blue: "#82aaff",
+    cyan: "#7fdbca",
+    magenta: "#c792ea",
+    orange: "#f78c6c",
+    selection: "#1d3b53",
+  },
+  {
+    name: "light-owl",
+    appearance: "light",
+    bg: "#fbfbfb",
+    panel: "#f0f0f0",
+    element: "#f0f0f0",
+    overlay: "#e0e0e0",
+    border: "#d9d9d9",
+    borderActive: "#4876d6",
+    text: "#403f53",
+    muted: "#59768e", // upstream #5f7e97, raised to 4.5:1 contrast
+    subtle: "#7f939d", // upstream #90a7b2, raised to 3:1 contrast
+    primary: "#4876d6",
+    secondary: "#994cc3",
+    accent: "#0c969b",
+    red: "#de3d3b",
+    green: "#08916a",
+    yellow: "#e0af02",
+    blue: "#288ed7",
+    cyan: "#2aa298",
+    magenta: "#d6438a",
+    orange: "#c96765",
+    selection: "#e0e0e0",
+  },
+  // SynthWave '84 — https://github.com/robb0wen/synthwave-vscode
+  {
+    name: "synthwave-84",
+    appearance: "dark",
+    bg: "#262335",
+    panel: "#241b2f",
+    element: "#2a2139",
+    overlay: "#171520",
+    border: "#495495",
+    borderActive: "#ff7edb",
+    text: "#ffffff",
+    muted: "#848bbd",
+    primary: "#ff7edb",
+    secondary: "#36f9f6",
+    accent: "#fede5d",
+    red: "#fe4450",
+    green: "#72f1b8",
+    yellow: "#fede5d",
+    blue: "#2ee2fa",
+    cyan: "#36f9f6",
+    magenta: "#ff7edb",
+    orange: "#f97e72",
+  },
+  // Poimandres — https://github.com/drcmda/poimandres-theme
+  {
+    name: "poimandres",
+    appearance: "dark",
+    bg: "#1b1e28",
+    element: "#303340",
+    overlay: "#303340",
+    border: "#303340",
+    borderActive: "#a6accd",
+    text: "#a6accd",
+    muted: "#7e84a3", // upstream #767c9d, raised to 4.5:1 contrast
+    subtle: "#5b6d7f", // upstream #506477, raised to 3:1 contrast
+    primary: "#5de4c7",
+    secondary: "#add7ff",
+    accent: "#89ddff",
+    red: "#d0679d",
+    green: "#5de4c7",
+    yellow: "#fffac2",
+    blue: "#add7ff",
+    cyan: "#89ddff",
+    magenta: "#f087bd",
+    orange: "#f087bd",
+  },
+  // Vesper — https://github.com/raunofreiberg/vesper
+  {
+    name: "vesper",
+    appearance: "dark",
+    bg: "#101010",
+    element: "#1c1c1c",
+    overlay: "#232323",
+    border: "#343434",
+    borderSubtle: "#282828",
+    borderActive: "#ffc799",
+    text: "#ffffff",
+    muted: "#a0a0a0",
+    subtle: "#8b8b8b",
+    primary: "#ffc799",
+    secondary: "#99ffe4",
+    accent: "#ffc799",
+    red: "#ff8080",
+    green: "#99ffe4",
+    yellow: "#ffc799",
+    blue: "#a0a0a0",
+    cyan: "#99ffe4",
+    magenta: "#ffcfa8",
+    orange: "#ffc799",
+  },
+  // Nightfox / Dayfox — https://github.com/EdenEast/nightfox.nvim (lua/nightfox/palette)
+  {
+    name: "nightfox",
+    appearance: "dark",
+    bg: "#192330",
+    panel: "#131a24",
+    element: "#212e3f",
+    overlay: "#29394f",
+    border: "#39506d",
+    borderActive: "#719cd6",
+    text: "#cdcecf",
+    muted: "#aeafb0",
+    subtle: "#738091",
+    primary: "#719cd6",
+    secondary: "#9d79d6",
+    accent: "#63cdcf",
+    red: "#c94f6d",
+    green: "#81b29a",
+    yellow: "#dbc074",
+    blue: "#719cd6",
+    cyan: "#63cdcf",
+    magenta: "#9d79d6",
+    orange: "#f4a261",
+    selection: "#2b3b51",
+  },
+  {
+    name: "dayfox",
+    appearance: "light",
+    bg: "#f6f2ee",
+    panel: "#e4dcd4",
+    element: "#dbd1dd",
+    overlay: "#d3c7bb",
+    border: "#aab0ad",
+    borderActive: "#2848a9",
+    text: "#3d2b5a",
+    muted: "#643f61",
+    subtle: "#837a72",
+    primary: "#2848a9",
+    secondary: "#6e33ce",
+    accent: "#287980",
+    red: "#a5222f",
+    green: "#396847",
+    yellow: "#ac5402",
+    blue: "#2848a9",
+    cyan: "#287980",
+    magenta: "#6e33ce",
+    orange: "#955f61",
+    selection: "#e7d2be",
+  },
+  // Material — https://github.com/marko-cerovac/material.nvim (lua/material/colors/init.lua)
+  {
+    name: "material-palenight",
+    appearance: "dark",
+    bg: "#292d3e",
+    panel: "#1b1e2b",
+    element: "#202331",
+    overlay: "#444267",
+    border: "#3a3f58",
+    borderActive: "#c792ea",
+    text: "#b4b9d5", // upstream #a6accd, raised to 7:1 contrast
+    muted: "#8b94c2", // upstream #717cb4, raised to 4.5:1 contrast
+    subtle: "#70779b", // upstream #676e95, raised to 3:1 contrast
+    primary: "#82aaff",
+    secondary: "#c792ea",
+    accent: "#89ddff",
+    red: "#f07178",
+    green: "#c3e88d",
+    yellow: "#ffcb6b",
+    blue: "#82aaff",
+    cyan: "#89ddff",
+    magenta: "#c792ea",
+    orange: "#f78c6c",
+    selection: "#444267",
+  },
+  {
+    name: "material-ocean",
+    appearance: "dark",
+    bg: "#0f111a",
+    panel: "#090b10",
+    element: "#1a1c25",
+    overlay: "#1f2233",
+    border: "#232637",
+    borderActive: "#84ffff",
+    text: "#a6accd",
+    muted: "#717cb4",
+    subtle: "#5c6170", // upstream #464b5d, raised to 3:1 contrast
+    primary: "#82aaff",
+    secondary: "#c792ea",
+    accent: "#84ffff",
+    red: "#f07178",
+    green: "#c3e88d",
+    yellow: "#ffcb6b",
+    blue: "#82aaff",
+    cyan: "#89ddff",
+    magenta: "#c792ea",
+    orange: "#f78c6c",
+    selection: "#1f2233",
+  },
+  // Oxocarbon — https://github.com/nyoom-engineering/oxocarbon.nvim (IBM Carbon grays)
+  {
+    name: "oxocarbon",
+    appearance: "dark",
+    bg: "#161616",
+    panel: "#131313",
+    element: "#262626",
+    overlay: "#393939",
+    border: "#393939",
+    borderSubtle: "#262626",
+    borderActive: "#78a9ff",
+    text: "#dde1e6",
+    muted: "#7f7f7f", // upstream #525252, raised to 4.5:1 contrast
+    subtle: "#636363", // upstream #525252, raised to 3:1 contrast
+    primary: "#78a9ff",
+    secondary: "#be95ff",
+    accent: "#3ddbd9",
+    red: "#ee5396",
+    green: "#42be65",
+    yellow: "#ff7eb6",
+    blue: "#33b1ff",
+    cyan: "#3ddbd9",
+    magenta: "#be95ff",
+    orange: "#08bdba",
+  },
+  // Everforest light (medium) — https://github.com/sainnhe/everforest (autoload/everforest.vim)
+  {
+    name: "everforest-light",
+    appearance: "light",
+    bg: "#fdf6e3",
+    panel: "#f4f0d9",
+    element: "#efebd4",
+    overlay: "#e6e2cc",
+    border: "#bdc3af",
+    borderSubtle: "#e0dcc7",
+    borderActive: "#8da101",
+    text: "#4a555b", // upstream #5c6a72, raised to 7:1 contrast
+    muted: "#687467", // upstream #829181, raised to 4.5:1 contrast
+    subtle: "#889083", // upstream #a6b0a0, raised to 3:1 contrast
+    primary: "#8da101",
+    secondary: "#3a94c5",
+    accent: "#35a77c",
+    red: "#f85552",
+    green: "#8da101",
+    yellow: "#dfa000",
+    blue: "#3a94c5",
+    cyan: "#35a77c",
+    magenta: "#df69ba",
+    orange: "#f57d26",
+    diffAddBg: "#f0f1d2",
+    diffDelBg: "#fde3da",
+    selection: "#eaedc8",
+  },
+  // Cyberdream — https://github.com/scottmckendry/cyberdream.nvim (lua/cyberdream/colors.lua)
+  {
+    name: "cyberdream",
+    appearance: "dark",
+    bg: "#16181a",
+    panel: "#1e2124",
+    element: "#1e2124",
+    overlay: "#3c4048",
+    border: "#3c4048",
+    borderActive: "#5ef1ff",
+    text: "#ffffff",
+    muted: "#7b8496",
+    primary: "#5ea1ff",
+    secondary: "#bd5eff",
+    accent: "#5ef1ff",
+    red: "#ff6e5e",
+    green: "#5eff6c",
+    yellow: "#f1ff5e",
+    blue: "#5ea1ff",
+    cyan: "#5ef1ff",
+    magenta: "#ff5ef1",
+    orange: "#ffbd5e",
+  },
+  {
+    name: "cyberdream-light",
+    appearance: "light",
+    bg: "#ffffff",
+    panel: "#eaeaea",
+    element: "#eaeaea",
+    overlay: "#eaeaea",
+    border: "#acacac",
+    borderActive: "#008c99",
+    text: "#16181a",
+    muted: "#6f7787", // upstream #7b8496, raised to 4.5:1 contrast
+    primary: "#0057d1",
+    secondary: "#a018ff",
+    accent: "#008c99",
+    red: "#d11500",
+    green: "#008b0c",
+    yellow: "#997b00",
+    blue: "#0057d1",
+    cyan: "#008c99",
+    magenta: "#d100bf",
+    orange: "#d17c00",
+  },
+  // Flexoki — https://stephango.com/flexoki (https://github.com/kepano/flexoki)
+  {
+    name: "flexoki-dark",
+    appearance: "dark",
+    bg: "#100f0f",
+    panel: "#1c1b1a",
+    element: "#282726",
+    overlay: "#343331",
+    border: "#403e3c",
+    borderSubtle: "#282726",
+    borderActive: "#878580",
+    text: "#cecdc3",
+    muted: "#878580",
+    subtle: "#61605d", // upstream #575653, raised to 3:1 contrast
+    primary: "#da702c",
+    secondary: "#8b7ec8",
+    accent: "#3aa99f",
+    red: "#d14d41",
+    green: "#879a39",
+    yellow: "#d0a215",
+    blue: "#4385be",
+    cyan: "#3aa99f",
+    magenta: "#ce5d97",
+    orange: "#da702c",
+  },
+  {
+    name: "flexoki-light",
+    appearance: "light",
+    bg: "#fffcf0",
+    panel: "#f2f0e5",
+    element: "#e6e4d9",
+    overlay: "#dad8ce",
+    border: "#cecdc3",
+    borderSubtle: "#e6e4d9",
+    borderActive: "#6f6e69",
+    text: "#100f0f",
+    muted: "#6f6e69",
+    subtle: "#92918a", // upstream #b7b5ac, raised to 3:1 contrast
+    primary: "#bc5215",
+    secondary: "#5e409d",
+    accent: "#24837b",
+    red: "#af3029",
+    green: "#66800b",
+    yellow: "#ad8301",
+    blue: "#205ea6",
+    cyan: "#24837b",
+    magenta: "#a02f6f",
+    orange: "#bc5215",
   },
   // Color-blind safe (Okabe–Ito): blue = good/added, orange/vermillion = bad/removed — never red vs green
   {
@@ -868,6 +1361,19 @@ export const COUNTERPARTS: Record<string, string> = {
   "solarized-light": "solarized-dark",
   "github-dark": "github-light",
   "github-light": "github-dark",
+  "ayu-dark": "ayu-light",
+  "ayu-mirage": "ayu-light",
+  "ayu-light": "ayu-dark",
+  "night-owl": "light-owl",
+  "light-owl": "night-owl",
+  nightfox: "dayfox",
+  dayfox: "nightfox",
+  everforest: "everforest-light",
+  "everforest-light": "everforest",
+  cyberdream: "cyberdream-light",
+  "cyberdream-light": "cyberdream",
+  "flexoki-dark": "flexoki-light",
+  "flexoki-light": "flexoki-dark",
   colorblind: "colorblind-light",
   "colorblind-light": "colorblind",
 }

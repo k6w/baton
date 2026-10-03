@@ -4,7 +4,7 @@ import type { WorkspaceView } from "@batonsh/kernel"
 import { parseUnifiedDiff } from "@batonsh/protocol"
 import type { InputRenderable, ScrollBoxRenderable } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
-import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js"
+import { createEffect, createMemo, createResource, createSignal, Show } from "solid-js"
 import { agentLook, whoFn } from "../agent-style.ts"
 import { useUi } from "../context.ts"
 import { keyString } from "../keymap.ts"
@@ -322,41 +322,124 @@ const STATE_ICON: Record<string, string> = {
   rejected: "⊘",
 }
 
+type PlanField = "title" | "details" | "acceptance" | "deps" | "new"
+
+/**
+ * The task plan as an editable table: reorder (J/K), retitle (e), details (d), acceptance check
+ * (c), dependencies (p), preferred agent (g), add (n), remove (x). While a plan is proposed, every
+ * edit is summarised and sent to the orchestrator with your approval.
+ */
 export function TasksOverlay(props: { onClose: () => void; onPrefill: (text: string) => void }) {
   const ui = useUi()
+  const dims = useTerminalDimensions()
   const [sel, setSel] = createSignal(0)
   const tasks = createMemo(() => {
     ui.version()
-    return [...ui.run.tasks.values()]
+    return ui.run.orderedTasks().map((t) => ({ ...t }))
   })
-  // edits made here travel with the approval, so the orchestrator follows the edited plan
   const [edits, setEdits] = createSignal<string[]>([])
-  const [renaming, setRenaming] = createSignal(false)
-  let renameRef: InputRenderable | undefined
+  const [field, setField] = createSignal<PlanField | null>(null)
+  let inputRef: InputRenderable | undefined
   const proposed = () => ui.run.plan?.status === "proposed"
+  const [agents] = createResource(async () =>
+    ui.client
+      ? (await ui.client.call("agents.detect", {}).catch(() => ({ adapters: [] }))).adapters
+          .filter((a) => a.installed && a.id !== "acp" && a.id !== "exec")
+          .map((a) => a.id)
+      : [],
+  )
+  const agentChoices = () => ["", ...Object.keys(ui.config.agents), ...(agents() ?? [])]
+  const note = (text: string) => setEdits((e) => [...e, text])
+  const cur = () => tasks()[Math.min(sel(), tasks().length - 1)]
+  const open = (f: PlanField) => setTimeout(() => setField(f), 0)
+
   useKeyboard((k) => {
-    if (renaming()) {
-      if (k.name === "escape") setRenaming(false)
+    if (field()) {
+      if (k.name === "escape") setField(null)
       return
     }
     const n = tasks().length
     const ks = keyString(k)
-    const cur = tasks()[sel()]
-    if (k.name === "escape" || ks === "q") props.onClose()
-    else if (k.name === "down" || ks === "j") setSel((s) => (n ? (s + 1) % n : 0))
+    const t = cur()
+    if (k.name === "escape" || ks === "q") {
+      // edits to a plan that's already running go straight to the lead
+      if (edits().length && !proposed() && ui.run.orchestratorId)
+        void act(
+          ui,
+          ui.client?.send("orchestrator", `The user edited the task plan: ${edits().join("; ")}. Adjust the work accordingly.`),
+          () => "plan changes sent to the lead",
+        )
+      props.onClose()
+    } else if (k.name === "down" || ks === "j") setSel((s) => (n ? (s + 1) % n : 0))
     else if (k.name === "up" || ks === "k") setSel((s) => (n ? (s - 1 + n) % n : 0))
-    else if (ks === "a" && proposed()) {
-      const notes = edits().length ? `The user edited the plan: ${edits().join("; ")}. Follow the edited plan.` : undefined
+    else if ((ks === "shift+j" || ks === "shift+k") && t) {
+      const dir = ks === "shift+j" ? "down" : "up"
+      const i = tasks().findIndex((x) => x.taskId === t.taskId)
+      if ((dir === "up" && i === 0) || (dir === "down" && i === n - 1)) return
+      void act(ui, ui.client?.call("task.edit", { taskId: t.taskId, move: dir }), () => undefined)
+      setSel(i + (dir === "down" ? 1 : -1))
+      note(`moved ${t.taskId} ${dir}`)
+    } else if (ks === "a" && proposed()) {
+      const order = tasks()
+        .filter((x) => x.state !== "canceled")
+        .map((x) => x.taskId)
+        .join(", ")
+      const notes = edits().length ? `The user edited the plan: ${edits().join("; ")}. Task order is now: ${order}. Follow the edited plan.` : undefined
       void act(ui, ui.client?.call("plan.decide", { approved: true, notes }), () => "plan approved")
       setEdits([])
     } else if (ks === "r" && proposed()) {
       props.onClose()
       props.onPrefill("/plan reject ")
-    } else if (ks === "x" && cur && cur.state !== "canceled" && cur.state !== "completed") {
-      void act(ui, ui.client?.call("task.edit", { taskId: cur.taskId, cancel: true }), () => `removed ${cur.taskId}`)
-      setEdits((e) => [...e, `removed task ${cur.taskId} ("${cur.title}")`])
-    } else if (ks === "e" && cur) setTimeout(() => setRenaming(true), 0)
+    } else if (ks === "x" && t && t.state !== "canceled" && t.state !== "completed") {
+      void act(ui, ui.client?.call("task.edit", { taskId: t.taskId, cancel: true }), () => `removed ${t.taskId}`)
+      note(`removed task ${t.taskId} ("${t.title}")`)
+    } else if (ks === "g" && t) {
+      const choices = agentChoices()
+      const next = choices[(choices.indexOf(t.agent ?? "") + 1) % choices.length] ?? ""
+      void act(ui, ui.client?.call("task.edit", { taskId: t.taskId, agent: next }), () => undefined)
+      note(next ? `task ${t.taskId} should be done by ${next}` : `task ${t.taskId}: any agent`)
+    } else if (ks === "e" && t) open("title")
+    else if (ks === "d" && t) open("details")
+    else if (ks === "c" && t) open("acceptance")
+    else if (ks === "p" && t) open("deps")
+    else if (ks === "n") open("new")
   })
+
+  const commit = (raw: string) => {
+    const f = field()
+    const t = cur()
+    setField(null)
+    const v = raw.trim()
+    if (f === "new") {
+      if (!v) return
+      void act(ui, ui.client?.call("task.add", { title: v }), (r) => {
+        note(`added task ${r.taskId} ("${v}")`)
+        return `added ${r.taskId}`
+      })
+      return
+    }
+    if (!t) return
+    if (f === "title" && v && v !== t.title) {
+      void act(ui, ui.client?.call("task.edit", { taskId: t.taskId, title: v }), () => undefined)
+      note(`task ${t.taskId} is now "${v}"`)
+    } else if (f === "details" && v !== (t.note ?? "")) {
+      void act(ui, ui.client?.call("task.edit", { taskId: t.taskId, description: v }), () => undefined)
+      note(`task ${t.taskId} details: ${v}`)
+    } else if (f === "acceptance" && v !== (t.acceptance ?? "")) {
+      void act(ui, ui.client?.call("task.edit", { taskId: t.taskId, acceptance: v }), () => undefined)
+      note(`task ${t.taskId} is done when: ${v || "(no check)"}`)
+    } else if (f === "deps") {
+      const deps = v
+        .split(/[,\s]+/)
+        .filter(Boolean)
+        .filter((d) => d !== t.taskId)
+      const unknown = deps.filter((d) => !ui.run.tasks.has(d))
+      if (unknown.length) return ui.toast(`no task ${unknown.join(", ")}`, "error")
+      void act(ui, ui.client?.call("task.edit", { taskId: t.taskId, deps }), () => undefined)
+      note(deps.length ? `task ${t.taskId} waits for ${deps.join(", ")}` : `task ${t.taskId} has no prerequisites`)
+    }
+  }
+
   const color = (state: string) => {
     const t = ui.theme()
     return state === "completed"
@@ -367,77 +450,156 @@ export function TasksOverlay(props: { onClose: () => void; onPrefill: (text: str
           ? t.stateBusy
           : state === "input_required"
             ? t.warning
-            : t.textMuted
+            : state === "canceled"
+              ? t.textSubtle
+              : t.textMuted
   }
-  const header = (): Seg[] => {
+  const W = () => Math.min(110, dims().width - 4)
+  const H = () => Math.min(30, dims().height - 2)
+  const listH = () => Math.max(3, H() - 13)
+
+  const header = (): Line => {
     const t = ui.theme()
-    const all = tasks()
+    const all = tasks().filter((x) => x.state !== "canceled")
     const done = all.filter((x) => x.state === "completed").length
     const plan = ui.run.plan
-    return [
-      { text: `${done}/${all.length} done`, fg: t.text, bold: true },
-      ...(plan ? [{ text: `  ·  plan ${plan.status}`, fg: plan.status === "proposed" ? t.warning : plan.status === "approved" ? t.success : t.error }] : []),
-      ...(plan?.status === "proposed" ? [{ text: "  a approve · r reject · e rename · x remove", fg: t.textMuted }] : []),
-    ]
+    return {
+      segs: [
+        ...(plan
+          ? [{ text: `◆ plan ${plan.status}`, fg: plan.status === "proposed" ? t.warning : plan.status === "approved" ? t.success : t.error, bold: true }]
+          : []),
+        { text: `${plan ? "  ·  " : ""}${done}/${all.length} done`, fg: t.text },
+        ...(proposed() ? [{ text: "    a approve · r reject", fg: t.textMuted }] : []),
+      ],
+    }
   }
+
+  const rows = createMemo<Line[]>(() => {
+    const t = ui.theme()
+    const w = W() - 4
+    const titleW = Math.max(16, w - 46)
+    const out: Line[] = [
+      {
+        segs: [
+          { text: "  #  ", fg: t.textSubtle },
+          { text: "   id      ", fg: t.textSubtle },
+          { text: "task".padEnd(titleW), fg: t.textSubtle },
+          { text: " agent       after       owner", fg: t.textSubtle },
+        ],
+      },
+    ]
+    const list = tasks()
+    const s = Math.min(sel(), list.length - 1)
+    const start = Math.max(0, Math.min(s - Math.floor(listH() / 2), list.length - listH()))
+    for (const [i, x] of list.slice(start, start + listH()).entries()) {
+      const on = start + i === s
+      const bg = on ? t.selection : undefined
+      const owner = x.owner ? whoFn(ui)(x.owner) : undefined
+      const gone = x.state === "canceled"
+      const look = x.agent ? agentLook(ui, { adapter: x.agent, name: x.agent }) : undefined
+      out.push({
+        bg,
+        segs: [
+          { text: on ? "› " : "  ", fg: t.primary, bg },
+          { text: String(start + i + 1).padStart(2), fg: t.textSubtle, bg },
+          { text: ` ${STATE_ICON[x.state] ?? "·"} `, fg: color(x.state), bg },
+          { text: x.taskId.padEnd(8), fg: t.textMuted, bg },
+          { text: clip(x.title, titleW - 1).padEnd(titleW), fg: gone ? t.textSubtle : t.text, bold: on && !gone, bg },
+          { text: " " },
+          { text: clip(x.agent ? `${look?.glyph ?? ""} ${x.agent}` : "any", 11).padEnd(12), fg: x.agent ? (look?.color ?? t.accent) : t.textSubtle, bg },
+          { text: clip(x.deps.length ? x.deps.join(",") : "—", 11).padEnd(12), fg: t.textMuted, bg },
+          { text: clip(owner?.name ?? (gone ? "removed" : ""), 12), fg: owner?.color ?? t.textSubtle, bg },
+        ],
+      })
+    }
+    return out
+  })
+
+  const detail = createMemo<Line[]>(() => {
+    const t = ui.theme()
+    const x = cur()
+    if (!x) return []
+    const w = W() - 4
+    const out: Line[] = [{ segs: [{ text: `${x.taskId} · ${x.title}`, fg: t.text, bold: true }] }]
+    if (x.note) out.push({ segs: [{ text: clip(x.note.replace(/\s+/g, " "), w), fg: t.textMuted }] })
+    if (x.acceptance)
+      out.push({
+        segs: [
+          { text: "done when: ", fg: t.textSubtle },
+          { text: clip(x.acceptance, w - 11), fg: t.success },
+        ],
+      })
+    if (x.files?.length)
+      out.push({
+        segs: [
+          { text: "files: ", fg: t.textSubtle },
+          { text: clip(x.files.join(", "), w - 7), fg: t.textMuted },
+        ],
+      })
+    return out
+  })
+
+  const keys = (): Line => {
+    const t = ui.theme()
+    const k = (key: string, what: string): Seg[] => [
+      { text: ` ${key} `, fg: t.text, bg: t.backgroundElement === "transparent" ? undefined : t.backgroundElement, bold: true },
+      { text: ` ${what}  `, fg: t.textMuted },
+    ]
+    return {
+      segs: [
+        ...k("e", "title"),
+        ...k("d", "details"),
+        ...k("c", "done when"),
+        ...k("g", "agent"),
+        ...k("p", "after"),
+        ...k("J/K", "move"),
+        ...k("n", "new"),
+        ...k("x", "remove"),
+      ],
+    }
+  }
+
+  const label: Record<PlanField, string> = { title: "title", details: "details", acceptance: "done when", deps: "after (task ids)", new: "new task" }
+  const initial = (f: PlanField) => {
+    const x = cur()
+    if (!x || f === "new") return ""
+    return f === "title" ? x.title : f === "details" ? (x.note ?? "") : f === "acceptance" ? (x.acceptance ?? "") : x.deps.join(", ")
+  }
+
   return (
-    <Modal title="Task plan" width={96} height={24} hint="↑↓ select · e rename · x remove · a approve · esc">
-      <Txt wrapMode="none" value={segs(...header())} />
-      <Txt wrapMode="none" value={segs({ text: "─".repeat(92), fg: ui.theme().borderSubtle })} />
+    <Modal title="Task plan" width={W()} height={H()} hint="↑↓ select · edit with the keys below · esc close">
+      <Txt wrapMode="none" value={toStyled([header()], W() - 4)} />
+      <Txt wrapMode="none" value={segs({ text: "─".repeat(W() - 4), fg: ui.theme().borderSubtle })} />
       <Show
         when={tasks().length > 0}
-        fallback={<Txt value={segs({ text: "No plan yet — the orchestrator records one with plan_tasks.", fg: ui.theme().textMuted })} />}
+        fallback={
+          <Txt value={segs({ text: "No plan yet — the orchestrator records one with plan_tasks. Press n to start one yourself.", fg: ui.theme().textMuted })} />
+        }
       >
-        <ListView
-          items={tasks().map((t) => {
-            const owner = t.owner ? whoFn(ui)(t.owner) : undefined
-            return {
-              label: [
-                { text: `${STATE_ICON[t.state] ?? "·"} `, fg: color(t.state) },
-                { text: t.taskId.padEnd(8), fg: ui.theme().textMuted },
-                { text: clip(t.title, 46), fg: ui.theme().text },
-              ],
-              detail: t.deps.length ? `← ${t.deps.join(", ")}` : undefined,
-              right: owner ? owner.name : t.state,
-            }
-          })}
-          selected={sel()}
-          width={92}
-          height={Math.min(14, tasks().length)}
-        />
-        <For each={[tasks()[sel()]?.note].filter(Boolean) as string[]}>
-          {(n) => <Txt wrapMode="word" value={segs({ text: n, fg: ui.theme().textMuted })} />}
-        </For>
-        <Show when={renaming()}>
-          <box height={1} flexDirection="row">
-            <Txt value={segs({ text: `rename ${tasks()[sel()]?.taskId}: `, fg: ui.theme().accent })} />
-            <input
-              ref={(r: InputRenderable) => {
-                renameRef = r
-                r.value = tasks()[sel()]?.title ?? ""
-              }}
-              flexGrow={1}
-              focused
-              backgroundColor="transparent"
-              focusedBackgroundColor="transparent"
-              textColor={ui.theme().text}
-              focusedTextColor={ui.theme().text}
-              onSubmit={
-                ((v: unknown) => {
-                  const title = (typeof v === "string" ? v : (renameRef?.value ?? "")).trim()
-                  const cur = tasks()[sel()]
-                  setRenaming(false)
-                  if (!title || !cur || title === cur.title) return
-                  void act(ui, ui.client?.call("task.edit", { taskId: cur.taskId, title }), () => `renamed ${cur.taskId}`)
-                  setEdits((e) => [...e, `task ${cur.taskId} is now "${title}"`])
-                }) as never
-              }
-            />
-          </box>
-        </Show>
-        <Show when={edits().length > 0}>
-          <Txt value={segs({ text: `${edits().length} edit${edits().length === 1 ? "" : "s"} will be sent with your approval`, fg: ui.theme().warning })} />
-        </Show>
+        <Txt wrapMode="none" height={listH() + 1} value={toStyled(rows(), W() - 4, listH() + 1)} />
+        <Txt wrapMode="none" value={segs({ text: "─".repeat(W() - 4), fg: ui.theme().borderSubtle })} />
+        <Txt wrapMode="none" height={4} value={toStyled(detail(), W() - 4, 4)} />
+      </Show>
+      <Show when={field()} fallback={<Txt wrapMode="none" value={toStyled([keys()], W() - 4)} />}>
+        <box height={1} flexDirection="row">
+          <Txt value={segs({ text: `${label[field()!]}: `, fg: ui.theme().accent, bold: true })} />
+          <input
+            ref={(r: InputRenderable) => {
+              inputRef = r
+              r.value = initial(field()!)
+            }}
+            flexGrow={1}
+            focused
+            backgroundColor="transparent"
+            focusedBackgroundColor="transparent"
+            textColor={ui.theme().text}
+            focusedTextColor={ui.theme().text}
+            onSubmit={((v: unknown) => commit(typeof v === "string" ? v : (inputRef?.value ?? ""))) as never}
+          />
+        </box>
+      </Show>
+      <Show when={edits().length > 0 && proposed()}>
+        <Txt value={segs({ text: `${edits().length} edit${edits().length === 1 ? "" : "s"} will be sent with your approval`, fg: ui.theme().warning })} />
       </Show>
     </Modal>
   )

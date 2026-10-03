@@ -58,3 +58,14 @@ export function projectPaths(root: string) {
     worktrees: join(dir, "worktrees"),
   }
 }
+
+/** Who is at the keyboard: $BATON_USER, else git's user.name, else the OS user. */
+export function defaultUser(): string {
+  if (process.env.BATON_USER) return process.env.BATON_USER
+  try {
+    const r = Bun.spawnSync(["git", "config", "--get", "user.name"], { stdout: "pipe", stderr: "ignore" })
+    const name = r.stdout.toString().trim()
+    if (r.exitCode === 0 && name) return name
+  } catch {}
+  return process.env.USER || process.env.USERNAME || "someone"
+}

@@ -50,6 +50,8 @@ Those are held back until you run `baton trust` in the project:
 | `agents.<name>.command` / `args` / `env` / `options.command` … | chooses what binary runs |
 | `workspace.setup`, `workspace.verify`, `workspace.dir` | shell commands, file locations |
 | `notify.command`, `notify.webhook`, `telemetry.otlp_endpoint` / `headers` | runs commands / sends run data elsewhere |
+| `remote.lan` / `autostart` / `public_url`, `a2a.host` / `autostart` / `public_url` / `token = false` | expose the run on the network |
+| `github.api_url`, `github.token` | a repo-chosen endpoint would receive your GitHub token |
 | `providers.<name>.base_url` / `api_key` / `headers` | `cmd:` secrets run commands; a repo endpoint could receive your key |
 | `approval = "auto"` / `"yolo"`, `policy.preset = "yolo"`, `policy.autonomy = "auto"` / `"yolo"`, `[[policy.rules]]` with `action = "allow"` | widen permissions |
 
@@ -146,10 +148,31 @@ loop_repeats = 4                  # flag the same tool call 4× in a row (0 = of
 desktop = true                    # via the terminal (OSC 9/777); only when Baton isn't focused…
 when_focused = false              # …unless this is on
 bell = false
+sound = "off"                     # off | system (a different system sound per kind; plays even while focused)
+# sounds = { approval = "~/sounds/ding.wav" }   # your own files per kind
 events = ["approval", "done", "error"]   # + "merge"
 # webhook = "https://ntfy.sh/my-baton"     # reach you when no TUI is attached (phone push via ntfy)
 # webhook_format = "ntfy"                 # json | ntfy | slack
 # command = "say \"$BATON_TITLE\""         # any command; JSON on stdin
+
+[remote]                          # the phone / web view (docs/remote.md)
+autostart = false
+lan = false                       # reachable from other devices on your network
+port = 0                          # fixed port keeps bookmarks working
+# public_url = "https://my-mac.tailnet.ts.net:4777"   # for one-tap approve buttons in notifications
+
+[a2a]                             # serve the team as an A2A agent (docs/a2a.md)
+autostart = false
+host = "127.0.0.1"
+port = 0
+token = true                      # require the bearer token printed by `baton a2a`
+idle_ms = 2000                    # quiet time before a task counts as done
+
+[github]                          # /issue and /pr (docs/integrations.md)
+api_url = "https://api.github.com"   # GitHub Enterprise: https://ghe.example.com/api/v3
+# token = "env:GITHUB_TOKEN"      # default: $GITHUB_TOKEN, $GH_TOKEN or `gh auth token`
+remote = "origin"
+draft = true
 
 [telemetry]
 # otlp_endpoint = "http://localhost:4318"   # OpenTelemetry traces: invoke_agent / execute_tool spans (no content)

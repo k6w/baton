@@ -17,6 +17,9 @@ in a miniature, Enter keeps it, Escape puts back exactly what you had.
 | `neon` | heavy boxes glowing in each agent's color, tabbed titles | chips | theme |
 | `retro` | double-line boxes, compact | plain bar | theme |
 | `zen` | title rules, compact cards | plain text | terminal |
+| `paper` | thin single-line boxes, compact cards | plain text | theme |
+| `glass` | filled title bars, cards tinted in each agent's color | chips | terminal |
+| `brutalist` | heavy boxes with tabbed titles, `line` spinner, compact | plain bar | theme |
 
 A style is a preset over these settings, each of which can be changed on its own (the style then shows as
 `custom`):
@@ -44,16 +47,31 @@ them all with colour swatches.
 - Tokyo Night: night, storm, day
 - Rosé Pine: main, moon, dawn
 - Gruvbox: dark and light
-- Nord, Dracula, Everforest
+- Nord, Dracula
+- Everforest: dark and light
+- Ayu: dark, mirage, light
+- Monokai Pro
+- Night Owl and Light Owl
+- SynthWave '84 (`synthwave-84`)
+- Poimandres, Vesper, Oxocarbon
+- Nightfox and Dayfox
+- Material: Palenight and Ocean (`material-palenight`, `material-ocean`)
+- Cyberdream: dark and light
+- Flexoki: dark and light
 - Kanagawa: wave, dragon, lotus
 - One Dark / One Light
 - Solarized: dark and light
 - GitHub: dark and light
+- `colorblind` and `colorblind-light` (Okabe–Ito: blue for added/success, vermillion for removed/error)
 - `high-contrast` and `mono`
 - `system`: built from your terminal's own palette (read via OSC 4/10/11)
 
 With `appearance = "auto"`, Baton asks the terminal whether its background is dark or light and switches to the
-theme's counterpart if needed (for example mocha → latte).
+theme's counterpart if needed (for example mocha → latte, ayu-mirage → ayu-light, nightfox → dayfox).
+
+Every built-in theme meets WCAG contrast against its background: at least 7:1 for text, 4.5:1 for muted text
+and diff lines, and 3:1 for subtle text. Where an upstream palette falls short, only the affected text tone is
+lifted just enough to pass (marked in `packages/themes/src/builtin.ts`); everything else is the upstream value.
 
 ## Theme files
 

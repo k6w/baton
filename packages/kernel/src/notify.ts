@@ -42,8 +42,16 @@ export function noticeFor(e: BatonEvent, run: RunState): Notice | undefined {
   }
 }
 
-export function shouldNotify(n: Notice, cfg: BatonConfig["notify"], focused: boolean): { desktop: boolean; bell: boolean } {
-  if (!cfg.events.includes(n.kind)) return { desktop: false, bell: false }
-  if (focused && !cfg.when_focused) return { desktop: false, bell: false }
-  return { desktop: cfg.desktop, bell: cfg.bell }
+/**
+ * How to tell the user. `focusMode` (do-not-disturb) holds everything except approvals and errors —
+ * the two things that block work.
+ */
+export function shouldNotify(n: Notice, cfg: BatonConfig["notify"], focused: boolean, focusMode = false): { desktop: boolean; bell: boolean; sound: boolean } {
+  const none = { desktop: false, bell: false, sound: false }
+  if (!cfg.events.includes(n.kind)) return none
+  if (focusMode && n.kind !== "approval" && n.kind !== "error") return none
+  // sounds also play while you're looking at Baton: that's when you'd hear them
+  const sound = cfg.sound !== "off" || !!cfg.sounds[n.kind]
+  if (focused && !cfg.when_focused) return { desktop: false, bell: false, sound }
+  return { desktop: cfg.desktop, bell: cfg.bell, sound }
 }

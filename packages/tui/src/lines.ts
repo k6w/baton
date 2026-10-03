@@ -41,6 +41,8 @@ export interface RenderCtx {
   /** Resolve agent ids / names to display names + colors (for bus lines). */
   who: (idOrName: string) => { name: string; color: string }
   compact?: boolean
+  /** Your own name: messages typed by someone else in a shared run show who wrote them. */
+  me?: string
 }
 
 export const width = (s: string): number => Bun.stringWidth(s)
@@ -262,11 +264,13 @@ export function renderItem(it: FeedItem, ctx: RenderCtx, out: Line[]): void {
         return
       }
       const prefix = claude ? "> " : "› "
-      const lines = wrap(it.text.replace(/^\[baton\]\s*/, ""), w - 2)
+      const author = it.from && it.from !== ctx.me ? `${it.from}: ` : ""
+      const lines = wrap(it.text.replace(/^\[baton\]\s*/, ""), w - 2 - width(author))
       lines.slice(0, ctx.compact ? 2 : 12).forEach((l, i) => {
         out.push({
           segs: [
             { text: i === 0 ? prefix : "  ", fg: t.textMuted },
+            ...(i === 0 && author ? [{ text: author, fg: t.accent, bold: true }] : author ? [{ text: " ".repeat(width(author)) }] : []),
             { text: l, fg: t.text, bold: true },
           ],
         })

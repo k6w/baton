@@ -2,7 +2,7 @@
  * Status bar, driven by format strings (`ui.status_left` / `ui.status_right`) and drawn in one
  * of four styles (`ui.status_style`): plain bar · blocks (chips) · powerline · minimal.
  * Variables: {trust} {autonomy} {attention} {dot} {running} {total} {noun} {calls} {msgs} {cost} {tokens} {added}
- *            {removed} {unmerged} {repo} {branch} {mode} {approvals} {spark} {theme} {layout} {style}
+ *            {removed} {unmerged} {repo} {branch} {mode} {approvals} {spark} {theme} {layout} {style} {viewers}
  */
 
 import { attentionItems, formatCost, formatCount, formatTokens, urgentCount } from "@batonsh/kernel"
@@ -206,6 +206,18 @@ export function StatusBar(props: { width: number }) {
       theme: { text: t.name, fg: t.statusText },
       layout: { text: ui.prefs.layout, fg: t.statusText },
       style: { text: ui.prefs.style, fg: t.statusText },
+      focus: (() => {
+        const until = ui.focusUntil()
+        if (until === undefined) return undefined
+        const mins = Math.max(1, Math.ceil((until - ui.now()) / 60_000))
+        return { text: `◐ focus ${mins}m`, fg: t.accent, bold: true, tone: t.accent }
+      })(),
+      // shared runs: who else is watching
+      viewers: (() => {
+        const others = [...new Set(run.viewers.map((v) => v.name))].filter((n) => n !== ui.me)
+        if (!others.length) return undefined
+        return { text: `◎ ${others.slice(0, 2).join(", ")}${others.length > 2 ? ` +${others.length - 2}` : ""}`, fg: t.info }
+      })(),
       unmerged: (() => {
         let files = 0
         let conflicts = 0

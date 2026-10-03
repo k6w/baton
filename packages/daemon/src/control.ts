@@ -14,11 +14,13 @@ import {
   newId,
 } from "@batonsh/protocol"
 import type { Socket } from "bun"
+import { ensureA2A, stopA2A } from "./a2a-server.ts"
 import { exportRun, listRunSummaries, resumeRun } from "./history.ts"
 import { handleInput } from "./input.ts"
 import { listRecipes } from "./recipes.ts"
 import { ensureRemote, qrLines, stopRemote } from "./remote.ts"
 import type { Runtime } from "./runtime.ts"
+import { getScorecards, pickForTask } from "./scores.ts"
 
 export const DAEMON_VERSION = "0.1.0"
 
@@ -30,6 +32,10 @@ interface Conn {
   unsubscribe: () => void
   pending: Uint8Array[]
   socket: Socket<Conn>
+  id: string
+  /** From hello: who is behind this connection. */
+  user?: string
+  client?: string
 }
 
 export interface ControlServer {
@@ -48,8 +54,21 @@ export function startControlServer(
   if (existsSync(socketPath)) unlinkSync(socketPath)
   const conns = new Set<Conn>()
 
+  const helloResult = () => ({
+    daemonVersion: DAEMON_VERSION,
+    protocol: CONTROL_PROTOCOL_VERSION,
+    runId: rt.runId,
+    projectRoot: rt.projectRoot,
+    pid: process.pid,
+  })
   const handlers: { [M in ControlMethod]: Handler<M> } = {
-    hello: () => ({ daemonVersion: DAEMON_VERSION, protocol: CONTROL_PROTOCOL_VERSION, runId: rt.runId, projectRoot: rt.projectRoot, pid: process.pid }),
+    hello: (p, conn) => {
+      conn.user = p.user?.trim() || undefined
+      conn.client = p.client
+      // humans (tui, web, cli) are viewers; agents' and scripts' connections aren't shown
+      if (conn.user && p.client !== "mcp") rt.joinViewer(conn.id, conn.user, p.client)
+      return helloResult()
+    },
     "state.snapshot": () => rt.state.snapshot(),
     "events.subscribe": (p, conn) => {
       const subscriptionId = newId("sub")
@@ -66,18 +85,20 @@ export function startControlServer(
       conn.subs.delete(p.subscriptionId)
       return { ok: true }
     },
-    "events.query": (p) => ({ events: rt.store.query({ runId: rt.runId, ...p }) }),
-    "input.submit": (p) => handleInput(rt, p.text),
+    "events.query": (p) => ({ events: rt.store.query({ ...p, runId: p.runId ?? rt.runId }) }),
+    "input.submit": (p, conn) => handleInput(rt, p.text, { who: conn.user }),
     "agent.spawn": (p) => rt.spawn(p),
     "agent.prompt": async (p) => {
       await rt.promptAgent(p.agentId, p.text, { from: p.from ?? "user", delivery: p.delivery })
       return { ok: true }
     },
     "agent.interrupt": async (p) => {
+      if (!rt.agents.has(p.agentId)) throw new Error(`no agent ${p.agentId}`)
       await rt.interrupt(p.agentId)
       return { ok: true }
     },
     "agent.kill": async (p) => {
+      if (!rt.agents.has(p.agentId)) throw new Error(`no agent ${p.agentId}`)
       await rt.kill(p.agentId)
       return { ok: true }
     },
@@ -87,8 +108,8 @@ export function startControlServer(
     },
     "agents.detect": async (p) => ({ adapters: await rt.registry.detectAll(p?.refresh) }),
     "bus.send": (p) => ({ messageId: rt.send({ from: p.from ?? "user", to: p.to, body: p.body, kind: p.kind, delivery: p.delivery }) }),
-    "permission.respond": async (p) => {
-      await rt.resolvePermission(p.agentId, p.requestId, p.optionId, "user")
+    "permission.respond": async (p, conn) => {
+      await rt.resolvePermission(p.agentId, p.requestId, p.optionId, "user", conn.user)
       return { ok: true }
     },
     "run.mode": (p) => {
@@ -101,6 +122,16 @@ export function startControlServer(
       const s = ensureRemote(rt, p ?? {})
       return { url: s.url, openUrl: s.openUrl, lanUrls: s.lanUrls, lan: s.lan, qr: qrLines(s.openUrl) }
     },
+    "scorecards.get": () => ({ rows: getScorecards(rt) }),
+    "a2a.start": (p) => {
+      const s = ensureA2A(rt, p ?? {})
+      return { url: s.url, port: s.port, token: s.token }
+    },
+    "a2a.stop": () => {
+      stopA2A(rt)
+      return { ok: true }
+    },
+    "agents.pick": (p) => pickForTask(rt, p.task, p.candidates),
     "remote.stop": () => {
       stopRemote(rt)
       return { ok: true }
@@ -116,9 +147,31 @@ export function startControlServer(
     "plan.decide": (p) => ({ ok: rt.collab.decidePlan(p.approved, p.notes) }),
     "task.edit": (p) => {
       if (!rt.state.tasks.has(p.taskId)) throw new Error(`no task ${p.taskId}`)
-      if (p.title) rt.emit({ type: "task.updated", data: { taskId: p.taskId, title: p.title } })
-      if (p.cancel) rt.emit({ type: "task.state", data: { taskId: p.taskId, state: "canceled", note: "removed by the user" } })
+      const { taskId, title, description, acceptance, deps, agent } = p
+      if (title || description || acceptance !== undefined || deps || agent !== undefined)
+        rt.emit({ type: "task.updated", data: { taskId, title, description, acceptance, deps, agent } })
+      if (p.move) {
+        // swap places with the neighbour, renumbering the whole plan so orders stay dense
+        const list = rt.state.orderedTasks()
+        const i = list.findIndex((t) => t.taskId === taskId)
+        const j = p.move === "up" ? i - 1 : i + 1
+        if (i >= 0 && j >= 0 && j < list.length) {
+          ;[list[i], list[j]] = [list[j]!, list[i]!]
+          list.forEach((t, k) => {
+            if (t.order !== k) rt.emit({ type: "task.updated", data: { taskId: t.taskId, order: k } })
+          })
+        }
+      }
+      if (p.cancel) rt.emit({ type: "task.state", data: { taskId, state: "canceled", note: "removed by the user" } })
       return { ok: true }
+    },
+    "task.add": (p) => {
+      let n = rt.state.tasks.size + 1
+      while (rt.state.tasks.has(`t${n}`)) n++
+      const taskId = `t${n}`
+      rt.emit({ type: "task.created", data: { taskId, title: p.title, description: p.description, deps: p.deps ?? [], acceptance: p.acceptance } })
+      if (p.agent) rt.emit({ type: "task.updated", data: { taskId, agent: p.agent } })
+      return { taskId }
     },
     "runs.list": (p) => ({ runs: listRunSummaries(rt, p?.limit ?? 30) }),
     "run.export": (p) => ({ text: exportRun(rt, p.runId, p.format) }),
@@ -158,6 +211,7 @@ export function startControlServer(
     socket: {
       open(socket) {
         const conn: Conn = {
+          id: newId("conn"),
           buf: "",
           decoder: new TextDecoder(),
           subs: new Map(),
@@ -214,6 +268,7 @@ export function startControlServer(
         conn.unsubscribe()
         conn.peer.close()
         conns.delete(conn)
+        rt.leaveViewer(conn.id)
         hooks.onClientsChanged?.(conns.size)
       },
       error(socket) {

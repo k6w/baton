@@ -202,6 +202,8 @@ export const EventSchemas = {
     optionId: z.string().nullable(),
     kind: PermissionOptionKind.nullable(),
     by: z.enum(["user", "policy", "timeout", "cancelled"]),
+    /** The person who answered (shared runs). */
+    who: z.string().optional(),
   }),
 
   // inter-agent bus
@@ -235,7 +237,17 @@ export const EventSchemas = {
     note: z.string().optional(),
   }),
 
-  "task.updated": z.object({ taskId: z.string(), title: z.string().optional(), description: z.string().optional() }),
+  "task.updated": z.object({
+    taskId: z.string(),
+    title: z.string().optional(),
+    description: z.string().optional(),
+    acceptance: z.string().optional(),
+    deps: z.array(z.string()).optional(),
+    /** Preferred agent (adapter or profile) chosen by the user for this task. */
+    agent: z.string().optional(),
+    /** Position in the plan (user reordering). */
+    order: z.number().optional(),
+  }),
   "task.plan": z.object({
     planId: z.string(),
     status: z.enum(["proposed", "approved", "rejected"]),
@@ -292,6 +304,10 @@ export const EventSchemas = {
   "orch.mode": z.object({ mode: z.string() }),
   /** Run-wide autonomy level (applies to every agent, including ones already running). */
   "run.autonomy": z.object({ mode: z.enum(["normal", "ask", "auto", "yolo"]) }),
+  /** Who is watching this run (TUIs, web views, scripts). */
+  "run.presence": z.object({ viewers: z.array(z.object({ name: z.string(), via: z.string() })) }),
+  /** A named person sent text to an agent (shared runs): attributes that agent's next turn. */
+  "user.input": z.object({ author: z.string(), agentId: z.string(), text: z.string() }),
   "orch.note": z.object({ text: z.string(), level: z.enum(["info", "warn", "error"]).default("info") }),
   error: z.object({ message: z.string(), detail: z.string().optional(), fatal: z.boolean().optional() }),
   log: z.object({ level: z.enum(["debug", "info", "warn", "error"]), message: z.string() }),

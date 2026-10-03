@@ -151,6 +151,24 @@ export const STYLES: UiStyle[] = [
     description: "Title rules only, terminal background, compact cards. For long sessions.",
     prefs: { frame: "minimal", border: "none", status_style: "minimal", background: "terminal", brand_borders: false, spinner: "pulse", density: "compact" },
   },
+  {
+    name: "paper",
+    title: "Paper",
+    description: "Thin single-line boxes, a text-only status line, compact cards. Light and printed-feeling.",
+    prefs: { frame: "line", border: "single", status_style: "minimal", background: "theme", brand_borders: false, spinner: "bounce", density: "compact" },
+  },
+  {
+    name: "glass",
+    title: "Glass",
+    description: "Floating title bars over your terminal's own background (and its blur), chips, brand-tinted cards.",
+    prefs: { frame: "bar", border: "rounded", status_style: "blocks", background: "terminal", brand_borders: true, spinner: "moon", density: "comfy" },
+  },
+  {
+    name: "brutalist",
+    title: "Brutalist",
+    description: "Heavy boxes, hard tabs, a flat bar and a plain ASCII spinner. No ornament.",
+    prefs: { frame: "tab", border: "heavy", status_style: "plain", background: "theme", brand_borders: false, spinner: "line", density: "compact" },
+  },
 ]
 
 /** The style whose prefs all match, or "custom". */

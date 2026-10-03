@@ -14,6 +14,8 @@ Run `baton agents` to see what's installed and logged in on your machine.
 | `aider`, `crush`, `agy` | prompt-taking CLIs | one process per turn in a pseudo-terminal; changes detected with a git snapshot and shown as diffs | queued | decided by the CLI |
 | `exec` | any CLI | `command` + `args` with `{prompt}` / `{model}` placeholders | queued | decided by the CLI |
 | `acp` | any ACP agent | `command` / `args` from config | queued | ✓ |
+| `baton` | Baton's own agent, on **any model provider** (Anthropic, OpenAI, OpenRouter, Ollama, LM Studio, any OpenAI-compatible) | in-process agent loop (AI SDK) with file, search, edit and shell tools + Baton's bus over MCP — see [native-agent.md](native-agent.md) | ✓ | ✓ |
+| `a2a` | any [A2A](https://a2a-protocol.org) agent | Agent2Agent JSON-RPC (v1.0 and v0.3), streaming or polling — see [a2a.md](a2a.md) | queued | decided by the remote agent |
 | `mock` | simulated | in-process | ✓ | ✓ |
 
 "Queued" means a message sent while the agent is busy is delivered as soon as its current turn ends, or
@@ -168,6 +170,7 @@ Adapter checklist (`packages/adapters/testkit` has `startHarness` and a shared `
 | `spawn_agent(adapter, task?, label?, model?, role?, count?)` | orchestrator (and workers if `budget.max_depth > 0`) | its results flow back to the spawner |
 | `wait_for_results(agents?, timeout_s?)` | orchestrator | blocks until the given workers report |
 | `plan_tasks(tasks)`, `update_task(id, state)` | orchestrator | the task plan (waits for approval when `plan_approval` is set) |
+| `pick_agent(task, candidates?)` | orchestrator | ranks installed agents by their track record in this project on that kind of task and by cost per success; suggests a model tier |
 | `get_diff(agent)`, `merge(agent)`, `sync(agent)`, `request_review(agent, reviewer?)` | orchestrator | review and land worker branches |
 | `claim_files(paths)`, `release_files()`, `my_changes()` | everyone | file claims and your own unmerged changes |
 | `submit_review(verdict, notes)` | reviewers | approve or request changes |

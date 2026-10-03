@@ -158,6 +158,7 @@ export function Orchestrator(props: OrchestratorProps) {
       maxDiffLines: 4,
       maxOutputLines: 2,
       who: whoFn(ui),
+      me: ui.me,
     })
     lines.push(...feed)
     if (!o && thread().length === 0) {
@@ -292,8 +293,14 @@ export function Orchestrator(props: OrchestratorProps) {
           inputRef = r
         }}
         flexGrow={1}
-        focused={props.focused && ui.overlay() === null && !ui.overlayClosing()}
-        placeholder={orch() ? "message the orchestrator · @agent · /command" : "what should we build? · @agent · /spawn codex 3"}
+        focused={props.focused && ui.overlay() === null && !ui.overlayClosing() && !ui.replay}
+        placeholder={
+          ui.replay
+            ? "replay — read only · space play/pause · esc back"
+            : orch()
+              ? "message the orchestrator · @agent · /command"
+              : "what should we build? · @agent · /spawn codex 3"
+        }
         backgroundColor="transparent"
         focusedBackgroundColor="transparent"
         textColor={ui.theme().text}

@@ -164,6 +164,7 @@ export function remoteView(rt: Runtime) {
     branch: s.branch,
     autonomy: s.autonomy,
     mode: s.mode,
+    viewers: [...new Set(s.viewers.map((v) => v.name))],
     totals: s.totals,
     attention: attentionItems(s).map((a) => {
       const p = a.requestId ? s.approvals.get(a.requestId) : undefined
@@ -207,11 +208,11 @@ export function startRemoteServer(rt: Runtime, opts: { lan?: boolean; port?: num
     const t = bearer ?? url.searchParams.get("t") ?? ""
     return t !== "" && same(t, token)
   }
-  const respond = async (agentId: string, requestId: string, decision: "allow" | "deny" | string) => {
+  const respond = async (agentId: string, requestId: string, decision: "allow" | "deny" | string, who?: string) => {
     const p = rt.state.approvals.get(requestId)
     if (!p || p.agentId !== agentId) return false
     const opt = decision === "allow" || decision === "deny" ? pickOption(p.options, decision) : p.options.find((o) => o.optionId === decision)
-    await rt.resolvePermission(agentId, requestId, opt?.optionId ?? null, "user")
+    await rt.resolvePermission(agentId, requestId, opt?.optionId ?? null, "user", who)
     return true
   }
   const server = Bun.serve({
@@ -247,19 +248,21 @@ export function startRemoteServer(rt: Runtime, opts: { lan?: boolean; port?: num
       }
       if (!path.startsWith("/api/")) return new Response("not found", { status: 404 })
       if (!authed(req, url)) return json({ error: "unauthorized" }, 401)
+      // the person on the other end, as they introduced themselves (shared runs)
+      const who = (req.headers.get("x-baton-user") ?? "").trim().slice(0, 40) || undefined
       try {
         if (req.method === "GET" && path === "/api/view") return json(remoteView(rt))
-        if (req.method === "GET" && path === "/api/stream") return stream(rt, req.signal)
+        if (req.method === "GET" && path === "/api/stream") return stream(rt, req.signal, who)
         if (req.method !== "POST") return json({ error: "method not allowed" }, 405)
         const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
         switch (path) {
           case "/api/submit": {
             const text = String(body.text ?? "").trim()
             if (!text) return json({ error: "empty" }, 400)
-            return json(await handleInput(rt, text))
+            return json(await handleInput(rt, text, { who }))
           }
           case "/api/respond":
-            return json({ ok: await respond(String(body.agentId), String(body.requestId), String(body.decision ?? body.optionId)) })
+            return json({ ok: await respond(String(body.agentId), String(body.requestId), String(body.decision ?? body.optionId), who) })
           case "/api/autonomy": {
             const mode = String(body.mode)
             if (!["normal", "ask", "auto", "yolo"].includes(mode)) return json({ error: "bad mode" }, 400)
@@ -293,7 +296,10 @@ export function startRemoteServer(rt: Runtime, opts: { lan?: boolean; port?: num
 }
 
 /** Newline-delimited JSON views, pushed when the run changes (at most ~4 per second). */
-function stream(rt: Runtime, signal: AbortSignal): Response {
+function stream(rt: Runtime, signal: AbortSignal, who?: string): Response {
+  const viewerId = `web_${Math.random().toString(36).slice(2)}`
+  if (who) rt.joinViewer(viewerId, who, "web")
+  signal.addEventListener("abort", () => rt.leaveViewer(viewerId), { once: true })
   const enc = new TextEncoder()
   let timer: ReturnType<typeof setTimeout> | undefined
   let off: (() => void) | undefined
@@ -326,6 +332,7 @@ function stream(rt: Runtime, signal: AbortSignal): Response {
       })
     },
     cancel() {
+      rt.leaveViewer(viewerId)
       off?.()
       if (timer) clearTimeout(timer)
       clearInterval(ping)

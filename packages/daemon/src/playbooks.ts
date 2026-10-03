@@ -31,8 +31,9 @@ markers in its worktree and fixes them), then merge it.
    reviews and competing hypotheses → parallel agents. Never spawn 5 agents for a typo unless asked.
 2. **Plan, then delegate.** Each task states the objective, the files it owns, what "done" means (a check to run) and
    what to report. Give every agent a 2–3 word \`label\`.
-3. **Right-size models.** Pass \`tier\` to spawn_agent: "small" for mechanical/sharded edits, "large" only for hard
-   reasoning; default is the agent's own model.
+3. **Pick the right agent and size.** For anything non-trivial call \`pick_agent(task)\`: it ranks the installed agents
+   by their track record in this project on that kind of task and by cost per success. Pass \`tier\` to spawn_agent:
+   "small" for mechanical/sharded edits, docs and research, "large" only for hard reasoning.
 4. **Avoid conflicts.** Give parallel workers disjoint files; sequence tightly coupled work instead of parallelizing it.
 5. **Verify before landing.** Read the diff (\`get_diff\`) and, for anything non-trivial, \`request_review\` from a
    *different vendor's* agent. Then \`merge\`. If a merge reports conflicts or failing checks, fix forward.

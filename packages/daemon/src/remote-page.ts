@@ -100,6 +100,12 @@ pre { font: 12.5px/1.4 var(--mono); white-space: pre-wrap; word-break: break-wor
   if (m) { try { localStorage.setItem(KEY, m[1]); } catch (e) {} history.replaceState(null, "", location.pathname); }
   var token = m ? m[1] : (function () { try { return localStorage.getItem(KEY) || ""; } catch (e) { return ""; } })();
   var view = null, tab = "inbox", agent = null;
+  var NAME_KEY = "baton-name";
+  var me = (function () { try { return localStorage.getItem(NAME_KEY) || ""; } catch (e) { return ""; } })();
+  if (!me) {
+    me = (prompt("Your name — shown to others watching this run", "") || "").trim().slice(0, 40) || "web";
+    try { localStorage.setItem(NAME_KEY, me); } catch (e) {}
+  }
   var $ = function (id) { return document.getElementById(id); };
   var esc = function (s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); };
   var money = function (n) { return n ? "$" + n.toFixed(2) : ""; };
@@ -112,7 +118,7 @@ pre { font: 12.5px/1.4 var(--mono); white-space: pre-wrap; word-break: break-wor
 
   function toast(t) { var el = $("toast"); el.textContent = t; el.classList.add("show"); clearTimeout(toast.t); toast.t = setTimeout(function () { el.classList.remove("show"); }, 2600); }
   function api(path, body) {
-    return fetch(path, { method: body ? "POST" : "GET", headers: { Authorization: "Bearer " + token, "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined })
+    return fetch(path, { method: body ? "POST" : "GET", headers: { Authorization: "Bearer " + token, "content-type": "application/json", "X-Baton-User": me }, body: body ? JSON.stringify(body) : undefined })
       .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.status); return j; }); });
   }
   function act(path, body, msg) { return api(path, body).then(function (r) { if (msg) toast(msg); return r; }, function (e) { toast("⚠ " + e.message); }); }
@@ -139,7 +145,7 @@ pre { font: 12.5px/1.4 var(--mono); white-space: pre-wrap; word-break: break-wor
   $("tabs").onclick = function (e) { var b = e.target.closest("button"); if (!b) return; tab = b.getAttribute("data-tab"); agent = null; render(); window.scrollTo(0, 0); };
 
   function itemHtml(it) {
-    if (it.k === "user") return '<div class="it"><span class="who you">' + esc(it.from || "you") + "</span> " + esc(it.text) + "</div>";
+    if (it.k === "user") return '<div class="it"><span class="who you">' + esc(it.from && it.from !== me ? it.from : "you") + "</span> " + esc(it.text) + "</div>";
     if (it.k === "text") return '<div class="it ' + (it.role === "thought" ? "thought" : "") + '">' + esc(it.text) + "</div>";
     if (it.k === "bus") return '<div class="it bus"><b>' + esc(it.from) + "</b> → <b>" + esc(it.to) + "</b> " + esc(it.body) + "</div>";
     if (it.k === "error") return '<div class="it err">✗ ' + esc(it.text) + "</div>";
@@ -200,7 +206,9 @@ pre { font: 12.5px/1.4 var(--mono); white-space: pre-wrap; word-break: break-wor
 
   function render() {
     if (!view) return;
-    $("proj").textContent = view.project + (view.branch ? " @ " + view.branch : "") + (view.totals.costUsd ? " · " + money(view.totals.costUsd) : "");
+    var others = (view.viewers || []).filter(function (n) { return n !== me; });
+    $("proj").textContent = view.project + (view.branch ? " @ " + view.branch : "") + (view.totals.costUsd ? " · " + money(view.totals.costUsd) : "") +
+      (others.length ? " · ◎ " + others.slice(0, 2).join(", ") + (others.length > 2 ? " +" + (others.length - 2) : "") : "");
     renderAuto(); renderTabs();
     var nearBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 80;
     var a = agent && view.agents.find(function (x) { return x.id === agent; });
@@ -237,7 +245,7 @@ pre { font: 12.5px/1.4 var(--mono); white-space: pre-wrap; word-break: break-wor
 
   var backoff = 500;
   function connect() {
-    fetch("/api/stream", { headers: { Authorization: "Bearer " + token } }).then(function (res) {
+    fetch("/api/stream", { headers: { Authorization: "Bearer " + token, "X-Baton-User": me } }).then(function (res) {
       if (res.status === 401) { try { localStorage.removeItem(KEY); } catch (e) {} $("main").innerHTML = '<div class="login">This link is no longer valid. Run <b>baton web</b> again for a fresh one.</div>'; return; }
       if (!res.ok || !res.body) throw new Error("HTTP " + res.status);
       $("dot").classList.add("on"); backoff = 500;

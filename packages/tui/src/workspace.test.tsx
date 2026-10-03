@@ -87,8 +87,8 @@ test("worktree badge, changes overlay, diff viewer, merge from the UI, task plan
   expect(f).toContain("app.ts")
   t.mockInput.pressEnter()
   await until(() => ui.overlay() === "diff")
-  await Bun.sleep(150)
-  f = await frame()
+  // the patch loads asynchronously: wait for it instead of a fixed sleep
+  for (let i = 0; i < 100 && !f.includes("+ export const greeting"); i++) f = await frame()
   if (process.env.BATON_PRINT) console.log(f)
   expect(f).toContain("Diff · fixer")
   expect(f).toContain("+ export const greeting = 'hello'")

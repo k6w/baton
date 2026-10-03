@@ -4,12 +4,22 @@
  */
 import { mkdirSync, readdirSync, statSync } from "node:fs"
 import { readdir, readFile, stat, writeFile } from "node:fs/promises"
-import { dirname, join, relative } from "node:path"
+import { dirname, extname, join, relative } from "node:path"
 import { augmentedPath, diffLines, diffStat, killProcessTree, runCapture, type ToolContent, type ToolKind, which } from "@batonsh/protocol"
 import { z } from "zod"
+import type { Sandbox } from "./sandbox.ts"
+import { FETCH_MAX_CHARS, FetchRefused, webFetch } from "./webfetch.ts"
 import type { Workspace } from "./workspace.ts"
 
-export type ToolCategory = "read" | "edit" | "execute" | "other"
+/** "network" = web access (asks only under the `ask` approval mode). */
+export type ToolCategory = "read" | "edit" | "execute" | "network" | "other"
+
+export interface ToolImage {
+  mediaType: string
+  /** base64 */
+  data: string
+  bytes: number
+}
 
 export interface ToolOutcome {
   /** What the model sees. */
@@ -18,6 +28,8 @@ export interface ToolOutcome {
   /** Short line shown under the call in the UI. */
   summary?: string
   content?: ToolContent[]
+  /** An image for the model (read_file on a picture, when the model has vision). */
+  image?: ToolImage
 }
 
 export interface ToolRunContext {
@@ -28,6 +40,12 @@ export interface ToolRunContext {
   progress(content: ToolContent[]): void
   commandTimeoutMs: number
   maxOutputChars: number
+  /** Wraps run_command in an OS sandbox (kind "none" = unsandboxed). */
+  sandbox?: Sandbox
+  /** Can the model see images? */
+  vision?: boolean
+  /** web_fetch may reach loopback / private addresses. */
+  allowPrivateFetch?: boolean
 }
 
 export interface BuiltinTool<I = Record<string, unknown>> {
@@ -36,6 +54,8 @@ export interface BuiltinTool<I = Record<string, unknown>> {
   schema: z.ZodType<I>
   kind: ToolKind
   category: ToolCategory
+  /** Safe to run concurrently with other read-only calls of the same step. */
+  readOnly?: boolean
   title(input: I): string
   /** Remembered "always allow/deny" key. */
   permissionKey(input: I): string
@@ -47,6 +67,22 @@ const SKIP_DIRS = new Set([".git", "node_modules", ".hg", ".svn", ".next", ".tur
 const MAX_READ_LINES = 2000
 const MAX_LINE_CHARS = 2000
 const MAX_LIST = 1000
+/** Images larger than this are not sent to the model (Anthropic's per-image limit is 5 MB). */
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024
+
+const IMAGE_TYPES: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp" }
+
+/** Media type of a png/jpg/gif/webp file: the extension must say image and the magic bytes must agree. */
+export function imageType(path: string, buf: Uint8Array): string | undefined {
+  if (!IMAGE_TYPES[extname(path).toLowerCase()]) return undefined
+  const b = buf
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return "image/png"
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg"
+  if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return "image/gif"
+  if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50)
+    return "image/webp"
+  return undefined
+}
 
 function oneLine(s: string, max = 80): string {
   const line = s.replace(/\s+/g, " ").trim()
@@ -81,7 +117,7 @@ export function capOutput(text: string, max: number): string {
 const readFileTool: BuiltinTool<{ path: string; offset?: number; limit?: number }> = {
   name: "read_file",
   description:
-    "Read a text file from the workspace. Lines are returned numbered (`<n>\\t<line>`). Use `offset` (1-based first line) and `limit` (number of lines) to read part of a large file.",
+    "Read a file from the workspace. Text is returned with numbered lines (`<n>\\t<line>`); use `offset` (1-based first line) and `limit` (number of lines) to read part of a large file. Images (png, jpg, gif, webp) are shown to you when the model supports vision.",
   schema: z.object({
     path: z.string().describe("File path, relative to the workspace root"),
     offset: z.number().int().min(1).optional().describe("1-based line to start reading at"),
@@ -89,16 +125,32 @@ const readFileTool: BuiltinTool<{ path: string; offset?: number; limit?: number 
   }),
   kind: "read",
   category: "read",
+  readOnly: true,
   title: (i) => `Read(${i.path})`,
   permissionKey: (i) => `read_file:${i.path}`,
   locations: (i, ws) => [{ path: safeRel(ws, i.path), ...(i.offset ? { line: i.offset } : {}) }],
-  async run(i, { ws }) {
+  async run(i, { ws, vision }) {
     const abs = ws.resolve(i.path)
     const st = await stat(abs).catch(() => undefined)
     if (!st) return { output: `File not found: ${i.path}`, isError: true, summary: "Not found" }
     if (st.isDirectory()) return { output: `${i.path} is a directory — use list_dir`, isError: true, summary: "Is a directory" }
     if (st.size > 20 * 1024 * 1024) return { output: `${i.path} is too large (${st.size} bytes)`, isError: true, summary: "Too large" }
     const buf = await readFile(abs)
+    const img = imageType(abs, buf)
+    if (img) {
+      const kb = Math.round(st.size / 1024)
+      if (!vision) return { output: `${i.path} is an image (${img}, ${kb} KB). This model cannot view images.`, summary: "Image (not shown)" }
+      if (st.size > MAX_IMAGE_BYTES)
+        return {
+          output: `${i.path} is an image (${img}, ${kb} KB) — too large to show (limit ${MAX_IMAGE_BYTES / 1024 / 1024} MB).`,
+          summary: "Image too large",
+        }
+      return {
+        output: `Image ${ws.rel(abs)} (${img}, ${kb} KB) — attached.`,
+        summary: `Image (${kb} KB)`,
+        image: { mediaType: img, data: Buffer.from(buf).toString("base64"), bytes: st.size },
+      }
+    }
     if (isBinary(buf)) return { output: `${i.path} is a binary file (${st.size} bytes)`, summary: "Binary file" }
     const all = buf.toString("utf8").split("\n")
     if (all.length > 1 && all.at(-1) === "") all.pop()
@@ -125,6 +177,7 @@ const listDirTool: BuiltinTool<{ path?: string }> = {
   schema: z.object({ path: z.string().optional().describe("Directory, relative to the workspace root (default: root)") }),
   kind: "search",
   category: "read",
+  readOnly: true,
   title: (i) => `List(${i.path || "."})`,
   permissionKey: (i) => `list_dir:${i.path ?? "."}`,
   async run(i, { ws }) {
@@ -152,6 +205,7 @@ const globTool: BuiltinTool<{ pattern: string; path?: string }> = {
   }),
   kind: "search",
   category: "read",
+  readOnly: true,
   title: (i) => `Glob(${i.pattern}${i.path ? ` in ${i.path}` : ""})`,
   permissionKey: (i) => `glob:${i.pattern}`,
   async run(i, { ws, signal }) {
@@ -192,6 +246,7 @@ const grepTool: BuiltinTool<{ pattern: string; path?: string; glob?: string; ign
   }),
   kind: "search",
   category: "read",
+  readOnly: true,
   title: (i) => `Grep(${oneLine(i.pattern, 60)}${i.path ? ` in ${i.path}` : ""})`,
   permissionKey: (i) => `grep:${i.pattern}`,
   async run(i, { ws, signal }) {
@@ -366,7 +421,8 @@ const runCommandTool: BuiltinTool<{ command: string; timeout_ms?: number; descri
 }
 
 async function runCommand(command: string, timeoutMs: number, ctx: ToolRunContext): Promise<ToolOutcome> {
-  const proc = Bun.spawn(["bash", "-lc", command], {
+  const argv = ["bash", "-lc", command]
+  const proc = Bun.spawn(ctx.sandbox ? ctx.sandbox.wrap(argv) : argv, {
     cwd: ctx.ws.root,
     env: { ...process.env, PATH: augmentedPath(), ...ctx.env, PAGER: "cat", GIT_PAGER: "cat", GIT_TERMINAL_PROMPT: "0", CI: ctx.env.CI ?? "1" },
     stdin: "ignore",
@@ -450,6 +506,49 @@ async function runCommand(command: string, timeoutMs: number, ctx: ToolRunContex
   }
 }
 
+// ───────────────────────────── web_fetch ─────────────────────────────
+
+const webFetchTool: BuiltinTool<{ url: string }> = {
+  name: "web_fetch",
+  description: `Fetch a web page or document over http(s) (GET) and return it as readable text (HTML is converted; at most ${FETCH_MAX_CHARS} characters). Use it for documentation, issues, API references. Private and local addresses are refused.`,
+  schema: z.object({ url: z.string().describe("Absolute http(s) URL") }),
+  kind: "fetch",
+  category: "network",
+  readOnly: true,
+  title: (i) => `Fetch(${oneLine(i.url, 100)})`,
+  permissionKey: (i) => {
+    try {
+      return `web_fetch:${new URL(i.url).host}`
+    } catch {
+      return `web_fetch:${i.url}`
+    }
+  },
+  async run(i, ctx) {
+    try {
+      const r = await webFetch(i.url, { signal: ctx.signal, allowPrivate: ctx.allowPrivateFetch })
+      let text = r.text
+      const notes: string[] = []
+      if (text.length > FETCH_MAX_CHARS) {
+        notes.push(`[truncated: showing ${FETCH_MAX_CHARS} of ${text.length} characters]`)
+        text = text.slice(0, FETCH_MAX_CHARS)
+      }
+      if (r.truncated) notes.push("[download stopped at the 2 MB limit]")
+      const head = `URL: ${r.url}\nStatus: ${r.status}${r.contentType ? ` · ${r.contentType}` : ""}\n\n`
+      const output = head + (text || "(empty body)") + (notes.length ? `\n\n${notes.join("\n")}` : "")
+      return {
+        output,
+        isError: r.status >= 400,
+        summary: `${r.status} · ${Math.round(r.bytes / 1024)} KB`,
+        content: [{ type: "text", text: capOutput(output, 4000) }],
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      if (e instanceof FetchRefused) return { output: `Refused: ${msg}`, isError: true, summary: "Refused" }
+      return { output: `Fetch failed: ${ctx.signal.aborted ? "interrupted" : msg}`, isError: true, summary: ctx.signal.aborted ? "Interrupted" : "Failed" }
+    }
+  },
+}
+
 function safeRel(ws: Workspace, p: string): string {
   try {
     return ws.rel(ws.resolve(p))
@@ -460,4 +559,13 @@ function safeRel(ws: Workspace, p: string): string {
 
 export type AnyTool = BuiltinTool<Record<string, unknown>>
 
-export const BUILTIN_TOOLS: AnyTool[] = [readFileTool, listDirTool, globTool, grepTool, writeFileTool, editFileTool, runCommandTool] as unknown as AnyTool[]
+export const BUILTIN_TOOLS: AnyTool[] = [
+  readFileTool,
+  listDirTool,
+  globTool,
+  grepTool,
+  writeFileTool,
+  editFileTool,
+  runCommandTool,
+  webFetchTool,
+] as unknown as AnyTool[]

@@ -18,9 +18,9 @@
  *   baton export <run>     a run as Markdown (--format html for a shareable page, jsonl for raw events)
  *   baton daemon           run the daemon in the foreground (normally started automatically)
  */
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync } from "node:fs"
-import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs"
+import { homedir, tmpdir } from "node:os"
+import { basename, join, resolve } from "node:path"
 import { runDaemonProcess, socketPathFor, startDaemon } from "@batonsh/daemon"
 import {
   BatonConfig,
@@ -34,6 +34,7 @@ import {
   revokeTrust,
   trustEntries,
 } from "@batonsh/kernel"
+import { CONTROL_PROTOCOL_VERSION, ControlErrorCode, REQUIRED_PARAMS } from "@batonsh/protocol"
 import { BatonClient, connect, discoverSocket } from "@batonsh/sdk"
 import { listThemes, loadTheme } from "@batonsh/themes"
 import { runHeadless } from "./headless.ts"
@@ -240,6 +241,53 @@ async function cmdRun(args: Args) {
   process.exit(code)
 }
 
+/** A Nerd Font file in the usual font folders (or fc-list), by name. */
+function nerdFontInstalled(): string | undefined {
+  const dirs = [
+    join(homedir(), "Library", "Fonts"),
+    "/Library/Fonts",
+    join(homedir(), ".local", "share", "fonts"),
+    join(homedir(), ".fonts"),
+    "/usr/share/fonts",
+  ]
+  for (const dir of dirs) {
+    try {
+      const hit = readdirSync(dir, { recursive: true })
+        .map(String)
+        .find((f) => /nerd ?font|NerdFont|\bNF\b|-NF[-.]/i.test(f))
+      if (hit) return basename(hit).replace(/\.(ttf|otf|ttc)$/i, "")
+    } catch {}
+  }
+  if (Bun.which("fc-list")) {
+    const r = Bun.spawnSync(["fc-list", ":", "family"], { stdout: "pipe", stderr: "ignore" })
+    const hit = r.stdout
+      .toString()
+      .split("\n")
+      .find((l) => /nerd font/i.test(l))
+    if (hit) return hit.split(",")[0]
+  }
+  return undefined
+}
+
+/** `baton protocol`: the control protocol as data (methods, required params, error codes) for SDK authors. */
+function cmdProtocol() {
+  console.log(
+    JSON.stringify(
+      {
+        version: CONTROL_PROTOCOL_VERSION,
+        transport: "newline-delimited JSON-RPC 2.0 over a Unix socket (<project>/.baton/run/baton.sock, or the path in .baton/run/socket-path)",
+        handshake: "hello { client, version, user? } first",
+        notifications: { event: "{ subscriptionId, event }", "daemon.closing": "{ reason }" },
+        requiredParams: REQUIRED_PARAMS,
+        errorCodes: ControlErrorCode,
+        types: "packages/protocol/src/control.ts (ControlMethods) and packages/protocol/src/events.ts (BEP events)",
+      },
+      null,
+      2,
+    ),
+  )
+}
+
 async function cmdDoctor() {
   const root = findProjectRoot(process.cwd())
   const ok = (s: string) => console.log(`  ${c.green("✓")} ${s}`)
@@ -257,6 +305,9 @@ async function cmdDoctor() {
   if (process.env.TMUX) warn("inside tmux — enable `set -g allow-passthrough on` for logos")
   if (/kitty|ghostty|wezterm|iterm|konsole|warp/i.test(term)) ok("likely supports inline images (logos)")
   else warn("terminal may not support Kitty/Sixel images — logos fall back to glyphs (ui.icons)")
+  const nerd = nerdFontInstalled()
+  if (nerd) ok(`Nerd Font installed (${nerd}) — if your terminal uses it, try ui.icons = "nerd" and status_style = "powerline"`)
+  else warn("no Nerd Font found — the powerline status bar and nerd icons need one (https://www.nerdfonts.com)")
   console.log(c.bold("\nAgents"))
   for (const a of await detectAgents()) {
     if (!a.installed) {
@@ -264,7 +315,11 @@ async function cmdDoctor() {
       continue
     }
     const auth =
-      a.auth === "ok" ? c.green("logged in") : a.auth === "missing" ? c.red(`not logged in${a.authHint ? ` — ${a.authHint}` : ""}`) : c.yellow("auth unknown")
+      a.auth === "ok"
+        ? c.green(`logged in${a.authMethod ? ` · ${a.authMethod}` : ""}`)
+        : a.auth === "missing"
+          ? c.red(`not logged in${a.authHint ? ` — ${a.authHint}` : ""}`)
+          : c.yellow("auth unknown")
     console.log(`  ${c.green("●")} ${a.id.padEnd(14)} ${c.dim(`v${a.version ?? "?"} · ${a.protocols.join(", ")}`)}  ${auth}`)
   }
   console.log(c.bold("\nConfig"))
@@ -292,10 +347,54 @@ async function cmdAgents() {
   for (const a of await detectAgents()) {
     const status = a.installed ? c.green("●") : c.dim("○")
     const detail = a.installed
-      ? `${c.dim(`v${a.version ?? "?"}`)} ${a.auth === "ok" ? c.green("logged in") : a.auth === "missing" ? c.red("not logged in") : c.dim("auth ?")}`
+      ? `${c.dim(`v${a.version ?? "?"}`)} ${a.auth === "ok" ? c.green(`logged in${a.authMethod ? ` · ${a.authMethod}` : ""}`) : a.auth === "missing" ? c.red("not logged in") : c.dim("auth ?")}`
       : c.dim("not installed")
     console.log(`${status} ${a.id.padEnd(14)} ${a.displayName.padEnd(18)} ${detail}`)
   }
+}
+
+/** The agent's own sign-in command: from detect, else the command named in its hint ("run `cursor-agent login`"). */
+function loginCommand(a: { login?: string[]; authHint?: string; path?: string }): string[] | undefined {
+  if (a.login?.length) return a.login
+  const m = /`([^`]+)`/.exec(a.authHint ?? "")
+  if (!m || /^baton\b/.test(m[1]!)) return undefined
+  return m[1]!.split(/\s+/)
+}
+
+/**
+ * `baton login [agent]`: run that agent's own interactive sign-in (Claude Code's, Codex's, …).
+ * Baton never sees the credentials — each CLI stores its own login, and Baton runs the CLI.
+ */
+async function cmdLogin(args: Args) {
+  const agents = (await detectAgents()).filter((a) => a.installed)
+  let pick = args._[0] ? agents.find((a) => a.id === args._[0]) : undefined
+  if (args._[0] && !pick) throw new Error(`"${args._[0]}" isn't installed (baton agents lists them)`)
+  if (!pick) {
+    const choices = agents.filter((a) => loginCommand(a))
+    if (!choices.length) return console.log("none of your installed agents has a sign-in command Baton knows")
+    console.log(c.bold("Sign in to an agent") + c.dim(" — each runs its own login; Baton never sees your credentials\n"))
+    for (const [i, a] of choices.entries())
+      console.log(
+        `  ${c.bold(String(i + 1))}  ${a.id.padEnd(14)} ${a.auth === "ok" ? c.green(`logged in${a.authMethod ? ` · ${a.authMethod}` : ""}`) : a.auth === "missing" ? c.red("not logged in") : c.dim("unknown")}`,
+      )
+    if (!process.stdin.isTTY) return
+    process.stdout.write("\nwhich one? ")
+    const answer = await new Promise<string>((res) => process.stdin.once("data", (d) => res(String(d).trim())))
+    process.stdin.pause()
+    pick = choices[Number(answer) - 1] ?? choices.find((a) => a.id === answer)
+    if (!pick) return
+  }
+  const cmd = loginCommand(pick)
+  if (!cmd) throw new Error(`don't know how to sign in to ${pick.id}${pick.authHint ? ` — ${pick.authHint}` : ""}`)
+  console.log(c.dim(`→ ${cmd.join(" ")}`))
+  const p = Bun.spawn(cmd, { stdin: "inherit", stdout: "inherit", stderr: "inherit" })
+  await p.exited
+  const after = (await detectAgents()).find((a) => a.id === pick!.id)
+  console.log(
+    after?.auth === "ok"
+      ? c.green(`✓ ${pick.id} is signed in${after.authMethod ? ` (${after.authMethod})` : ""}`)
+      : c.yellow(`${pick.id}: still not signed in`),
+  )
 }
 
 async function cmdPs() {
@@ -437,6 +536,7 @@ async function cmdA2A(args: Args) {
     publicUrl: typeof args.flags["public-url"] === "string" ? (args.flags["public-url"] as string) : undefined,
     noToken: args.flags["no-token"] ? true : undefined,
     rotate: !!args.flags.rotate,
+    allowPrivatePush: args.flags["allow-private-push"] ? true : undefined,
   })
   cl.close()
   console.log(`${c.bold("Baton as an A2A agent")} ${c.dim("— other agents can hand this team tasks")}\n`)
@@ -459,6 +559,8 @@ async function cmdWeb(args: Args) {
     lan: args.flags.lan ? true : undefined,
     port: typeof args.flags.port === "string" ? Number(args.flags.port) : undefined,
     rotate: !!args.flags.rotate,
+    tls: args.flags.https ? true : undefined,
+    tailscale: args.flags.tailscale ? true : undefined,
   })
   cl.close()
   console.log(`${c.bold("Baton web view")} ${c.dim(r.lan ? "· reachable from your network" : "· this machine only (add --lan for your phone)")}\n`)
@@ -469,7 +571,7 @@ async function cmdWeb(args: Args) {
   console.log(
     c.dim(`
   The link carries an access token — treat it like a password (\`baton web --rotate\` makes a new one).
-  It keeps running in the daemon; \`baton web --stop\` turns it off.${r.lan ? "\n  Plain HTTP on your network: use it on networks you trust, or put it behind Tailscale / a tunnel (remote.public_url)." : ""}`),
+  It keeps running in the daemon; \`baton web --stop\` turns it off.${r.lan && !r.tls && !r.publicUrl ? "\n  Plain HTTP on your network: use it on networks you trust, or add --https (self-signed) or --tailscale." : ""}${r.fingerprint ? `\n  HTTPS with Baton's own certificate: your browser asks to trust it once. SHA-256 fingerprint:\n  ${r.fingerprint}` : ""}${r.publicUrl ? "\n  Published on your tailnet with a real certificate: reachable wherever you're signed in to Tailscale." : ""}`),
   )
 }
 
@@ -514,6 +616,7 @@ ${b("Commands")}
   baton web [--lan]     follow & approve from your phone (QR code)
   baton mcp             Baton as an MCP server: let Claude Desktop / Cursor / any agent run your team
   baton a2a [--stop]    serve this team as an A2A agent (other agents send it tasks)
+  baton login [agent]   sign in to an agent with its own login (Claude Code, Codex, OpenCode, …)
   baton issue <n>       start with a GitHub issue        baton pr [-y]         PR from what the run merged
   baton replay [run]    watch a past run play back (space pause · , . moments · - + speed)
   baton config get|explain|path|schema|defaults            baton theme list|set <name>
@@ -577,6 +680,10 @@ async function main() {
       return cmdWeb(sub)
     case "mcp":
       return cmdMcp(sub)
+    case "login":
+      return cmdLogin(sub)
+    case "protocol":
+      return cmdProtocol()
     case "a2a":
       return cmdA2A(sub)
     case "issue":

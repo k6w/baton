@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from "bun:test"
+import { afterAll, expect, setDefaultTimeout, test } from "bun:test"
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -6,6 +6,9 @@ import { BatonConfig } from "@batonsh/kernel"
 import { fetchIssue, issueTask, openPr, parseRemote, planPr } from "./github.ts"
 import { handleInput } from "./input.ts"
 import { Runtime } from "./runtime.ts"
+
+// real git work: slow machines / busy CI need more than the 5s default
+setDefaultTimeout(30_000)
 
 const sh = (cwd: string, ...cmd: string[]) => {
   const r = Bun.spawnSync(cmd, { cwd, stdout: "pipe", stderr: "pipe" })

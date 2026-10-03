@@ -7,6 +7,58 @@ import type { AgentInfo, AgentStatus, BatonEvent, BusKind, Delivery, PermissionO
 
 export const CONTROL_PROTOCOL_VERSION = 1
 
+/** Error codes of the control protocol (JSON-RPC `error.code`); `error.data.kind` names them too. */
+export const ControlErrorCode = {
+  /** Missing / malformed parameters. */
+  InvalidParams: -32602,
+  /** Generic failure. */
+  Failed: -32000,
+  /** No such agent / task / run / request. */
+  NotFound: -32004,
+  /** The thing exists but can't do that now (agent not running, session closed). */
+  Unavailable: -32010,
+  /** Conflicts with the current state (limits, budget, a merge in progress…). */
+  Conflict: -32009,
+  /** The client speaks a newer protocol than this daemon. */
+  VersionMismatch: -32011,
+} as const
+export type ControlErrorKind = keyof typeof ControlErrorCode
+
+/** Required params per method (validated before handlers run). */
+export const REQUIRED_PARAMS: Partial<Record<string, string[]>> = {
+  hello: ["client", "version"],
+  "input.submit": ["text"],
+  "agent.spawn": ["adapter"],
+  "agent.prompt": ["agentId", "text"],
+  "agent.interrupt": ["agentId"],
+  "agent.kill": ["agentId"],
+  "agent.rename": ["agentId"],
+  "bus.send": ["to", "body"],
+  "permission.respond": ["agentId", "requestId"],
+  "run.mode": ["mode"],
+  "run.autonomy": ["mode"],
+  "workspace.merge": ["agentId"],
+  "workspace.sync": ["agentId"],
+  "workspace.diff": ["agentId"],
+  "review.request": ["agentId"],
+  "plan.decide": ["approved"],
+  "task.edit": ["taskId"],
+  "task.add": ["title"],
+  "run.export": ["runId", "format"],
+  "run.resume": ["runId"],
+  "events.unsubscribe": ["subscriptionId"],
+  "agents.pick": ["task"],
+}
+
+/** Map an error message to a control error kind (handlers throw plain Errors). */
+export function classifyError(message: string): ControlErrorKind {
+  if (/^(no|unknown) (agent|task|run|pending|request|workspace|adapter|recipe|subscription)\b|not found|doesn't exist|no such/i.test(message)) return "NotFound"
+  if (/not running|is closed|has exited|already (answered|resolved)|not available|disabled/i.test(message)) return "Unavailable"
+  if (/limit reached|budget|in progress|conflict|already running|depth limit/i.test(message)) return "Conflict"
+  if (/required|invalid|must be|expected|usage:/i.test(message)) return "InvalidParams"
+  return "Failed"
+}
+
 export interface AgentView extends AgentInfo {
   status: AgentStatus
   statusDetail?: string
@@ -141,13 +193,13 @@ export interface ControlMethods {
   "run.mode": { params: { mode: string }; result: { ok: true } }
   /** Start (or report) the web view. `qr` is the open URL as a QR code drawn in text. */
   "remote.start": {
-    params: { lan?: boolean; port?: number; rotate?: boolean } | undefined
-    result: { url: string; openUrl: string; lanUrls: string[]; lan: boolean; qr: string[] }
+    params: { lan?: boolean; port?: number; rotate?: boolean; tls?: boolean; tailscale?: boolean } | undefined
+    result: { url: string; openUrl: string; lanUrls: string[]; lan: boolean; qr: string[]; tls?: boolean; fingerprint?: string; publicUrl?: string }
   }
   "remote.stop": { params: Record<string, never> | undefined; result: { ok: true } }
   /** Serve this Baton team as an A2A agent (other agents send it tasks). */
   "a2a.start": {
-    params: { port?: number; host?: string; publicUrl?: string; noToken?: boolean; rotate?: boolean } | undefined
+    params: { port?: number; host?: string; publicUrl?: string; noToken?: boolean; rotate?: boolean; allowPrivatePush?: boolean } | undefined
     result: { url: string; port: number; token?: string }
   }
   "a2a.stop": { params: Record<string, never> | undefined; result: { ok: true } }

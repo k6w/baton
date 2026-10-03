@@ -83,10 +83,12 @@ export function trustSurface(root: string, data: Record<string, unknown>): Trust
     for (const k of ["autostart", "public_url"]) if (data.a2a[k] !== undefined && data.a2a[k] !== false) push(`a2a.${k}`, data.a2a[k])
     if (data.a2a.host !== undefined && data.a2a.host !== "127.0.0.1") push("a2a.host", data.a2a.host)
     if (data.a2a.token === false) push("a2a.token", false)
+    if (data.a2a.allow_private_push === true) push("a2a.allow_private_push", true)
   }
   // exposing the run on the network is the user's call, not the repository's
   if (isObj(data.remote))
-    for (const k of ["autostart", "lan", "public_url"]) if (data.remote[k] !== undefined && data.remote[k] !== false) push(`remote.${k}`, data.remote[k])
+    for (const k of ["autostart", "lan", "public_url", "tailscale"])
+      if (data.remote[k] !== undefined && data.remote[k] !== false) push(`remote.${k}`, data.remote[k])
   if (isObj(data.telemetry)) for (const k of ["otlp_endpoint", "headers"]) push(`telemetry.${k}`, data.telemetry[k])
   if (isObj(data.policy)) {
     if (data.policy.preset === "yolo") push("policy.preset", "yolo")

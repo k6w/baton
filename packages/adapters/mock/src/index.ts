@@ -8,6 +8,9 @@
  *   seed:    number for the PRNG
  *   fail:    if true, the turn ends with an error
  *   steps:   fixed step sequence, e.g. ["read", "exec", "edit"] (default: random)
+ *   delegate: (orchestrator) really coordinate through Baton's bus tools: spawn workers for the
+ *            task, wait for their results and summarise — a full offline run for SDK scripts
+ *            and tests (`[agents.mock] options = { delegate = true }` or orchestrator.agent = "mock")
  */
 import {
   type AdapterCapabilities,
@@ -81,7 +84,7 @@ export const mockAdapter: AgentAdapter = {
       usage: true,
       cost: true,
       permissions: true,
-      mcp: false,
+      mcp: true,
       models: ["mock-fast", "mock-smart"],
     }
   },
@@ -259,6 +262,8 @@ class MockSession implements AgentSession {
     try {
       if (/\bpong\b/i.test(input.text)) {
         await this.say("PONG")
+      } else if (this.cfg.options?.delegate && !input.text.startsWith("[baton]") && this.cfg.mcpServers?.length) {
+        await this.delegate(input)
       } else if (this.cfg.name === "orchestrator" || this.cfg.options?.coordinatorOnly) {
         // a mock lead only coordinates (the demo director does the dispatching)
         const bus = /^\[baton\] (?:Result|Message) from ([^:\n]+):\n([^\n]*)/.exec(input.text)
@@ -281,6 +286,49 @@ class MockSession implements AgentSession {
       const next = this.closed ? undefined : this.queue.shift()
       if (next) void this.runTurn(next)
     }
+  }
+
+  /** Call one of Baton's bus tools over its MCP endpoint (stateless streamable HTTP, JSON responses). */
+  private async busTool(name: string, args: Record<string, unknown>): Promise<string> {
+    const server = this.cfg.mcpServers?.find((s) => s.name === "baton") ?? this.cfg.mcpServers?.[0]
+    if (!server) throw new Error("no baton MCP server")
+    const toolCallId = newId("tc")
+    this.emit({
+      type: "tool.call",
+      data: { toolCallId, name: `mcp__baton__${name}`, title: `baton.${name}`, kind: "other", status: "in_progress", rawInput: args },
+    })
+    const res = await fetch(server.url, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...server.headers },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+    })
+    const j = (await res.json()) as { result?: { content?: { text?: string }[]; isError?: boolean }; error?: { message: string } }
+    const text = j.error?.message ?? j.result?.content?.map((c) => c.text ?? "").join("\n") ?? ""
+    const failed = !!j.error || !!j.result?.isError
+    this.emit({ type: "tool.update", data: { toolCallId, status: failed ? "failed" : "completed", summary: text.split("\n")[0]?.slice(0, 80) } })
+    if (failed) throw new Error(`${name}: ${text}`)
+    return text
+  }
+
+  /** Mock lead that really delegates: two workers through the bus, then a summary of their results. */
+  private async delegate(input: PromptInput) {
+    await this.say(`Plan: two workers on "${input.text.slice(0, 60)}", then I'll merge what they report.`)
+    await this.busTool("spawn_agent", {
+      adapter: "mock",
+      count: 2,
+      reason: "two independent halves of the task",
+      label: "mock work",
+      task: input.text,
+      isolation: "shared",
+    })
+    const results = await this.busTool("wait_for_results", { timeout_s: 120 })
+    const n = (results.match(/^from /gm) ?? []).length
+    await this.say(
+      `Done — ${n} worker${n === 1 ? "" : "s"} reported back.\n${results
+        .split("\n")
+        .filter((l) => l.startsWith("from "))
+        .join("\n")}`,
+    )
   }
 
   private async workLoop(input: PromptInput) {

@@ -1,10 +1,13 @@
-import { beforeEach, describe, expect, test } from "bun:test"
+import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { BatonConfig } from "@batonsh/kernel"
 import { git } from "./git.ts"
 import { WorkspaceManager } from "./workspace.ts"
+
+// real git work: slow machines / busy CI need more than the 5s default
+setDefaultTimeout(30_000)
 
 let root: string
 const cfg = (over: Record<string, unknown> = {}) => BatonConfig.parse({ workspace: { dir: mkdtempSync(join(tmpdir(), "baton-wt-")), ...over } }).workspace

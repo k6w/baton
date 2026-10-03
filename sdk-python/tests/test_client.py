@@ -426,13 +426,15 @@ class DaemonTests(unittest.TestCase):
         with self.assertRaises(BatonError) as cm:
             c.call("no.such.method")
         self.assertEqual(cm.exception.code, -32601)
-        with self.assertRaises(BatonError) as cm:
+        with self.assertRaises(baton.Unavailable) as cm:
             c.prompt("ag_does_not_exist", "hello")
-        self.assertEqual(cm.exception.code, -32000)
+        self.assertEqual(cm.exception.code, -32010)
         self.assertIn("not running", cm.exception.message)
+        with self.assertRaises(baton.InvalidParams):
+            c.call("agent.prompt", {"agentId": "x"})
         # kill / interrupt of an unknown agent are errors, not silent no-ops
         for fn in (c.kill, c.interrupt):
-            with self.assertRaises(BatonError) as cm:
+            with self.assertRaises(baton.NotFound) as cm:
                 fn("ag_does_not_exist")
             self.assertIn("no agent", cm.exception.message)
 

@@ -252,9 +252,14 @@ export class Runtime {
     const peers = [...this.agents.values()].filter((a) => a !== rt && !a.closing).map((a) => a.info.name)
     const rolePrompt = info.role ? this.config.roles[info.role]?.prompt : undefined
     const playbook = loadPlaybook(params.isOrchestrator ? this.config.orchestrator.mode : "worker", this.projectRoot)
+    // agents that can't reach Baton's bus (no MCP: remote A2A agents, plain CLIs) get a short brief
+    // instead of a playbook full of tools they don't have
+    const busless = !rt.caps.mcp && !params.isOrchestrator
     const systemPrompt = [
-      playbook,
-      identityBlock({ name, adapter: adapterId, isOrchestrator: params.isOrchestrator, peers }),
+      busless
+        ? `You are "${name}", one of several coding agents working on this project in a Baton session. Do the task you are given, then finish with a short summary of what you changed and how you verified it.`
+        : playbook,
+      busless ? undefined : identityBlock({ name, adapter: adapterId, isOrchestrator: params.isOrchestrator, peers }),
       params.isOrchestrator ? this.config.orchestrator.instructions : undefined,
       params.isOrchestrator ? workspacePolicy(this.config) : undefined,
       rolePrompt ? `\n## Role: ${info.role}\n${rolePrompt}` : undefined,

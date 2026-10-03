@@ -1,11 +1,11 @@
-/** Test helper: a tiny stateless Streamable HTTP MCP server with two tools. */
+/** Test helper: a tiny stateless Streamable HTTP MCP server with three tools (one read-only). */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"
 import { z } from "zod"
 
 export interface FakeMcp {
   url: string
-  calls: { tool: string; args: unknown; auth: string | null }[]
+  calls: { tool: string; args: unknown; auth: string | null; start?: number; end?: number }[]
   stop(): void
 }
 
@@ -26,6 +26,17 @@ export function fakeMcp(opts: { token?: string } = {}): FakeMcp {
         calls.push({ tool: "send_message", args: a, auth })
         return { content: [{ type: "text", text: `sent to ${a.to}` }] }
       })
+      mcp.registerTool(
+        "lookup",
+        { description: "Look something up (slow, read-only)", inputSchema: { key: z.string() }, annotations: { readOnlyHint: true } },
+        async (a) => {
+          const call = { tool: "lookup", args: a, auth, start: Date.now(), end: 0 }
+          calls.push(call)
+          await Bun.sleep(300)
+          call.end = Date.now()
+          return { content: [{ type: "text", text: `value of ${a.key}` }] }
+        },
+      )
       const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
       await mcp.connect(transport)
       return await transport.handleRequest(req)

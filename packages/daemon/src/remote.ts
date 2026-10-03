@@ -9,8 +9,8 @@
  * notifications use per-request HMAC signatures instead, so the token never leaves the machine.
  */
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { networkInterfaces } from "node:os"
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { hostname, networkInterfaces } from "node:os"
 import { join } from "node:path"
 import { attentionItems, type FeedItem, stateDir } from "@batonsh/kernel"
 import qrcode from "qrcode-generator"
@@ -27,6 +27,12 @@ export interface RemoteServer {
   lanUrls: string[]
   port: number
   lan: boolean
+  /** Served over HTTPS with Baton's self-signed certificate. */
+  tls: boolean
+  /** SHA-256 fingerprint of that certificate (to check on the phone). */
+  fingerprint?: string
+  /** Published through `tailscale serve` (https://<machine>.<tailnet>.ts.net). */
+  publicUrl?: string
   stop(): void
 }
 
@@ -201,7 +207,79 @@ export function remoteView(rt: Runtime) {
 const json = (v: unknown, status = 200) =>
   new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } })
 
-export function startRemoteServer(rt: Runtime, opts: { lan?: boolean; port?: number } = {}): RemoteServer {
+/**
+ * A self-signed certificate for the web view (P-256, ~2 years), covering localhost, this machine's
+ * name and its LAN addresses; regenerated when those change. Needs `openssl` (LibreSSL works).
+ */
+export function remoteCertificate(projectRoot: string): { cert: string; key: string; fingerprint: string } {
+  const dir = join(stateDir(), "remote")
+  const base = join(dir, createHash("sha1").update(projectRoot).digest("hex").slice(0, 16))
+  const names = [
+    "DNS:localhost",
+    `DNS:${hostname()}`,
+    ...(hostname().endsWith(".local") ? [] : [`DNS:${hostname()}.local`]),
+    "IP:127.0.0.1",
+    ...lanAddresses().map((a) => `IP:${a}`),
+  ]
+  const san = names.join(",")
+  const want = `${base}.san`
+  if (!existsSync(`${base}.cert.pem`) || !existsSync(want) || readFileSync(want, "utf8") !== san) {
+    if (!Bun.which("openssl")) throw new Error("HTTPS needs openssl to create a certificate (or use --tailscale)")
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    const r = Bun.spawnSync(
+      [
+        "openssl",
+        "req",
+        "-x509",
+        "-newkey",
+        "ec",
+        "-pkeyopt",
+        "ec_paramgen_curve:prime256v1",
+        // a named curve, not explicit parameters: BoringSSL (Bun's TLS) rejects the latter
+        "-pkeyopt",
+        "ec_param_enc:named_curve",
+        "-nodes",
+        "-keyout",
+        `${base}.key.pem`,
+        "-out",
+        `${base}.cert.pem`,
+        "-days",
+        "825",
+        "-subj",
+        "/CN=Baton web view",
+        "-addext",
+        `subjectAltName=${san}`,
+      ],
+      { stdout: "ignore", stderr: "pipe" },
+    )
+    if (r.exitCode !== 0) throw new Error(`openssl failed: ${r.stderr.toString().trim().split("\n").at(-1)}`)
+    chmodSync(`${base}.key.pem`, 0o600)
+    writeFileSync(want, san)
+  }
+  const cert = readFileSync(`${base}.cert.pem`, "utf8")
+  const der = Buffer.from(cert.replace(/-----[^-]+-----|\s/g, ""), "base64")
+  const fingerprint = (createHash("sha256").update(der).digest("hex").match(/../g) ?? []).join(":").toUpperCase()
+  return { cert, key: readFileSync(`${base}.key.pem`, "utf8"), fingerprint }
+}
+
+/** `tailscale serve` the web view on this machine's tailnet name (real HTTPS certificate). */
+export function tailscaleServe(port: number): string {
+  if (!Bun.which("tailscale")) throw new Error("tailscale isn't installed (https://tailscale.com/download)")
+  const st = Bun.spawnSync(["tailscale", "status", "--json"], { stdout: "pipe", stderr: "pipe" })
+  if (st.exitCode !== 0) throw new Error(`tailscale isn't running: ${st.stderr.toString().trim()}`)
+  const dns = (JSON.parse(st.stdout.toString()) as { Self?: { DNSName?: string } }).Self?.DNSName?.replace(/\.$/, "")
+  if (!dns) throw new Error("tailscale reports no DNS name for this machine (enable MagicDNS)")
+  const r = Bun.spawnSync(["tailscale", "serve", "--bg", `http://127.0.0.1:${port}`], { stdout: "pipe", stderr: "pipe" })
+  if (r.exitCode !== 0) throw new Error(`tailscale serve failed: ${r.stderr.toString().trim() || r.stdout.toString().trim()}`)
+  return `https://${dns}`
+}
+
+export function tailscaleUnserve(): void {
+  if (Bun.which("tailscale")) Bun.spawnSync(["tailscale", "serve", "--https=443", "off"], { stdout: "ignore", stderr: "ignore" })
+}
+
+export function startRemoteServer(rt: Runtime, opts: { lan?: boolean; port?: number; tls?: boolean } = {}): RemoteServer {
+  const certificate = opts.tls ? remoteCertificate(rt.projectRoot) : undefined
   const { token, secret } = remoteSecrets(rt.projectRoot)
   const authed = (req: Request, url: URL) => {
     const bearer = /^Bearer\s+(\S+)$/i.exec(req.headers.get("authorization") ?? "")?.[1]
@@ -219,6 +297,7 @@ export function startRemoteServer(rt: Runtime, opts: { lan?: boolean; port?: num
     hostname: opts.lan ? "0.0.0.0" : "127.0.0.1",
     port: opts.port ?? 0,
     idleTimeout: 0,
+    ...(certificate ? { tls: { cert: certificate.cert, key: certificate.key } } : {}),
     async fetch(req) {
       const url = new URL(req.url)
       const path = url.pathname
@@ -283,14 +362,17 @@ export function startRemoteServer(rt: Runtime, opts: { lan?: boolean; port?: num
     },
   })
   const port = server.port as number
-  const local = `http://127.0.0.1:${port}`
-  const lanUrls = opts.lan ? lanAddresses().map((a) => `http://${a}:${port}/#t=${token}`) : []
+  const scheme = certificate ? "https" : "http"
+  const local = `${scheme}://127.0.0.1:${port}`
+  const lanUrls = opts.lan ? lanAddresses().map((a) => `${scheme}://${a}:${port}/#t=${token}`) : []
   return {
-    url: opts.lan && lanAddresses()[0] ? `http://${lanAddresses()[0]}:${port}` : local,
+    url: opts.lan && lanAddresses()[0] ? `${scheme}://${lanAddresses()[0]}:${port}` : local,
     openUrl: lanUrls[0] ?? `${local}/#t=${token}`,
     lanUrls,
     port,
     lan: !!opts.lan,
+    tls: !!certificate,
+    fingerprint: certificate?.fingerprint,
     stop: () => server.stop(true),
   }
 }
@@ -350,20 +432,35 @@ export function remoteServer(rt: Runtime): RemoteServer | undefined {
 }
 
 /** Start the web view (or return the running one; a different `lan` setting restarts it). */
-export function ensureRemote(rt: Runtime, opts: { lan?: boolean; port?: number; rotate?: boolean } = {}): RemoteServer {
+export function ensureRemote(rt: Runtime, opts: { lan?: boolean; port?: number; rotate?: boolean; tls?: boolean; tailscale?: boolean } = {}): RemoteServer {
   const lan = opts.lan ?? rt.config.remote.lan
   const port = opts.port ?? rt.config.remote.port
+  const tls = opts.tls ?? rt.config.remote.tls === "self-signed"
+  const tailscale = opts.tailscale ?? rt.config.remote.tailscale
   const cur = running.get(rt)
-  if (cur && !opts.rotate && cur.lan === lan && (!port || cur.port === port)) return cur
+  if (cur && !opts.rotate && cur.lan === lan && cur.tls === tls && !!cur.publicUrl === tailscale && (!port || cur.port === port)) return cur
   cur?.stop()
+  if (cur?.publicUrl) tailscaleUnserve()
   if (opts.rotate) remoteSecrets(rt.projectRoot, true)
-  const s = startRemoteServer(rt, { lan, port: port || cur?.port || 0 })
+  // tailscale terminates TLS itself and proxies to the local (plain) server
+  const s = startRemoteServer(rt, { lan, port: port || cur?.port || 0, tls: tls && !tailscale })
+  if (tailscale) {
+    try {
+      s.publicUrl = tailscaleServe(s.port)
+      s.openUrl = `${s.publicUrl}/#t=${remoteSecrets(rt.projectRoot).token}`
+      s.url = s.publicUrl
+    } catch (e) {
+      s.stop()
+      throw e
+    }
+  }
   running.set(rt, s)
   rt.emit({ type: "log", data: { level: "info", message: `web view at ${s.url}${lan ? " (reachable on your network)" : ""}` } })
   return s
 }
 
 export function stopRemote(rt: Runtime): void {
+  if (running.get(rt)?.publicUrl) tailscaleUnserve()
   running.get(rt)?.stop()
   running.delete(rt)
 }
@@ -371,7 +468,7 @@ export function stopRemote(rt: Runtime): void {
 /** Signed one-tap approve / deny links for a pending request, if phones can reach the web view. */
 export function approvalLinks(rt: Runtime, agentId: string, requestId: string): { allow: string; deny: string } | undefined {
   const s = running.get(rt)
-  const base = rt.config.remote.public_url?.replace(/\/$/, "") ?? (s?.lan ? s.url : undefined)
+  const base = rt.config.remote.public_url?.replace(/\/$/, "") ?? s?.publicUrl ?? (s?.lan ? s.url : undefined)
   if (!base) return undefined
   const { secret } = remoteSecrets(rt.projectRoot)
   const link = (d: "allow" | "deny") => `${base}/act/${agentId}/${requestId}/${d}?sig=${signAction(secret, agentId, requestId, d)}`

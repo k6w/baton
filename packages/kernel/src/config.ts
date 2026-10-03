@@ -268,8 +268,12 @@ export const BatonConfig = z.object({
       token: z.boolean().default(true),
       /** How long the team must be quiet before a task counts as done (ms). */
       idle_ms: z.number().int().min(200).default(2000),
+      /** Allow push-notification webhooks on private / loopback addresses (SSRF guard off — local setups only). */
+      allow_private_push: z.boolean().default(false),
+      /** A lead's final message that asks the requester something becomes input-required instead of completed. */
+      questions_as_input: z.boolean().default(true),
     })
-    .default({ autostart: false, host: "127.0.0.1", port: 0, token: true, idle_ms: 2000 }),
+    .default({ autostart: false, host: "127.0.0.1", port: 0, token: true, idle_ms: 2000, allow_private_push: false, questions_as_input: true }),
   remote: z
     .object({
       /** Start the web view with the daemon (otherwise: `baton web` / `/web`). */
@@ -278,10 +282,14 @@ export const BatonConfig = z.object({
       lan: z.boolean().default(false),
       /** Fixed port (0 = pick a free one). A fixed port keeps bookmarks working. */
       port: z.number().int().min(0).max(65535).default(0),
+      /** off: plain HTTP · self-signed: HTTPS with a certificate Baton creates (your phone will ask you to trust it once). */
+      tls: z.enum(["off", "self-signed"]).default("off"),
+      /** Publish through \`tailscale serve\`: a real HTTPS certificate on your tailnet, reachable from anywhere you're logged in. */
+      tailscale: z.boolean().default(false),
       /** How phones reach the web view (e.g. a Tailscale / tunnel URL); used for one-tap approve buttons in notifications. */
       public_url: z.string().optional(),
     })
-    .default({ autostart: false, lan: false, port: 0 }),
+    .default({ autostart: false, lan: false, port: 0, tls: "off", tailscale: false }),
   daemon: z
     .object({
       /** Keep the daemon alive after the last client detaches. */

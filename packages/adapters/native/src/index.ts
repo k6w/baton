@@ -2,19 +2,30 @@
  * Baton agent — a built-in coding agent that runs on any model provider (via the Vercel AI SDK).
  *
  * Its own loop: model step (streamed, with tools) → run the tool calls (asking Baton when the
- * approval mode says so) → feed results back → repeat until the model stops, the step limit is
- * hit, or the turn is interrupted. Steering messages are injected as user messages before the
- * next model step. MCP servers from the session config (incl. Baton's bus) are exposed as tools.
+ * approval mode says so; read-only calls of one step run concurrently) → feed results back →
+ * repeat until the model stops, the step limit is hit, or the turn is interrupted. Steering
+ * messages are injected as user messages before the next model step. MCP servers from the session
+ * config (incl. Baton's bus) are exposed as tools. Conversations are saved under
+ * <stateDir>/native-sessions so `resumeId` survives daemon restarts.
  *
  * Options (SessionConfig.options):
- *   maxSteps          model steps per turn (default 40)
- *   contextTokens     transcript budget before old tool output is trimmed (default 120000)
- *   commandTimeoutMs  default run_command timeout (default 120000)
- *   maxOutputChars    cap on tool output fed back to the model (default 30000)
- *   temperature       sampling temperature (provider default when unset)
- *   maxOutputTokens   per-step output token cap
- *   providerOptions   passed through to the AI SDK (e.g. { anthropic: { thinking: {...} } })
- *   pricing           { input, output, cachedInput } USD per million tokens (overrides the table)
+ *   maxSteps           model steps per turn (default 40)
+ *   contextTokens      context window used for compaction (default: models.dev limit, else 128k)
+ *   compactThreshold   fraction of contextTokens that triggers a summarising compaction (0.75)
+ *   compactKeepMessages recent messages kept verbatim when compacting (default 8)
+ *   commandTimeoutMs   default run_command timeout (default 120000)
+ *   maxOutputChars     cap on tool output fed back to the model (default 30000)
+ *   temperature        sampling temperature (provider default when unset)
+ *   maxOutputTokens    per-step output token cap
+ *   providerOptions    passed through to the AI SDK (e.g. { anthropic: { thinking: {...} } })
+ *   pricing            { input, output, cachedInput, cacheWrite } USD per million tokens (overrides models.dev)
+ *   promptCaching      Anthropic prompt caching (default true)
+ *   sandbox            "auto" (default) | "off" — OS sandbox for run_command (off under yolo)
+ *   sandboxWritable    extra writable paths for the sandbox
+ *   sandboxNetwork     false blocks network access from commands
+ *   allowPrivateFetch  let web_fetch reach loopback / private addresses
+ *   vision             force image support on/off (default: models.dev / provider)
+ *   fork               with resumeId: copy the conversation into a new session
  */
 
 import { createMCPClient, type MCPClient } from "@ai-sdk/mcp"
@@ -30,34 +41,50 @@ import {
   deferred,
   newId,
   type PromptInput,
+  type ProviderSpec,
   type SessionConfig,
   type ToolContent,
   type ToolKind,
 } from "@batonsh/protocol"
-import { type FinishReason, type ModelMessage, streamText, type Tool, type ToolResultPart, type ToolSet, tool } from "ai"
-import { trimTranscript } from "./context.ts"
+import {
+  type FinishReason,
+  type LanguageModelUsage,
+  type ModelMessage,
+  type SystemModelMessage,
+  streamText,
+  type Tool,
+  type ToolResultPart,
+  type ToolSet,
+  tool,
+} from "ai"
+import { ensureCatalogueFresh, loadCatalogue, topModels } from "./catalogue.ts"
+import { COMPACTION_PROMPT, estimateTokens, renderForSummary, splitForCompaction, summaryMessage, trimTranscript } from "./context.ts"
+import { AUTH_HINT, CLAUDE_SUBSCRIPTION_NOTE, credentialToProvider, type DetectedCredential, detectCredentials, detectCredentialsSync } from "./credentials.ts"
 import { needsApproval } from "./policy.ts"
-import { costUsd, type Price, priceFor } from "./pricing.ts"
+import { contextLimitFor, costUsd, type Price, priceFor, supportsVision } from "./pricing.ts"
 import { systemPrompt } from "./prompt.ts"
-import { envProviderKind, type ResolvedModel, resolveModel } from "./providers.ts"
-import { type AnyTool, BUILTIN_TOOLS, capOutput, type ToolOutcome } from "./tools.ts"
+import { NO_PROVIDER_MESSAGE, type ResolvedModel, resolveModel } from "./providers.ts"
+import { resolveSandbox, type Sandbox, type SandboxSettings, sandboxSettings } from "./sandbox.ts"
+import { loadSession, maybePrune, type StoredSession, saveSession } from "./sessions.ts"
+import { type AnyTool, BUILTIN_TOOLS, capOutput, type ToolImage, type ToolOutcome } from "./tools.ts"
 import { PathEscapeError, Workspace } from "./workspace.ts"
 
 export { trimTranscript } from "./context.ts"
+export { detectCredentials } from "./credentials.ts"
 export { isDestructiveCommand, needsApproval } from "./policy.ts"
-export { costUsd, priceFor } from "./pricing.ts"
+export { contextLimitFor, costUsd, priceFor } from "./pricing.ts"
 export { resolveModel } from "./providers.ts"
 export { PathEscapeError, Workspace } from "./workspace.ts"
 
 export const VERSION = "0.1.0"
 
-/** Conversations kept for `resumeId` — in memory, for the daemon's lifetime only. */
-const transcripts = new Map<string, ModelMessage[]>()
+/** Recent conversations, also kept in memory (a fallback when the state dir is not writable). */
+const transcripts = new Map<string, StoredSession>()
 const MAX_TRANSCRIPTS = 64
 
-function remember(id: string, messages: ModelMessage[]) {
-  transcripts.delete(id)
-  transcripts.set(id, messages)
+function remember(s: StoredSession) {
+  transcripts.delete(s.id)
+  transcripts.set(s.id, s)
   while (transcripts.size > MAX_TRANSCRIPTS) {
     const oldest = transcripts.keys().next().value
     if (oldest === undefined) break
@@ -65,36 +92,49 @@ function remember(id: string, messages: ModelMessage[]) {
   }
 }
 
+/** Last detect() result: lets the sync capabilities() list models for the detected provider. */
+let lastDetected: DetectedCredential | undefined
+
 export const nativeAdapter: AgentAdapter = {
   id: "baton",
   displayName: "Baton agent",
   family: "native",
   binaries: [],
   async detect(): Promise<DetectResult> {
-    const kind = envProviderKind()
+    ensureCatalogueFresh()
+    const c = await detectCredentials({ env: process.env })
+    lastDetected = c
+    if (!c)
+      return {
+        installed: true,
+        version: VERSION,
+        auth: "missing",
+        authHint: AUTH_HINT,
+        protocols: ["in-process"],
+        notes: ["no API key or local model server found (agents with a configured [providers.<name>] entry still work)", CLAUDE_SUBSCRIPTION_NOTE],
+      }
     return {
       installed: true,
       version: VERSION,
-      auth: kind ? "ok" : "unknown",
-      ...(kind
-        ? {}
-        : { authHint: "set ANTHROPIC_API_KEY, OPENAI_API_KEY or OPENROUTER_API_KEY, or give the agent a provider (ollama, lmstudio, openai-compatible …)" }),
+      auth: "ok",
       protocols: ["in-process"],
-      notes: [kind ? `default provider from environment: ${kind}` : "no provider key in the environment; needs a configured provider"],
+      notes: [`default provider: ${c.kind} (from ${c.source})${c.model ? `, model ${c.model}` : ""}`],
     }
   },
   capabilities(): AdapterCapabilities {
+    const c = lastDetected ?? detectCredentialsSync(process.env)
+    const models = c ? (c.models?.length ? c.models.slice(0, 20) : topModels(loadCatalogue(), c.kind, 20)) : []
     return {
       steer: true,
       interrupt: true,
       resume: true,
-      fork: false,
+      fork: true,
       diff: true,
       usage: true,
       cost: true,
       permissions: true,
       mcp: true,
-      models: [],
+      models,
     }
   },
   async start(cfg: SessionConfig, ctx: AdapterContext): Promise<AgentSession> {
@@ -108,14 +148,29 @@ interface McpEntry {
   server: string
   tool: string
   def: Tool
+  readOnly: boolean
 }
 
 interface StepResult {
-  toolCalls: { toolCallId: string; toolName: string; input: unknown; invalid?: boolean; error?: unknown }[]
+  toolCalls: ToolCall[]
   finishReason?: FinishReason
 }
 
+interface ToolCall {
+  toolCallId: string
+  toolName: string
+  input: unknown
+  invalid?: boolean
+  error?: unknown
+}
+
+interface ToolRun {
+  part: ToolResultPart
+  image?: { image: ToolImage; label: string }
+}
+
 const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : d)
+const ANTHROPIC_CACHE = { anthropic: { cacheControl: { type: "ephemeral" } } } as const
 
 class NativeSession implements AgentSession {
   private ws!: Workspace
@@ -124,6 +179,8 @@ class NativeSession implements AgentSession {
   private env: Record<string, string | undefined>
   private messages: ModelMessage[] = []
   private sessionId = newId("baton")
+  private createdAt = new Date().toISOString()
+  private forkedFrom?: string
   private system = ""
   private builtins = new Map<string, AnyTool>(BUILTIN_TOOLS.map((t) => [t.name, t]))
   private mcp = new Map<string, McpEntry>()
@@ -141,10 +198,23 @@ class NativeSession implements AgentSession {
   private remembered = new Map<string, "allow" | "deny">()
   private usage = { input: 0, cachedInput: 0, output: 0, reasoning: 0, costUsd: 0 }
 
+  /** Provider-reported prompt size of the last step, and the transcript length it covered. */
+  private usageMark?: { tokens: number; at: number }
+  /** Estimate at which the last compaction attempt failed (don't retry until it grows 10%). */
+  private compactFailedAt = 0
+  private contextTokens = 128_000
+  private vision = false
+
+  /** Provider found by credential detection (when none is configured and no env key is set). */
+  private detected?: ProviderSpec
+  private sandboxSettings: SandboxSettings
+  private sandboxCache?: { approval: ApprovalMode; sandbox: Sandbox }
+
   private readonly maxSteps: number
-  private readonly contextChars: number
   private readonly commandTimeoutMs: number
   private readonly maxOutputChars: number
+  private readonly compactThreshold: number
+  private readonly compactKeep: number
   private emit: (e: AgentEvent) => void
 
   constructor(
@@ -156,25 +226,58 @@ class NativeSession implements AgentSession {
     }
     const o = cfg.options ?? {}
     this.maxSteps = num(o.maxSteps, 40)
-    this.contextChars = num(o.contextTokens, 120_000) * 4
     this.commandTimeoutMs = num(o.commandTimeoutMs, 120_000)
     this.maxOutputChars = num(o.maxOutputChars, 30_000)
+    this.compactThreshold = Math.min(0.95, num(o.compactThreshold, 0.75))
+    this.compactKeep = Math.max(2, Math.floor(num(o.compactKeepMessages, 8)))
+    this.sandboxSettings = sandboxSettings(o)
     this.env = { ...process.env, ...cfg.env }
   }
 
   async init(): Promise<void> {
     this.ws = new Workspace(this.cfg.cwd)
-    this.setResolved(resolveModel(this.cfg.provider, this.cfg.model, this.env))
+    try {
+      maybePrune()
+    } catch {}
+    ensureCatalogueFresh()
+
+    let stored: StoredSession | undefined
     if (this.cfg.resumeId) {
-      const prior = transcripts.get(this.cfg.resumeId)
-      if (prior) {
-        this.sessionId = this.cfg.resumeId
-        this.messages = prior
-      } else this.ctx.log("warn", `resume id ${this.cfg.resumeId} not found (conversations are kept in memory only); starting fresh`)
+      const id = this.cfg.resumeId
+      stored = transcripts.get(id) ?? loadSession(id)
+      if (stored) {
+        this.messages = structuredClone(stored.messages)
+        if (this.cfg.options?.fork === true) {
+          this.forkedFrom = id
+          this.ctx.log("info", `forked session ${id} → ${this.sessionId}`)
+        } else {
+          this.sessionId = id
+          this.createdAt = stored.createdAt
+          this.forkedFrom = stored.forkedFrom
+        }
+      } else this.ctx.log("warn", `resume id ${id} not found; starting a fresh conversation`)
     }
+
+    await this.resolveProvider(stored)
+
     const mcpInstructions = await this.connectMcp()
-    this.system = systemPrompt({ cwd: this.ws.root, extra: this.cfg.systemPrompt, mcpInstructions })
+    this.currentSandbox() // logs the effective sandbox
+    // the note stays valid when autonomy changes later (yolo lifts the sandbox; the note says "may")
+    const sandboxAvailable =
+      this.sandboxSettings.mode === "auto" &&
+      resolveSandbox({ settings: this.sandboxSettings, approval: "ask", cwd: this.ws.root, env: this.env }).kind !== "none"
+    this.system = systemPrompt({
+      cwd: this.ws.root,
+      extra: this.cfg.systemPrompt,
+      mcpInstructions,
+      sandbox: sandboxAvailable
+        ? `Commands may run in a sandbox: writing outside the workspace, the temp directories and ~/.cache fails with "Operation not permitted"${
+            this.sandboxSettings.network ? "" : ", and network access is blocked"
+          }. If a command fails because of the sandbox, say what you need instead of working around it.`
+        : undefined,
+    })
     this.buildModelTools()
+    if (this.forkedFrom && this.cfg.options?.fork === true) this.persist()
     this.ctx.signal.addEventListener("abort", () => void this.close(), { once: true })
     queueMicrotask(() => {
       this.emit({ type: "agent.session", data: { sessionId: this.sessionId } })
@@ -183,9 +286,50 @@ class NativeSession implements AgentSession {
     })
   }
 
+  /** Configured provider → environment key → detected credential (key files, local servers). */
+  private async resolveProvider(stored: StoredSession | undefined) {
+    let r: ResolvedModel
+    try {
+      r = resolveModel(this.cfg.provider, this.cfg.model, this.env)
+    } catch (e) {
+      if (!(e instanceof Error) || e.message !== NO_PROVIDER_MESSAGE) throw e
+      const det = await detectCredentials({ env: this.env })
+      if (!det) throw e
+      this.ctx.log("info", `using ${det.kind} from ${det.source}`)
+      this.detected = credentialToProvider(det)
+      r = resolveModel(undefined, this.cfg.model ?? det.model, this.env, this.detected)
+    }
+    // a resumed session keeps its model when the agent doesn't pin one and the provider is the same
+    if (!this.cfg.model && stored?.model && stored.providerId === r.providerId && stored.model !== r.modelId) {
+      try {
+        r = resolveModel(this.cfg.provider, stored.model, this.env, this.detected)
+      } catch {}
+    }
+    this.setResolved(r)
+  }
+
   private setResolved(r: ResolvedModel) {
     this.resolved = r
-    this.price = priceFor(r.modelId, r.kind, this.cfg.options?.pricing)
+    const o = this.cfg.options ?? {}
+    const cat = loadCatalogue()
+    this.price = priceFor(r.modelId, r.kind, o.pricing, cat)
+    this.contextTokens = num(o.contextTokens, contextLimitFor(r.modelId, r.kind, cat))
+    this.vision = typeof o.vision === "boolean" ? o.vision : (supportsVision(r.modelId, r.kind, cat) ?? false)
+  }
+
+  private currentSandbox(): Sandbox {
+    const approval = this.cfg.approval
+    if (this.sandboxCache?.approval === approval) return this.sandboxCache.sandbox
+    const sandbox = resolveSandbox({
+      settings: this.sandboxSettings,
+      approval,
+      cwd: this.ws.root,
+      env: this.env,
+      log: (level, msg) => this.ctx.log(level, msg),
+    })
+    this.sandboxCache = { approval, sandbox }
+    this.ctx.log("info", `run_command sandbox: ${sandbox.describe()}`)
+    return sandbox
   }
 
   private async connectMcp(): Promise<string[]> {
@@ -210,7 +354,8 @@ class NativeSession implements AgentSession {
             if (taken.has(exposed)) exposed = sanitizeToolName(`${srv.name}__${name}`)
             if (taken.has(exposed)) continue
             taken.add(exposed)
-            this.mcp.set(exposed, { server: srv.name, tool: name, def })
+            const readOnly = (def as { metadata?: { annotations?: { readOnlyHint?: boolean } } }).metadata?.annotations?.readOnlyHint === true
+            this.mcp.set(exposed, { server: srv.name, tool: name, def, readOnly })
           }
           if (client.instructions) instructions.push(`# ${srv.name} (MCP)\n${client.instructions}`)
           this.ctx.log("info", `mcp ${srv.name}: ${Object.keys(tools).length} tools`)
@@ -274,7 +419,8 @@ class NativeSession implements AgentSession {
 
   async setModel(model: string): Promise<void> {
     if (this.closed) throw new Error("baton agent session is closed")
-    this.setResolved(resolveModel(this.cfg.provider, model, this.env))
+    this.setResolved(resolveModel(this.cfg.provider, model, this.env, this.detected))
+    this.usageMark = undefined
     this.cfg = { ...this.cfg, model }
     this.emit({ type: "agent.updated", data: { model: this.resolved.modelId, provider: this.resolved.providerId } })
   }
@@ -294,9 +440,32 @@ class NativeSession implements AgentSession {
     if (turnId) this.emit({ type: "turn.interrupted", data: { turnId } })
     this.emit({ type: "agent.exited", data: { code: 0, reason: "closed" } })
     this.closed = true
-    remember(this.sessionId, this.messages)
+    this.persist()
     const clients = this.mcpClients.splice(0)
     await Promise.all(clients.map((c) => withTimeout(c.close(), 3000, "closing MCP client").catch(() => {})))
+  }
+
+  /** Save the conversation (never credentials) to disk and the in-memory cache. */
+  private persist() {
+    if (!this.messages.length) return
+    const s: StoredSession = {
+      version: 1,
+      id: this.sessionId,
+      createdAt: this.createdAt,
+      updatedAt: new Date().toISOString(),
+      cwd: this.ws?.root,
+      providerId: this.resolved?.providerId,
+      kind: this.resolved?.kind,
+      model: this.resolved?.modelId,
+      ...(this.forkedFrom ? { forkedFrom: this.forkedFrom } : {}),
+      messages: this.messages,
+    }
+    remember({ ...s, messages: [...this.messages] })
+    try {
+      saveSession(s)
+    } catch (e) {
+      this.ctx.log("warn", `could not save session ${this.sessionId}: ${errMsg(e)} (kept in memory only)`)
+    }
   }
 
   // ───────────────────────────── the loop ─────────────────────────────
@@ -322,7 +491,8 @@ class NativeSession implements AgentSession {
           break
         }
         step++
-        this.trimContext()
+        await this.manageContext(abort.signal)
+        if (abort.signal.aborted) break
         const r = await this.modelStep(abort.signal)
         if (abort.signal.aborted) break
         if (r.toolCalls.length === 0) {
@@ -345,7 +515,7 @@ class NativeSession implements AgentSession {
       this.running = false
       this.turnAbort = undefined
       this.currentTurnId = undefined
-      remember(this.sessionId, this.messages)
+      this.persist()
       this.emit({ type: "agent.status", data: { status: "ready" } })
       const next = this.closed ? undefined : this.queue.shift()
       if (next) void this.runTurn(next)
@@ -359,26 +529,114 @@ class NativeSession implements AgentSession {
     }
   }
 
-  private trimContext() {
-    const r = trimTranscript(this.messages, this.contextChars)
-    if (r.trimmedOutputs || r.droppedMessages) {
-      this.messages = r.messages
-      this.ctx.log("info", `context trimmed: ${r.trimmedOutputs} tool outputs stubbed, ${r.droppedMessages} messages dropped`)
+  private say(text: string, role: "assistant" | "thought" = "assistant") {
+    const messageId = newId("msg")
+    this.emit({ type: "message.delta", data: { messageId, role, text } })
+    this.emit({ type: "message.completed", data: { messageId, role, text } })
+  }
+
+  // ───────────────────────────── context ─────────────────────────────
+
+  /** Prompt size of the next request: the last reported input tokens + an estimate of what was added since. */
+  private estimatePromptTokens(): number {
+    const m = this.usageMark
+    if (m && m.at <= this.messages.length) return m.tokens + estimateTokens(this.messages.slice(m.at))
+    return estimateTokens(this.messages) + Math.ceil(this.system.length / 4)
+  }
+
+  private async manageContext(signal: AbortSignal) {
+    const est = this.estimatePromptTokens()
+    const limit = this.contextTokens
+    if (est > limit * this.compactThreshold && (!this.compactFailedAt || est > this.compactFailedAt * 1.1)) await this.compact(est, signal)
+    // hard guard (≈ 4 chars/token), also the fallback when summarising is impossible
+    this.trim(limit * 4, "context trimmed")
+  }
+
+  private trim(budgetChars: number, what: string): boolean {
+    const r = trimTranscript(this.messages, budgetChars)
+    if (!r.trimmedOutputs && !r.droppedMessages) return false
+    this.messages = r.messages
+    this.usageMark = undefined
+    this.ctx.log("info", `${what}: ${r.trimmedOutputs} tool outputs stubbed, ${r.droppedMessages} messages dropped`)
+    return true
+  }
+
+  /** Replace the middle of the conversation with a model-written summary. */
+  private async compact(estimate: number, signal: AbortSignal) {
+    const limit = this.contextTokens
+    const fallbackBudget = Math.floor(limit * this.compactThreshold * 0.8 * 4)
+    const split = splitForCompaction(this.messages, this.compactKeep)
+    if (!split) {
+      this.compactFailedAt = estimate
+      this.trim(fallbackBudget, "context near the limit, nothing to summarise; trimmed")
+      return
+    }
+    try {
+      const excerpt = renderForSummary(split.middle, Math.max(20_000, Math.floor(limit * 2)))
+      const summary = await this.complete(COMPACTION_PROMPT, `Conversation excerpt to summarise:\n\n${excerpt}`, signal)
+      if (!summary.trim()) throw new Error("empty summary")
+      this.messages = [...split.head, summaryMessage(summary), ...split.tail]
+      this.usageMark = undefined
+      this.compactFailedAt = 0
+      const after = this.estimatePromptTokens()
+      this.ctx.log("info", `orch.note: context compacted — ${split.middle.length} messages summarised (~${estimate} → ~${after} tokens, limit ${limit})`)
+      this.say("(context compacted)", "thought")
+    } catch (e) {
+      if (signal.aborted) return
+      this.compactFailedAt = estimate
+      this.ctx.log("warn", `context compaction failed (${errMsg(e)}); falling back to trimming`)
+      this.trim(fallbackBudget, "context trimmed")
     }
   }
 
-  private say(text: string) {
-    const messageId = newId("msg")
-    this.emit({ type: "message.delta", data: { messageId, role: "assistant", text } })
-    this.emit({ type: "message.completed", data: { messageId, role: "assistant", text } })
+  /** One plain model call (no tools) — used for the compaction summary. Usage is counted. */
+  private async complete(instructions: string, prompt: string, signal: AbortSignal): Promise<string> {
+    // no providerOptions: e.g. a thinking budget larger than this call's output cap would fail it
+    const result = streamText({
+      model: this.resolved.model,
+      instructions,
+      messages: [{ role: "user", content: prompt }],
+      abortSignal: signal,
+      maxRetries: 1,
+      maxOutputTokens: 4000,
+      onError: () => {},
+    })
+    let text = ""
+    for await (const part of result.fullStream) {
+      if (part.type === "text-delta") text += part.text
+      else if (part.type === "finish-step") this.addUsage(part.usage)
+      else if (part.type === "error") throw part.error instanceof Error ? part.error : new Error(errMsg(part.error))
+    }
+    return text
+  }
+
+  // ───────────────────────────── model step ─────────────────────────────
+
+  private cachingOn(): boolean {
+    return this.resolved.kind === "anthropic" && this.cfg.options?.promptCaching !== false
+  }
+
+  /** Anthropic: cache breakpoints on the system prompt and the last user/tool message (a per-step copy). */
+  private requestMessages(): { instructions: string | SystemModelMessage; messages: ModelMessage[] } {
+    if (!this.cachingOn()) return { instructions: this.system, messages: this.messages }
+    const messages = [...this.messages]
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i] as ModelMessage
+      if (m.role !== "user" && m.role !== "tool") continue
+      messages[i] = { ...m, providerOptions: { ...(m.providerOptions ?? {}), ...ANTHROPIC_CACHE } } as ModelMessage
+      break
+    }
+    return { instructions: { role: "system", content: this.system, providerOptions: ANTHROPIC_CACHE }, messages }
   }
 
   private async modelStep(signal: AbortSignal): Promise<StepResult> {
     const o = this.cfg.options ?? {}
+    const sentLength = this.messages.length
+    const req = this.requestMessages()
     const result = streamText({
       model: this.resolved.model,
-      instructions: this.system,
-      messages: this.messages,
+      instructions: req.instructions,
+      messages: req.messages,
       tools: this.modelTools,
       abortSignal: signal,
       maxRetries: 2,
@@ -409,6 +667,7 @@ class NativeSession implements AgentSession {
       this.emit({ type: "message.delta", data: { messageId: m.messageId, role, text } })
     }
     let streamError: unknown
+    let stepInput: number | undefined
     try {
       for await (const part of result.fullStream) {
         switch (part.type) {
@@ -435,7 +694,7 @@ class NativeSession implements AgentSession {
             break
           case "finish-step":
             out.finishReason = part.finishReason
-            this.addUsage(part.usage)
+            stepInput = this.addUsage(part.usage)
             break
           case "error":
             streamError = part.error
@@ -460,48 +719,82 @@ class NativeSession implements AgentSession {
       throw streamError instanceof Error ? streamError : new Error(errMsg(streamError))
     }
     const response = await result.response
+    if (stepInput) this.usageMark = { tokens: stepInput, at: sentLength }
     this.messages.push(...response.messages)
     return out
   }
 
-  private addUsage(u: {
-    inputTokens: number | undefined
-    outputTokens: number | undefined
-    inputTokenDetails?: { cacheReadTokens: number | undefined; cacheWriteTokens: number | undefined }
-    outputTokenDetails?: { reasoningTokens: number | undefined }
-  }) {
+  /** Adds a step's usage to the session totals; returns its input tokens (incl. cache reads/writes). */
+  private addUsage(
+    u: Pick<LanguageModelUsage, "inputTokens" | "outputTokens"> & {
+      inputTokenDetails?: Partial<LanguageModelUsage["inputTokenDetails"]>
+      outputTokenDetails?: Partial<LanguageModelUsage["outputTokenDetails"]>
+    },
+  ): number {
     const input = u.inputTokens ?? 0
     const output = u.outputTokens ?? 0
     const cacheRead = u.inputTokenDetails?.cacheReadTokens ?? 0
     const cacheWrite = u.inputTokenDetails?.cacheWriteTokens ?? 0
-    if (!input && !output) return
+    if (!input && !output) return 0
     this.usage.input += input
     this.usage.cachedInput += cacheRead
     this.usage.output += output
     this.usage.reasoning += u.outputTokenDetails?.reasoningTokens ?? 0
     this.usage.costUsd += costUsd(this.price, { input, cacheRead, cacheWrite, output })
     this.emit({ type: "usage.updated", data: { ...this.usage, source: "reported", mode: "cumulative" } })
+    return input
   }
 
   // ───────────────────────────── tools ─────────────────────────────
 
-  private async runTools(calls: StepResult["toolCalls"], signal: AbortSignal) {
-    const results: ToolResultPart[] = []
-    for (const c of calls) {
-      if (signal.aborted) {
-        results.push(toolResult(c, "Not run: the turn was interrupted.", true))
-        continue
-      }
-      try {
-        results.push(await this.runTool(c, signal))
-      } catch (e) {
-        results.push(toolResult(c, `Tool failed: ${errMsg(e)}`, true))
-      }
-    }
-    this.messages.push({ role: "tool", content: results })
+  /** Read-only and not gated by an approval prompt → may run concurrently with its neighbours. */
+  private parallelSafe(c: ToolCall): boolean {
+    if (c.invalid) return false
+    const b = this.builtins.get(c.toolName)
+    if (b) return !!b.readOnly && !needsApproval(this.cfg.approval, b.category)
+    return this.mcp.get(c.toolName)?.readOnly === true
   }
 
-  private async runTool(c: StepResult["toolCalls"][number], signal: AbortSignal): Promise<ToolResultPart> {
+  private async runTools(calls: ToolCall[], signal: AbortSignal) {
+    const runs: ToolRun[] = new Array(calls.length)
+    const runOne = async (c: ToolCall): Promise<ToolRun> => {
+      if (signal.aborted) return { part: toolResult(c, "Not run: the turn was interrupted.", true) }
+      try {
+        return await this.runTool(c, signal)
+      } catch (e) {
+        return { part: toolResult(c, `Tool failed: ${errMsg(e)}`, true) }
+      }
+    }
+    let i = 0
+    while (i < calls.length) {
+      let j = i
+      while (j < calls.length && this.parallelSafe(calls[j] as ToolCall)) j++
+      if (j - i > 1) {
+        // runTool emits tool.call synchronously before its first await → events stay in request order
+        const batch = await Promise.all(calls.slice(i, j).map(runOne))
+        batch.forEach((r, k) => {
+          runs[i + k] = r
+        })
+        i = j
+      } else {
+        runs[i] = await runOne(calls[i] as ToolCall)
+        i++
+      }
+    }
+    this.messages.push({ role: "tool", content: runs.map((r) => r.part) })
+    // providers without image support in tool results get the pictures as a user message
+    const images = runs.filter((r) => r.image)
+    if (images.length)
+      this.messages.push({
+        role: "user",
+        content: images.flatMap((r) => [
+          { type: "text" as const, text: `[image from ${r.image?.label}]` },
+          { type: "file" as const, data: r.image?.image.data as string, mediaType: r.image?.image.mediaType as string },
+        ]),
+      })
+  }
+
+  private async runTool(c: ToolCall, signal: AbortSignal): Promise<ToolRun> {
     const id = newId("tc")
     const builtin = this.builtins.get(c.toolName)
     const mcp = this.mcp.get(c.toolName)
@@ -509,15 +802,15 @@ class NativeSession implements AgentSession {
       const why = !builtin && !mcp ? `Unknown tool "${c.toolName}".` : `Invalid arguments for ${c.toolName}: ${errMsg(c.error)}`
       this.emit({ type: "tool.call", data: { toolCallId: id, kind: "other", name: c.toolName, title: c.toolName, status: "pending", rawInput: c.input } })
       this.emit({ type: "tool.update", data: { toolCallId: id, status: "failed", summary: !builtin && !mcp ? "Unknown tool" : "Invalid input" } })
-      return toolResult(c, why, true)
+      return { part: toolResult(c, why, true) }
     }
-    if (mcp) return this.runMcpTool(id, c, mcp, signal)
+    if (mcp) return { part: await this.runMcpTool(id, c, mcp, signal) }
     const t = builtin as AnyTool
     const parsed = t.schema.safeParse(c.input ?? {})
     if (!parsed.success) {
       this.emit({ type: "tool.call", data: { toolCallId: id, kind: t.kind, name: t.name, title: t.name, status: "pending", rawInput: c.input } })
       this.emit({ type: "tool.update", data: { toolCallId: id, status: "failed", summary: "Invalid input" } })
-      return toolResult(c, `Invalid arguments for ${t.name}: ${parsed.error.message}`, true)
+      return { part: toolResult(c, `Invalid arguments for ${t.name}: ${parsed.error.message}`, true) }
     }
     const input = parsed.data
     const title = t.title(input)
@@ -537,20 +830,23 @@ class NativeSession implements AgentSession {
         this.ws.resolve(pathArg)
       } catch (e) {
         this.emit({ type: "tool.update", data: { toolCallId: id, status: "failed", summary: "Refused: outside workspace" } })
-        return toolResult(c, `Refused: ${errMsg(e)}`, true)
+        return { part: toolResult(c, `Refused: ${errMsg(e)}`, true) }
       }
     }
 
     const command = typeof input.command === "string" ? input.command : undefined
+    const url = typeof input.url === "string" ? input.url : undefined
     if (needsApproval(this.cfg.approval, t.category, command)) {
-      const allowed = await this.ask(id, title, t.kind, t.permissionKey(input), command ?? pathArg, signal)
+      const allowed = await this.ask(id, title, t.kind, t.permissionKey(input), command ?? url ?? pathArg, signal)
       if (!allowed) {
         this.emit({ type: "tool.update", data: { toolCallId: id, status: "failed", summary: signal.aborted ? "Interrupted" : "Denied" } })
-        return toolResult(
-          c,
-          signal.aborted ? "Not run: the turn was interrupted." : "The user denied this tool call. Do not retry it; adjust your approach or ask.",
-          true,
-        )
+        return {
+          part: toolResult(
+            c,
+            signal.aborted ? "Not run: the turn was interrupted." : "The user denied this tool call. Do not retry it; adjust your approach or ask.",
+            true,
+          ),
+        }
       }
     }
 
@@ -564,6 +860,9 @@ class NativeSession implements AgentSession {
         commandTimeoutMs: this.commandTimeoutMs,
         maxOutputChars: this.maxOutputChars,
         progress: (content) => this.emit({ type: "tool.update", data: { toolCallId: id, content } }),
+        sandbox: t.category === "execute" ? this.currentSandbox() : undefined,
+        vision: this.vision,
+        allowPrivateFetch: this.cfg.options?.allowPrivateFetch === true,
       })
     } catch (e) {
       const refused = e instanceof PathEscapeError
@@ -578,10 +877,30 @@ class NativeSession implements AgentSession {
         ...(outcome.content ? { content: outcome.content } : outcome.isError ? { content: [{ type: "text" as const, text: outcome.output }] } : {}),
       },
     })
-    return toolResult(c, capOutput(outcome.output, this.maxOutputChars), !!outcome.isError)
+    const text = capOutput(outcome.output, this.maxOutputChars)
+    if (outcome.image && !outcome.isError) {
+      // Anthropic and OpenAI accept images inside tool results; OpenAI-compatible chat APIs don't
+      if (this.resolved.kind === "anthropic" || this.resolved.kind === "openai")
+        return {
+          part: {
+            type: "tool-result",
+            toolCallId: c.toolCallId,
+            toolName: c.toolName,
+            output: {
+              type: "content",
+              value: [
+                { type: "text", text },
+                { type: "file", data: { type: "data", data: outcome.image.data }, mediaType: outcome.image.mediaType },
+              ],
+            },
+          },
+        }
+      return { part: toolResult(c, `${text} (the image follows in the next message)`, false), image: { image: outcome.image, label: title } }
+    }
+    return { part: toolResult(c, text, !!outcome.isError) }
   }
 
-  private async runMcpTool(id: string, c: StepResult["toolCalls"][number], e: McpEntry, signal: AbortSignal): Promise<ToolResultPart> {
+  private async runMcpTool(id: string, c: ToolCall, e: McpEntry, signal: AbortSignal): Promise<ToolResultPart> {
     const name = `mcp__${e.server}__${e.tool}`
     const args = c.input && typeof c.input === "object" ? JSON.stringify(c.input) : ""
     const title = `${e.tool}${args && args !== "{}" ? ` ${oneLine(args, 70)}` : ""}`
@@ -621,6 +940,7 @@ class NativeSession implements AgentSession {
     }
     signal.addEventListener("abort", onAbort, { once: true })
     this.emit({ type: "agent.status", data: { status: "awaiting_approval" } })
+    // The daemon emits permission.resolved itself when it answers (runtime.resolvePermission), so we don't.
     this.emit({
       type: "permission.requested",
       data: { requestId, toolCallId, title, kind, ...(detail ? { detail } : {}), options: DEFAULT_PERMISSION_OPTIONS },

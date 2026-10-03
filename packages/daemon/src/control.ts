@@ -5,13 +5,17 @@
 import { existsSync, unlinkSync } from "node:fs"
 import {
   CONTROL_PROTOCOL_VERSION,
+  ControlErrorCode,
+  type ControlErrorKind,
   type ControlMethod,
   type ControlParams,
   type ControlResult,
+  classifyError,
   JsonRpcError,
   JsonRpcPeer,
   matchesType,
   newId,
+  REQUIRED_PARAMS,
 } from "@batonsh/protocol"
 import type { Socket } from "bun"
 import { ensureA2A, stopA2A } from "./a2a-server.ts"
@@ -120,7 +124,16 @@ export function startControlServer(
     "config.get": () => ({ config: rt.config }),
     "remote.start": (p) => {
       const s = ensureRemote(rt, p ?? {})
-      return { url: s.url, openUrl: s.openUrl, lanUrls: s.lanUrls, lan: s.lan, qr: qrLines(s.openUrl) }
+      return {
+        url: s.url,
+        openUrl: s.openUrl,
+        lanUrls: s.lanUrls,
+        lan: s.lan,
+        qr: qrLines(s.openUrl),
+        tls: s.tls,
+        fingerprint: s.fingerprint,
+        publicUrl: s.publicUrl,
+      }
     },
     "scorecards.get": () => ({ rows: getScorecards(rt) }),
     "a2a.start": (p) => {
@@ -225,11 +238,26 @@ export function startControlServer(
         }
         for (const [method, h] of Object.entries(handlers)) {
           conn.peer.onRequest(method, async (params) => {
+            const fail = (kind: ControlErrorKind, message: string): never => {
+              throw new JsonRpcError(ControlErrorCode[kind], message, { kind })
+            }
+            // validate before the handler sees anything
+            const p = (params ?? {}) as Record<string, unknown>
+            if (typeof p !== "object" || Array.isArray(p)) fail("InvalidParams", `${method}: params must be an object`)
+            const missing = (REQUIRED_PARAMS[method] ?? []).filter((k) => p[k] === undefined || p[k] === null || p[k] === "")
+            if (missing.length) fail("InvalidParams", `${method}: missing ${missing.join(", ")}`)
+            if (method === "hello" && typeof p.version === "number" && p.version > CONTROL_PROTOCOL_VERSION)
+              fail(
+                "VersionMismatch",
+                `this client speaks protocol ${p.version}, the daemon ${CONTROL_PROTOCOL_VERSION} — restart the daemon (baton stop) to upgrade it`,
+              )
             try {
               return await (h as Handler<ControlMethod>)(params as never, conn)
             } catch (e) {
               if (e instanceof JsonRpcError) throw e
-              throw new JsonRpcError(-32000, e instanceof Error ? e.message : String(e))
+              const message = e instanceof Error ? e.message : String(e)
+              const kind = classifyError(message)
+              throw new JsonRpcError(ControlErrorCode[kind], message, { kind })
             }
           })
         }

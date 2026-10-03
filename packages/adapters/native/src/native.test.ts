@@ -1,3 +1,4 @@
+import "./testing/env.ts"
 import { afterAll, describe, expect, test } from "bun:test"
 import { existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"

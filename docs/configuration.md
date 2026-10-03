@@ -159,6 +159,8 @@ events = ["approval", "done", "error"]   # + "merge"
 autostart = false
 lan = false                       # reachable from other devices on your network
 port = 0                          # fixed port keeps bookmarks working
+tls = "off"                       # off | self-signed (HTTPS with a certificate Baton creates)
+tailscale = false                 # publish via `tailscale serve` (real certificate on your tailnet)
 # public_url = "https://my-mac.tailnet.ts.net:4777"   # for one-tap approve buttons in notifications
 
 [a2a]                             # serve the team as an A2A agent (docs/a2a.md)
@@ -167,6 +169,8 @@ host = "127.0.0.1"
 port = 0
 token = true                      # require the bearer token printed by `baton a2a`
 idle_ms = 2000                    # quiet time before a task counts as done
+questions_as_input = true         # a lead's closing question becomes input-required
+allow_private_push = false        # allow push webhooks to private/loopback addresses (local setups only)
 
 [github]                          # /issue and /pr (docs/integrations.md)
 api_url = "https://api.github.com"   # GitHub Enterprise: https://ghe.example.com/api/v3

@@ -59,6 +59,34 @@ class ConnectionClosed(BatonError):
     """The connection to the daemon is closed."""
 
 
+class InvalidParams(BatonError):
+    """Missing or malformed parameters (code -32602)."""
+
+
+class NotFound(BatonError):
+    """No such agent / task / run / request (code -32004)."""
+
+
+class Unavailable(BatonError):
+    """It exists but can't do that now, e.g. the agent isn't running (code -32010)."""
+
+
+class Conflict(BatonError):
+    """Conflicts with the current state: limits, budget, a merge in progress (code -32009)."""
+
+
+class VersionMismatch(BatonError):
+    """This client speaks a newer protocol than the daemon (code -32011)."""
+
+
+_ERRORS = {-32602: InvalidParams, -32004: NotFound, -32010: Unavailable, -32009: Conflict, -32011: VersionMismatch}
+
+
+def _error(code: int, message: str, data: Any = None) -> BatonError:
+    """The most specific error class for a daemon error code."""
+    return _ERRORS.get(code, BatonError)(code, message, data)
+
+
 class _Pending:
     __slots__ = ("done", "result", "error")
 
@@ -227,7 +255,7 @@ class Client:
             return
         err = msg.get("error")
         if err is not None:
-            p.error = BatonError(err.get("code", -32603), err.get("message", "error"), err.get("data"))
+            p.error = _error(err.get("code", -32603), err.get("message", "error"), err.get("data"))
         else:
             p.result = msg.get("result")
         p.done.set()

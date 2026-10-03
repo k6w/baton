@@ -1,7 +1,8 @@
 /**
- * Small USD price table (per million tokens) for common hosted models. Unknown and local models
- * cost 0. Override per agent with `options.pricing = { input, output, cachedInput }`.
+ * USD prices (per million tokens) and context limits. Order: `options.pricing` override → the
+ * models.dev catalogue (catalogue.ts) → a small built-in table. Unknown and local models cost 0.
  */
+import { type Catalogue, loadCatalogue, lookupModel } from "./catalogue.ts"
 
 export interface Price {
   input: number
@@ -46,15 +47,54 @@ const TABLE: [RegExp, Price][] = [
 
 const FREE_KINDS = new Set(["ollama", "lmstudio"])
 
-export function priceFor(modelId: string, kind?: string, override?: unknown): Price | undefined {
+export function priceFor(modelId: string, kind?: string, override?: unknown, cat: Catalogue | undefined = loadCatalogue()): Price | undefined {
   if (override && typeof override === "object") {
     const o = override as Record<string, unknown>
     if (typeof o.input === "number" && typeof o.output === "number")
-      return { input: o.input, output: o.output, cachedInput: typeof o.cachedInput === "number" ? o.cachedInput : undefined }
+      return {
+        input: o.input,
+        output: o.output,
+        cachedInput: typeof o.cachedInput === "number" ? o.cachedInput : undefined,
+        cacheWrite: typeof o.cacheWrite === "number" ? o.cacheWrite : undefined,
+      }
   }
   if (kind && FREE_KINDS.has(kind)) return undefined
+  const m = lookupModel(cat, kind ?? "", modelId)
+  if (m?.cost) return { input: m.cost.input, output: m.cost.output, cachedInput: m.cost.cacheRead, cacheWrite: m.cost.cacheWrite }
   const id = modelId.toLowerCase().replace(/\./g, "-")
   for (const [re, price] of TABLE) if (re.test(id)) return price
+  return undefined
+}
+
+/** Context windows when the catalogue has nothing (first match wins). */
+const CONTEXT_TABLE: [RegExp, number][] = [
+  [/claude/, 200_000],
+  [/gpt-5|gpt-4-1|gpt-4\.1/, 400_000],
+  [/gpt-4o|o3|o4/, 128_000],
+  [/gemini/, 1_000_000],
+  [/deepseek/, 128_000],
+  [/kimi-k2/, 256_000],
+  [/qwen3-coder/, 256_000],
+  [/grok-4|grok-code/, 256_000],
+]
+
+export const DEFAULT_CONTEXT_TOKENS = 128_000
+
+/** Context window (tokens) for a model: catalogue → built-in table → 128k. */
+export function contextLimitFor(modelId: string, kind?: string, cat: Catalogue | undefined = loadCatalogue()): number {
+  const m = lookupModel(cat, kind ?? "", modelId)
+  if (m?.context) return m.context
+  const id = modelId.toLowerCase()
+  for (const [re, n] of CONTEXT_TABLE) if (re.test(id)) return n
+  return DEFAULT_CONTEXT_TOKENS
+}
+
+/** Does the model accept image input? `undefined` = unknown. */
+export function supportsVision(modelId: string, kind?: string, cat: Catalogue | undefined = loadCatalogue()): boolean | undefined {
+  const m = lookupModel(cat, kind ?? "", modelId)
+  if (m?.vision !== undefined) return m.vision
+  if (kind === "anthropic" && /claude-(3|sonnet|opus|haiku)/.test(modelId)) return true
+  if (kind === "openai" && /gpt-4o|gpt-4\.1|gpt-4-1|gpt-5|o3|o4/.test(modelId)) return true
   return undefined
 }
 

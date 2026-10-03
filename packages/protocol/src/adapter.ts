@@ -13,6 +13,10 @@ export interface DetectResult {
   /** "ok" = credentials found, "missing" = definitely not logged in, "unknown" = can't tell. */
   auth: "ok" | "missing" | "unknown"
   authHint?: string // e.g. "run `codex login`"
+  /** The agent's own interactive sign-in command (`baton login <agent>` runs it). */
+  login?: string[]
+  /** How the agent is signed in, when it says (e.g. "Claude subscription", "API key"). */
+  authMethod?: string
   protocols: string[] // e.g. ["app-server", "exec-json", "acp"]
   notes?: string[]
 }

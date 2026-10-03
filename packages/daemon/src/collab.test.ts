@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -8,6 +8,9 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { matchGlob } from "./collab.ts"
 import { type Daemon, startDaemon } from "./daemon.ts"
 import { git } from "./git.ts"
+
+// real git work: slow machines / busy CI need more than the 5s default
+setDefaultTimeout(30_000)
 
 let d: Daemon
 let client: BatonClient

@@ -2,7 +2,23 @@
 
 ## Supported agents
 
-Run `baton agents` to see what's installed and logged in on your machine.
+Run `baton agents` to see what's installed and logged in on your machine (and how: "Claude subscription",
+"API key", …). `baton login [agent]` runs that agent's own sign-in (`claude auth login`, `codex login`,
+`opencode auth login`, …); Baton never sees the credentials.
+
+### Signing in, and your Claude subscription
+
+Baton runs each agent's own, unmodified CLI with **your own login** — exactly how you'd use it in a terminal.
+Logged in to Claude Code with a Claude Pro/Max/Team plan? The `claude` agent uses it; nothing else to set up.
+
+What Baton deliberately does **not** do: read Claude Code's OAuth token (from the Keychain, `~/.claude`, or
+`CLAUDE_CODE_OAUTH_TOKEN`) to call Anthropic's API from anything else — including Baton's own `baton` agent.
+Anthropic's terms reserve subscription credentials for Claude Code and Anthropic's apps and forbid third-party
+tools from routing requests through them or collecting the tokens
+([Legal and compliance → Authentication and credential use](https://code.claude.com/docs/en/legal-and-compliance)).
+The same applies to ChatGPT logins in Codex. The `baton` agent instead finds credentials you provisioned for API
+use: API keys in your environment, API-key entries in Codex's or OpenCode's auth files, or a local Ollama /
+LM Studio — see [native-agent.md](native-agent.md).
 
 | Adapter id | Agent | How Baton drives it | Mid-turn steering | Approvals in Baton |
 |---|---|---|---|---|
@@ -16,7 +32,7 @@ Run `baton agents` to see what's installed and logged in on your machine.
 | `acp` | any ACP agent | `command` / `args` from config | queued | ✓ |
 | `baton` | Baton's own agent, on **any model provider** (Anthropic, OpenAI, OpenRouter, Ollama, LM Studio, any OpenAI-compatible) | in-process agent loop (AI SDK) with file, search, edit and shell tools + Baton's bus over MCP — see [native-agent.md](native-agent.md) | ✓ | ✓ |
 | `a2a` | any [A2A](https://a2a-protocol.org) agent | Agent2Agent JSON-RPC (v1.0 and v0.3), streaming or polling — see [a2a.md](a2a.md) | queued | decided by the remote agent |
-| `mock` | simulated | in-process | ✓ | ✓ |
+| `mock` | simulated (no tokens) — with `options = { delegate = true }` a mock lead really runs the team through the bus: spawns workers, waits, summarises (offline tests and SDK scripts) | in-process | ✓ | ✓ |
 
 "Queued" means a message sent while the agent is busy is delivered as soon as its current turn ends, or
 immediately if you ask for `interrupt` delivery.

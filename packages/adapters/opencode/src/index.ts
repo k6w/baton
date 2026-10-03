@@ -448,7 +448,8 @@ export const opencodeAdapter: AgentAdapter = defineAdapter({
         result.notes = [`${n} provider credential${n === 1 ? "" : "s"} configured`]
       } else {
         result.auth = "missing"
-        result.authHint = "run `opencode auth login`"
+        result.authHint = "run `baton login opencode` (OpenCode's own provider sign-in)"
+        result.login = [path, "auth", "login"]
       }
     } catch {
       result.auth = "unknown"

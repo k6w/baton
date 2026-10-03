@@ -1,6 +1,14 @@
 /** Built-in system prompt for the native coding agent. */
 
-export function systemPrompt(opts: { cwd: string; extra?: string; mcpInstructions?: string[]; platform?: string; date?: Date }): string {
+export function systemPrompt(opts: {
+  cwd: string
+  extra?: string
+  mcpInstructions?: string[]
+  platform?: string
+  date?: Date
+  /** One line describing the run_command sandbox, when there is one. */
+  sandbox?: string
+}): string {
   const date = (opts.date ?? new Date()).toISOString().slice(0, 10)
   const parts = [
     `You are Baton agent, an autonomous software engineer working in a code repository. You act through tools; the user sees your tool calls and messages live.
@@ -15,6 +23,7 @@ Platform: ${opts.platform ?? process.platform} · Date: ${date}
 - Verify your work: run the project's tests, type checker or build with run_command when they exist. Fix what you broke.
 - Commands run non-interactively via \`bash -lc\` in the workspace root, with a timeout. Never start servers or watchers in the foreground; never use interactive programs.
 - All paths are relative to the workspace root; you cannot access files outside it.
+- Use web_fetch to read documentation or other pages on the web when you need them.
 - Do not commit, push or rewrite git history unless explicitly asked.
 - If a tool call is denied, do not retry the same thing — adapt, or explain what you need.
 - Messages from other agents or the user may arrive mid-task; take them into account.
@@ -24,6 +33,7 @@ Platform: ${opts.platform ?? process.platform} · Date: ${date}
 - When done, give a short summary of what you changed and how you verified it; mention anything left undone.
 - Reference code as path:line.`,
   ]
+  if (opts.sandbox) parts.push(`# Sandbox\n${opts.sandbox}`)
   for (const m of opts.mcpInstructions ?? []) if (m.trim()) parts.push(m.trim())
   if (opts.extra?.trim()) parts.push(opts.extra.trim())
   return parts.join("\n\n")

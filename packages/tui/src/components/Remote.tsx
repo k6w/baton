@@ -14,6 +14,9 @@ interface RemoteInfo {
   lanUrls: string[]
   lan: boolean
   qr: string[]
+  tls?: boolean
+  fingerprint?: string
+  publicUrl?: string
 }
 
 export function RemoteOverlay(props: { onClose: () => void }) {
@@ -21,7 +24,7 @@ export function RemoteOverlay(props: { onClose: () => void }) {
   const dims = useTerminalDimensions()
   const [info, setInfo] = createSignal<RemoteInfo | undefined>()
   const [error, setError] = createSignal<string | undefined>()
-  const start = async (opts: { lan?: boolean; rotate?: boolean } = {}) => {
+  const start = async (opts: { lan?: boolean; rotate?: boolean; tls?: boolean; tailscale?: boolean } = {}) => {
     try {
       setInfo(await ui.client?.call("remote.start", opts))
       setError(undefined)
@@ -33,8 +36,10 @@ export function RemoteOverlay(props: { onClose: () => void }) {
   useKeyboard((k) => {
     const ks = keyString(k)
     if (k.name === "escape" || k.name === "return" || k.name === "enter") props.onClose()
-    else if (ks === "l") void start({ lan: !info()?.lan })
-    else if (ks === "r") void start({ lan: info()?.lan, rotate: true })
+    else if (ks === "l") void start({ lan: !info()?.lan, tls: info()?.tls })
+    else if (ks === "h") void start({ lan: info()?.lan, tls: !info()?.tls })
+    else if (ks === "t") void start({ lan: info()?.lan, tailscale: !info()?.publicUrl })
+    else if (ks === "r") void start({ lan: info()?.lan, tls: info()?.tls, rotate: true })
     else if (ks === "s") {
       void ui.client?.call("remote.stop", {}).then(() => ui.toast("web view stopped"))
       props.onClose()
@@ -58,10 +63,18 @@ export function RemoteOverlay(props: { onClose: () => void }) {
       ],
     })
     out.push({ segs: [{ text: "The link carries an access token: treat it like a password.", fg: t.textSubtle }] })
+    if (i.publicUrl) out.push({ segs: [{ text: "Published on your tailnet with a real HTTPS certificate.", fg: t.success }] })
+    else if (i.tls)
+      out.push({ segs: [{ text: `HTTPS (Baton's certificate — trust it once on the phone) · ${i.fingerprint?.slice(0, 23) ?? ""}…`, fg: t.success }] })
+    else if (i.lan) out.push({ segs: [{ text: "Plain HTTP on your network — h for HTTPS, t for Tailscale.", fg: t.warning }] })
     out.push({
       segs: [
         keycap(t, "l"),
         { text: i.lan ? " this machine only  " : " phone / network  ", fg: t.textMuted },
+        keycap(t, "h"),
+        { text: i.tls ? " http  " : " https  ", fg: t.textMuted },
+        keycap(t, "t"),
+        { text: " tailscale  ", fg: t.textMuted },
         keycap(t, "r"),
         { text: " new token  ", fg: t.textMuted },
         keycap(t, "s"),

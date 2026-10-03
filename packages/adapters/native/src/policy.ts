@@ -7,6 +7,7 @@
  *   yolo       nothing asks
  *
  * Reads, searches and MCP tools never ask (Baton's own policy still governs the bus server).
+ * web_fetch ("network") asks only in `ask` mode.
  */
 import type { ApprovalMode } from "@batonsh/protocol"
 import type { ToolCategory } from "./tools.ts"
@@ -43,6 +44,7 @@ export function isDestructiveCommand(command: string): boolean {
 
 export function needsApproval(mode: ApprovalMode, category: ToolCategory, command?: string): boolean {
   if (category === "read" || category === "other") return false
+  if (category === "network") return mode === "ask"
   switch (mode) {
     case "yolo":
       return false

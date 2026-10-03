@@ -59,11 +59,19 @@ async function detect(opts?: { command?: string }): Promise<DetectResult> {
 
   // The CLI's own view is authoritative when available.
   let loggedIn: boolean | undefined
+  let authMethod: string | undefined
   const s = await runCapture([path, "auth", "status"], { timeoutMs: 10_000, env }).catch(() => undefined)
   if (s?.code !== undefined) {
     try {
-      const j = JSON.parse(s.stdout) as { loggedIn?: unknown }
+      const j = JSON.parse(s.stdout) as { loggedIn?: unknown; authMethod?: unknown; apiProvider?: unknown; subscriptionType?: unknown }
       if (typeof j.loggedIn === "boolean") loggedIn = j.loggedIn
+      // describe it, never read it: Baton only runs Claude Code, which uses your own login
+      const m = typeof j.authMethod === "string" ? j.authMethod : ""
+      const sub = typeof j.subscriptionType === "string" ? ` (${j.subscriptionType})` : ""
+      if (j.apiProvider === "bedrock" || j.apiProvider === "vertex" || j.apiProvider === "foundry") authMethod = `${j.apiProvider}`
+      else if (/claude\.?ai|oauth|subscription/i.test(m)) authMethod = `Claude subscription${sub}`
+      else if (/api.?key|console/i.test(m)) authMethod = "Anthropic API key"
+      else if (m && m !== "none") authMethod = m
     } catch {}
   }
   let auth: DetectResult["auth"]
@@ -77,7 +85,9 @@ async function detect(opts?: { command?: string }): Promise<DetectResult> {
     ...(version ? { version } : {}),
     path,
     auth,
-    ...(auth !== "ok" ? { authHint: "run `claude` and use /login, or set ANTHROPIC_API_KEY" } : {}),
+    ...(auth !== "ok" ? { authHint: "run `baton login claude` (Claude Code's own sign-in), or set ANTHROPIC_API_KEY" } : {}),
+    login: [path, "auth", "login"],
+    ...(authMethod ? { authMethod } : {}),
     protocols: PROTOCOLS,
     ...(notes.length ? { notes } : {}),
   }

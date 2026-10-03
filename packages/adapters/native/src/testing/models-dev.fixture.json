@@ -1,0 +1,105 @@
+{
+  "anthropic": {
+    "id": "anthropic",
+    "env": ["ANTHROPIC_API_KEY"],
+    "npm": "@ai-sdk/anthropic",
+    "name": "Anthropic",
+    "models": {
+      "claude-sonnet-4-5": {
+        "id": "claude-sonnet-4-5",
+        "name": "Claude Sonnet 4.5",
+        "attachment": true,
+        "reasoning": true,
+        "tool_call": true,
+        "release_date": "2025-09-29",
+        "last_updated": "2025-09-29",
+        "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
+        "open_weights": false,
+        "cost": { "input": 3.3, "output": 16.5, "cache_read": 0.33, "cache_write": 4.125 },
+        "limit": { "context": 222000, "output": 64000 }
+      },
+      "claude-fixture-new": {
+        "id": "claude-fixture-new",
+        "name": "Claude Fixture New",
+        "attachment": true,
+        "reasoning": true,
+        "tool_call": true,
+        "release_date": "2026-09-01",
+        "last_updated": "2026-09-01",
+        "modalities": { "input": ["text", "image"], "output": ["text"] },
+        "open_weights": false,
+        "cost": { "input": 2, "output": 10 },
+        "limit": { "context": 500000, "output": 64000 }
+      },
+      "claude-fixture-old": {
+        "id": "claude-fixture-old",
+        "name": "Claude Fixture Old",
+        "attachment": false,
+        "reasoning": false,
+        "tool_call": true,
+        "status": "deprecated",
+        "release_date": "2026-10-01",
+        "last_updated": "2026-10-01",
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "open_weights": false,
+        "cost": { "input": 1, "output": 1 },
+        "limit": { "context": 100000, "output": 4096 }
+      }
+    }
+  },
+  "openai": {
+    "id": "openai",
+    "env": ["OPENAI_API_KEY"],
+    "npm": "@ai-sdk/openai",
+    "name": "OpenAI",
+    "models": {
+      "gpt-5": {
+        "id": "gpt-5",
+        "name": "GPT-5",
+        "attachment": true,
+        "reasoning": true,
+        "tool_call": true,
+        "release_date": "2025-08-07",
+        "last_updated": "2025-08-07",
+        "modalities": { "input": ["text", "image"], "output": ["text"] },
+        "open_weights": false,
+        "cost": { "input": 1.25, "output": 10, "cache_read": 0.125 },
+        "limit": { "context": 400000, "input": 272000, "output": 128000 }
+      },
+      "text-embedding-3-small": {
+        "id": "text-embedding-3-small",
+        "name": "text-embedding-3-small",
+        "attachment": false,
+        "reasoning": false,
+        "tool_call": false,
+        "release_date": "2024-01-25",
+        "last_updated": "2024-01-25",
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "open_weights": false,
+        "cost": { "input": 0.02, "output": 0 },
+        "limit": { "context": 8191, "output": 1536 }
+      }
+    }
+  },
+  "openrouter": {
+    "id": "openrouter",
+    "env": ["OPENROUTER_API_KEY"],
+    "api": "https://openrouter.ai/api/v1",
+    "name": "OpenRouter",
+    "models": {
+      "moonshotai/kimi-k2": {
+        "id": "moonshotai/kimi-k2",
+        "name": "Kimi K2",
+        "attachment": false,
+        "reasoning": false,
+        "tool_call": true,
+        "release_date": "2025-07-11",
+        "last_updated": "2025-07-11",
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "open_weights": true,
+        "cost": { "input": 0.55, "output": 2.2 },
+        "limit": { "context": 131072, "output": 32768 }
+      }
+    }
+  }
+}

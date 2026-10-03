@@ -36,6 +36,22 @@ deeply nested projects; see `.baton/run/socket-path`), one JSON message per line
 `run.mode` · `config.get` · `daemon.shutdown`. Events arrive as `event` notifications. The types are in
 `packages/protocol/src/control.ts`.
 
+### Errors
+
+Every error carries a code and `error.data.kind` (`baton protocol` prints the table and each method's required
+parameters):
+
+| code | kind | when |
+|---|---|---|
+| -32602 | InvalidParams | missing or malformed parameters (checked before the handler runs) |
+| -32004 | NotFound | no such agent / task / run / request |
+| -32010 | Unavailable | it exists but can't do that now (agent not running, session closed) |
+| -32009 | Conflict | limits, budget, a merge in progress |
+| -32011 | VersionMismatch | the client speaks a newer protocol than the daemon (`baton stop` to restart it) |
+| -32000 | Failed | anything else |
+
+The Python SDK raises matching exception classes (`baton.NotFound`, `baton.Unavailable`, …).
+
 ## Baton Event Protocol (BEP)
 
 Every event is an envelope `{ id, seq, ts, runId, agentId?, taskId?, type, data }`, appended to SQLite

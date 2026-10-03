@@ -13,6 +13,7 @@
     "@ai-sdk/mcp": "2.0.73",
     "@ai-sdk/openai": "4.0.91",
     "@ai-sdk/openai-compatible": "3.0.67",
+    "@batonsh/kernel": "workspace:*",
     "@batonsh/protocol": "workspace:*",
     "ai": "7.0.137",
     "zod": "4.6.5"

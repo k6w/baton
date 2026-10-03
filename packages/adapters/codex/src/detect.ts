@@ -40,7 +40,8 @@ export async function detectCodex(opts?: { command?: string }): Promise<DetectRe
     version,
     path: bin,
     auth,
-    authHint: auth === "ok" ? undefined : "run `codex login`",
+    authHint: auth === "ok" ? undefined : "run `baton login codex` (Codex's own sign-in)",
+    login: [bin, "login"],
     protocols,
     ...(notes.length ? { notes } : {}),
   }

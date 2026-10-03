@@ -25,7 +25,11 @@ bookmarks.
 - Every API call needs the project's access token. The printed link carries it in the URL *fragment*, which
   browsers never send to a server; the page then keeps it in local storage.
 - `baton web --rotate` makes a new token and invalidates old links.
-- The connection is plain HTTP: on networks you don't trust, use Tailscale or a tunnel instead of `--lan`.
+- Encryption: `--https` serves it with a certificate Baton creates for this machine (your phone asks you to trust it
+  once; `baton web` prints its SHA-256 fingerprint to compare), and `--tailscale` publishes it with
+  `tailscale serve` on your tailnet name with a real certificate, reachable wherever you're signed in to Tailscale
+  (`[remote] tls = "self-signed"` / `tailscale = true` make either the default). Without them it's plain HTTP:
+  fine on your own machine, use `--lan` only on networks you trust.
 - A repository's config can't turn remote access on for you: `remote.lan`, `remote.autostart` and
   `remote.public_url` from project config need `baton trust`.
 

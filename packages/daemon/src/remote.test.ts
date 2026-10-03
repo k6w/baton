@@ -123,4 +123,18 @@ describe("web view", () => {
     expect(new Set(q.map((l) => l.length)).size).toBe(1)
     expect(q[0]).toMatch(/^█+$/)
   })
+
+  test("https: Baton's own certificate, its fingerprint, and the page served over TLS", async () => {
+    const s = ensureRemote(d.runtime, { tls: true })
+    expect(s.tls).toBe(true)
+    expect(s.openUrl.startsWith("https://127.0.0.1:")).toBe(true)
+    expect(s.fingerprint).toMatch(/^([0-9A-F]{2}:){31}[0-9A-F]{2}$/)
+    const res = await fetch(`https://127.0.0.1:${s.port}/`, { tls: { rejectUnauthorized: false } } as RequestInit)
+    expect(await res.text()).toContain("baton")
+    // the certificate is reused across restarts (same fingerprint)
+    stopRemote(d.runtime)
+    expect(ensureRemote(d.runtime, { tls: true }).fingerprint).toBe(s.fingerprint)
+    stopRemote(d.runtime)
+    web = ensureRemote(d.runtime)
+  })
 })

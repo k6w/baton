@@ -40,7 +40,8 @@ export interface FakeLLM {
   stop(): void
 }
 
-export function fakeLLM(script: FakeScript): FakeLLM {
+/** `ollamaTags`: also answer Ollama's GET /api/tags with these model names (for detection tests). */
+export function fakeLLM(script: FakeScript, opts: { ollamaTags?: string[] } = {}): FakeLLM {
   const requests: FakeRequest[] = []
   let calls = 0
   const server = Bun.serve({
@@ -48,6 +49,7 @@ export function fakeLLM(script: FakeScript): FakeLLM {
     idleTimeout: 0,
     async fetch(req) {
       const url = new URL(req.url)
+      if (opts.ollamaTags && url.pathname === "/api/tags") return Response.json({ models: opts.ollamaTags.map((name) => ({ name, model: name })) })
       if (!url.pathname.endsWith("/chat/completions")) return new Response("not found", { status: 404 })
       const body = (await req.json()) as FakeRequest["body"]
       const r: FakeRequest = { index: calls++, body, headers: req.headers }

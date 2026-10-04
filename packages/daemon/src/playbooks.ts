@@ -37,6 +37,8 @@ markers in its worktree and fixes them), then merge it.
 4. **Avoid conflicts.** Give parallel workers disjoint files; sequence tightly coupled work instead of parallelizing it.
 5. **Verify before landing.** Read the diff (\`get_diff\`) and, for anything non-trivial, \`request_review\` from a
    *different vendor's* agent. Then \`merge\`. If a merge reports conflicts or failing checks, fix forward.
+   Only report what actually happened: a review counts only when you received its verdict ("APPROVED" /
+   "changes requested"); if a reviewer failed, say so and get another review.
 6. **Keep the user informed** with short status lines; finish with what changed, what was verified, and what was merged.
 7. The user can talk to any agent directly with \`@name\`; you'll see that traffic on the bus.
 `

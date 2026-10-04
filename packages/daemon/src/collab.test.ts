@@ -126,6 +126,16 @@ describe("collaboration", () => {
     const syncRes = text(await lead.callTool({ name: "sync", arguments: { agent: "w2" } }))
     expect(syncRes).toContain("conflicts in a.ts")
     expect(readFileSync(join(p2, "a.ts"), "utf8")).toContain("<<<<<<<")
+    // a reviewer that stops without a verdict reviewed nothing: the lead is told, merge refuses
+    writeFileSync(join(p2, "a.ts"), "export const a = 'w2 resolved'\n")
+    await d.runtime.collab.refresh(w2.info.agentId)
+    await lead.callTool({ name: "request_review", arguments: { agent: "w2", reviewer: "mock" } })
+    const r2 = [...d.runtime.agents.values()].find((a) => a.info.label === "review w2")!
+    await d.runtime.kill(r2.info.agentId)
+    await until(() => d.runtime.state.bus.some((m) => m.body.includes("did NOT happen")))
+    const unreviewed = await lead.callTool({ name: "merge", arguments: { agent: "w2" } })
+    expect(unreviewed.isError).toBe(true)
+    expect(text(unreviewed)).toContain("without reviewing")
     await lead.close()
   })
 

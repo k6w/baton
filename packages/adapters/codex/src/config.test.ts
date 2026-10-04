@@ -36,6 +36,8 @@ describe("MCP injection", () => {
       "-c",
       'mcp_servers.baton.url="http://127.0.0.1:4100/mcp"',
       "-c",
+      'mcp_servers.baton.default_tools_approval_mode="approve"',
+      "-c",
       'mcp_servers.baton.env_http_headers={"Authorization"="BATON_MCP_BATON_H0","X-Agent"="BATON_MCP_BATON_H1"}',
       "-c",
       'mcp_servers.my_server_v2.url="https://x/mcp"',
@@ -53,7 +55,15 @@ describe("MCP injection", () => {
       mcpServers: [{ name: "baton", url: "http://h/mcp" }],
       args: ["--enable", "foo"],
     }
-    expect(appServerArgs(cfg).args).toEqual(["app-server", "-c", 'mcp_servers.baton.url="http://h/mcp"', "--enable", "foo"])
+    expect(appServerArgs(cfg).args).toEqual([
+      "app-server",
+      "-c",
+      'mcp_servers.baton.url="http://h/mcp"',
+      "-c",
+      'mcp_servers.baton.default_tools_approval_mode="approve"',
+      "--enable",
+      "foo",
+    ])
   })
 })
 

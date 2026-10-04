@@ -77,8 +77,9 @@ async function detect(opts?: { command?: string }): Promise<DetectResult> {
   let auth: DetectResult["auth"]
   if (loggedIn === true) auth = "ok"
   else if (loggedIn === false) {
-    auth = hasCreds ? "unknown" : "missing"
-    if (hasCreds) notes.push("credentials found but `claude auth status` reports not logged in (keychain locked or token expired?)")
+    // the CLI is authoritative: a run would fail with "Not logged in"
+    auth = "missing"
+    if (hasCreds) notes.push("a stored login exists but `claude auth status` reports not logged in (keychain locked or token expired?)")
   } else auth = hasCreds ? "ok" : "unknown"
   return {
     installed: true,

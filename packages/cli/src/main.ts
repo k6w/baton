@@ -636,7 +636,7 @@ Docs: README.md and docs/ in the Baton repository.`)
 function hintFor(msg: string): string {
   if (/no baton daemon|daemon/i.test(msg)) return "run `baton` in the project to start it, or `baton doctor` to see what's wrong"
   if (/unknown adapter/i.test(msg)) return "`baton agents` lists what's installed; custom agents go in [agents.<name>] (docs/agents.md)"
-  if (/not logged in|auth/i.test(msg)) return "log in with the agent's own CLI (claude → /login, codex login, opencode auth login)"
+  if (/not logged in|auth/i.test(msg)) return "`baton login <agent>` runs the agent's own sign-in (claude, codex, opencode…)"
   if (/config/i.test(msg)) return "`baton config explain <key>` shows where a value comes from"
   if (/usage:/i.test(msg)) return "`baton --help` has examples"
   return "`baton doctor` checks your setup"

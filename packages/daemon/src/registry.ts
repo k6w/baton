@@ -70,6 +70,21 @@ export class AdapterRegistry {
     }
   }
 
+  /** The adapter definitely can't run: not installed, or its CLI says it isn't signed in. Re-checks before saying so. */
+  async unusable(id: string): Promise<string | undefined> {
+    let d = await this.detect(id)
+    if (d && (d.auth === "missing" || !d.installed)) d = await this.detect(id, true)
+    if (!d) return undefined
+    if (!d.installed && !d.notes?.includes("detect timed out")) return `${id} is not installed${d.authHint ? ` — ${d.authHint}` : ""}`
+    if (d.auth === "missing") return `${id} is not signed in${d.authHint ? ` — ${d.authHint}` : ""}`
+    return undefined
+  }
+
+  /** Forget what detect() found (after a login, or when a run reports an auth failure). */
+  forget(id: string) {
+    this.detected.delete(id)
+  }
+
   async detectAll(refresh = false): Promise<(DetectResult & { id: string; displayName: string })[]> {
     return Promise.all(this.list().map(async (a) => ({ id: a.id, displayName: a.displayName, ...((await this.detect(a.id, refresh)) as DetectResult) })))
   }

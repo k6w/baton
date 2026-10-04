@@ -47,6 +47,8 @@ export interface AgentRuntime {
   flagged?: "stalled" | "looping"
   lastAssistantText: string
   turnDiff: { added: number; removed: number }
+  /** "toolCallId|path" → that edit's stats (updates repeat a tool's content: count each once). */
+  turnEdits: Map<string, { added: number; removed: number }>
   busy: boolean
   closing: boolean
   budgetWarned: boolean
@@ -71,6 +73,8 @@ export interface InboxMessage {
   kind: BusKind
   body: string
   ts: number
+  /** Doesn't start a turn or end a wait: read along with the next real message (acks, chatter). */
+  quiet?: boolean
 }
 
 export interface RuntimeOptions {
@@ -82,6 +86,18 @@ export interface RuntimeOptions {
 }
 
 const MAX_AUTO_DELIVERIES_PER_MIN = 20
+/** Worker↔worker chat messages within PAIR_WINDOW_MS before further ones stop waking the other side. */
+const MAX_PAIR_CHAT = 6
+const PAIR_WINDOW_MS = 5 * 60_000
+
+const ACK =
+  /^(?:ok(?:ay)?|thanks?(?: you)?|thx|ty|ack(?:nowledged)?|got it|received|noted|confirmed|understood|great|perfect|sounds good|all good|closing (?:this )?out|closed out|nothing further|no further action)\b/i
+
+/** A message that needs no answer: "Thanks, acknowledged." / "Got it — closing out." */
+export function isAck(body: string): boolean {
+  const t = body.trim()
+  return t.length <= 160 && !t.includes("?") && ACK.test(t)
+}
 
 export class Runtime {
   readonly store: EventStore
@@ -93,6 +109,8 @@ export class Runtime {
   config: BatonConfig
   mcpBaseUrl: string | undefined
   private counters = new Map<string, number>()
+  /** "a|b" (sorted agent ids) → timestamps of chat between two workers. */
+  private pairChat = new Map<string, number[]>()
   private heartbeatTimer?: ReturnType<typeof setInterval>
   private watchdogTimer?: ReturnType<typeof setInterval>
   private runWarned = false
@@ -208,7 +226,19 @@ export class Runtime {
 
     const agentId = newId("ag")
     const name = params.isOrchestrator ? "orchestrator" : this.allocateName(adapterId, params.name ?? (profile ? params.adapter : undefined))
-    const detected = await this.registry.detect(adapterId)
+    let detected = await this.registry.detect(adapterId)
+    // fail fast and clearly instead of starting a session that dies with "Not logged in" (a profile
+    // with its own env / provider brings its own credentials)
+    if (detected?.auth === "missing" && !profile?.env && !profile?.provider) {
+      const why = await this.registry.unusable(adapterId)
+      if (why) {
+        const others = (await this.registry.detectAll())
+          .filter((d) => d.installed && d.auth !== "missing" && d.id !== adapterId && d.id !== "mock" && d.id !== "a2a")
+          .map((d) => d.id)
+        throw new Error(`${why}${others.length ? `. Ready to use: ${others.join(", ")}` : ""}`)
+      }
+      detected = await this.registry.detect(adapterId)
+    }
     const baseApproval = params.approval ?? profile?.approval ?? (params.isOrchestrator ? this.config.orchestrator.approval : this.config.defaults.approval)
     const approval = effectiveApproval(baseApproval, this.autonomy)
     const tierModel = params.tier ? this.config.routing[adapterId]?.[params.tier] : undefined
@@ -237,6 +267,7 @@ export class Runtime {
       deliveries: [],
       lastAssistantText: "",
       turnDiff: { added: 0, removed: 0 },
+      turnEdits: new Map(),
       busy: false,
       closing: false,
       budgetWarned: false,
@@ -364,16 +395,18 @@ export class Runtime {
         rt.busy = true
         rt.lastAssistantText = ""
         rt.turnDiff = { added: 0, removed: 0 }
+        rt.turnEdits.clear()
         break
       case "message.completed":
         if (stored.data.role === "assistant" && stored.data.text.trim()) rt.lastAssistantText = stored.data.text
         break
       case "tool.update":
-        for (const c of stored.data.content ?? []) {
-          if (c.type === "diff") {
-            rt.turnDiff.added += c.added ?? 0
-            rt.turnDiff.removed += c.removed ?? 0
-          }
+        for (const c of stored.data.content ?? [])
+          if (c.type === "diff") rt.turnEdits.set(`${stored.data.toolCallId}|${c.path}`, { added: c.added ?? 0, removed: c.removed ?? 0 })
+        rt.turnDiff = { added: 0, removed: 0 }
+        for (const d of rt.turnEdits.values()) {
+          rt.turnDiff.added += d.added
+          rt.turnDiff.removed += d.removed
         }
         break
       case "turn.completed":
@@ -396,7 +429,10 @@ export class Runtime {
         this.checkBudget(rt)
         break
       case "error":
-        if (/not logged in|authenticat|unauthori[sz]ed|\b401\b|invalid api key|please run \/login/i.test(stored.data.message)) this.authHint(rt)
+        if (/not logged in|authenticat|unauthori[sz]ed|\b401\b|invalid api key|please run \/login/i.test(stored.data.message)) {
+          this.registry.forget(rt.info.adapter)
+          this.authHint(rt)
+        }
         break
       case "agent.exited":
         rt.closing = true
@@ -565,21 +601,46 @@ export class Runtime {
       data: { messageId, from: sender?.info.agentId ?? params.from, to: toLabel, kind, body, delivery: params.delivery ?? "queue", replyTo: params.replyTo },
     })
     if (kind === "heartbeat" || kind === "progress") return messageId
-    for (const r of recipients) this.deliver(r, { messageId, from: params.from, fromName, kind, body, ts: Date.now() }, params.delivery ?? "queue")
+    for (const r of recipients) {
+      const quiet = this.isChatter(sender, r, kind, body)
+      this.deliver(r, { messageId, from: params.from, fromName, kind, body, ts: Date.now(), ...(quiet ? { quiet } : {}) }, params.delivery ?? "queue")
+    }
     return messageId
+  }
+
+  /**
+   * Agents politely ping-pong ("Thanks!" → "Acknowledged." → "Closing out." …), each message
+   * buying the other a full turn. Acknowledgments, and worker↔worker chat beyond a few rounds,
+   * are delivered quietly: they wait in the inbox for the next real message.
+   */
+  private isChatter(sender: AgentRuntime | undefined, to: AgentRuntime, kind: BusKind, body: string): boolean {
+    if (!sender || (kind !== "chat" && kind !== "reply")) return false
+    if (isAck(body)) return true
+    if (sender.info.isOrchestrator || to.info.isOrchestrator) return false
+    const key = [sender.info.agentId, to.info.agentId].sort().join("|")
+    const now = Date.now()
+    const ts = (this.pairChat.get(key) ?? []).filter((t) => now - t < PAIR_WINDOW_MS)
+    ts.push(now)
+    this.pairChat.set(key, ts)
+    if (ts.length === MAX_PAIR_CHAT + 1)
+      this.notifyLeadAbout(
+        to,
+        `${sender.info.name} and ${to.info.name} keep messaging each other (${MAX_PAIR_CHAT}+ messages in 5 min) — further chat between them no longer starts turns until you step in.`,
+      )
+    return ts.length > MAX_PAIR_CHAT
   }
 
   private formatForAgent(msgs: InboxMessage[]): string {
     if (msgs.length === 1) {
       const m = msgs[0] as InboxMessage
       if (m.from === "user") return m.body
-      return `[baton] ${m.kind === "result" ? "Result" : "Message"} from ${m.fromName}:\n${m.body}\n\n(Reply with the baton send_message tool, to: "${m.fromName}".)`
+      return `[baton] ${m.kind === "result" ? "Result" : "Message"} from ${m.fromName}:\n${m.body}\n\n(Reply with the baton send_message tool, to: "${m.fromName}" — only if there's something to say: don't answer thanks or acknowledgments.)`
     }
-    return `[baton] ${msgs.length} messages:\n\n${msgs.map((m) => `— from ${m.fromName} (${m.kind}):\n${m.body}`).join("\n\n")}\n\n(Reply with the baton send_message tool.)`
+    return `[baton] ${msgs.length} messages:\n\n${msgs.map((m) => `— from ${m.fromName} (${m.kind}):\n${m.body}`).join("\n\n")}\n\n(Reply with the baton send_message tool where needed — don't answer thanks or acknowledgments.)`
   }
 
   private deliver(rt: AgentRuntime, msg: InboxMessage, delivery: Delivery) {
-    if (!rt.session || rt.closing) {
+    if (!rt.session || rt.closing || msg.quiet) {
       rt.inbox.push(msg)
       return
     }
@@ -639,7 +700,7 @@ export class Runtime {
   }
 
   private flushInbox(rt: AgentRuntime) {
-    if (rt.busy || rt.closing || !rt.session || rt.inbox.length === 0 || rt.waiters.size > 0) return
+    if (rt.busy || rt.closing || !rt.session || rt.waiters.size > 0 || !rt.inbox.some((m) => !m.quiet)) return
     if (this.runStopped || rt.budgetStopped) return
     if (!this.allowAutoDelivery(rt)) return
     const msgs = rt.inbox.splice(0)
@@ -677,7 +738,7 @@ export class Runtime {
   async waitInbox(agentId: string, timeoutMs: number, until?: (inbox: InboxMessage[]) => boolean, signal?: AbortSignal): Promise<InboxMessage[]> {
     const rt = this.agents.get(agentId)
     if (!rt) return []
-    const ready = () => rt.inbox.length > 0 && (!until || until(rt.inbox))
+    const ready = () => rt.inbox.some((m) => !m.quiet) && (!until || until(rt.inbox))
     if (!ready()) {
       const d = deferred<void>()
       const w = () => {

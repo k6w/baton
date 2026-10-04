@@ -152,6 +152,44 @@ describe("runtime lifecycle", () => {
     expect(to.has(a.agentId) && to.has(c.agentId)).toBe(true)
   })
 
+  test("acknowledgments don't start turns; they ride along with the next real message", async () => {
+    const { rt, fake } = setup()
+    const a = await rt.spawn({ adapter: "fake", name: "a" })
+    await rt.spawn({ adapter: "fake", name: "b" })
+    endTurn(fake("b"))
+    const before = fake("b").prompts.length
+    rt.send({ from: a.agentId, to: "b", body: "Thanks, acknowledged — closing out." })
+    await Bun.sleep(10)
+    expect(fake("b").prompts.length).toBe(before)
+    rt.send({ from: a.agentId, to: "b", body: "One more thing: please rename foo to bar?" })
+    await Bun.sleep(10)
+    expect(fake("b").prompts.length).toBe(before + 1)
+    expect(fake("b").prompts.at(-1)?.text).toContain("rename foo")
+  })
+
+  test("worker ping-pong stops starting turns and tells the lead", async () => {
+    const { rt, fake } = setup()
+    const lead = await rt.spawn({ adapter: "fake", isOrchestrator: true })
+    endTurn(fake("orchestrator"))
+    const a = await rt.spawn({ adapter: "fake", name: "a" })
+    await rt.spawn({ adapter: "fake", name: "b" })
+    endTurn(fake("b"))
+    for (let i = 0; i < 8; i++) {
+      rt.send({ from: a.agentId, to: "b", body: `status update ${i}: still checking the parser` })
+      await Bun.sleep(5)
+      endTurn(fake("b"))
+    }
+    await Bun.sleep(10)
+    expect(fake("b").prompts.filter((p) => p.text.includes("status update")).length).toBe(6)
+    const lead_ = `${fake("orchestrator")
+      .prompts.map((p) => p.text)
+      .join("\n")}${rt.agents
+      .get(lead.agentId)
+      ?.inbox.map((m) => m.body)
+      .join("\n")}`
+    expect(lead_).toContain("keep messaging each other")
+  })
+
   test("asks resolve (no) when the asking agent exits", async () => {
     const { rt, fake } = setup()
     const w = await rt.spawn({ adapter: "fake", name: "w" })

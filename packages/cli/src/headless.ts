@@ -59,9 +59,6 @@ export async function runHeadless(
           if (e.data.kind !== "heartbeat" && e.data.kind !== "progress")
             console.log(`${c.cyan("⇄")} ${name(e.data.from)} → ${name(e.data.to)} ${c.dim(e.data.body.split("\n")[0] ?? "")}`)
           break
-        case "permission.requested":
-          console.log(`${who} ${c.yellow("?")} ${e.data.title}`)
-          break
         case "error":
           console.log(`${who} ${c.red("✗")} ${e.data.message}`)
           break
@@ -77,7 +74,14 @@ export async function runHeadless(
         )?.optionId ?? null
       // the daemon's policy may settle it a moment later — only act on questions still open
       const open = () => live.state.approvals.has(requestId)
-      if (opts.approve === "all" || opts.approve === "none") setTimeout(() => open() && void answer(agentId, requestId, pick(opts.approve === "all")), 200)
+      // the policy settles most (Baton's own tools, allow rules) instantly: print only what was left to us
+      const show = (verdict: string) => !opts.json && console.log(`${c.bold(name(agentId))} ${c.yellow("?")} ${title} ${c.dim(verdict)}`)
+      if (opts.approve === "all" || opts.approve === "none")
+        setTimeout(() => {
+          if (!open()) return
+          show(opts.approve === "all" ? "→ allowed (--approve all)" : "→ denied (--approve none)")
+          void answer(agentId, requestId, pick(opts.approve === "all"))
+        }, 200)
       else if (process.stdin.isTTY && !opts.json) {
         asking = asking.then(async () => {
           await Bun.sleep(200)
@@ -90,7 +94,7 @@ export async function runHeadless(
       } else
         setTimeout(() => {
           if (!open()) return
-          if (!opts.json) console.log(c.yellow("  denied (no terminal to ask) — pass --approve all to allow, or add a [[policy.rules]] allow rule"))
+          show("→ denied (no terminal to ask) — pass --approve all to allow, or add a [[policy.rules]] allow rule")
           void answer(agentId, requestId, pick(false))
         }, 200)
     }

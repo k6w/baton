@@ -97,6 +97,9 @@ export function mcpConfigArgs(servers: McpServerSpec[]): { args: string[]; env: 
     const name = sanitizeKey(s.name)
     const key = `mcp_servers.${name}`
     args.push("-c", `${key}.url=${tomlString(s.url)}`)
+    // Baton's own coordination tools never need a human (Baton's policy allows them anyway):
+    // skip codex's per-call elicitation round-trip
+    if (s.name === "baton") args.push("-c", `${key}.default_tools_approval_mode="approve"`)
     const headers = Object.entries(s.headers ?? {})
     if (!headers.length) continue
     const refs: Record<string, string> = {}

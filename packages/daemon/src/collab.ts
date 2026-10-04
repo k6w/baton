@@ -24,6 +24,8 @@ interface Review {
   signature: string
   verdict?: "approve" | "changes_requested"
   notes?: string
+  /** The reviewer stopped (failed, exited) without a verdict. */
+  abandoned?: boolean
 }
 
 export interface PlanTask {
@@ -100,6 +102,16 @@ export class Collaboration {
 
   /** Result of a dispatched task → task state. */
   onResult(agent: AgentRuntime, outcome: "ok" | "failed" | "interrupted") {
+    // a reviewer that stops without a verdict reviewed nothing: say so plainly (leads tend to assume approval)
+    const open = [...this.reviews.values()].find((r) => r.reviewer === agent.info.agentId && !r.verdict && !r.abandoned)
+    if (open && (outcome !== "ok" || agent.closing)) {
+      open.abandoned = true
+      const author = this.rt.agents.get(open.author)?.info.name ?? "the agent"
+      this.notifyLead(
+        `Review of ${author} by ${agent.info.name} did NOT happen: its turn ${outcome === "ok" ? "ended" : outcome} before submit_review — there is no verdict. Request another review (request_review with a different reviewer) before merging.`,
+        "result",
+      )
+    }
     const taskId = this.taskOwners.get(agent.info.agentId)
     if (!taskId) return
     const task = this.rt.state.tasks.get(taskId)
@@ -339,16 +351,25 @@ export class Collaboration {
 
   // ───────────────────────────── reviews ─────────────────────────────
 
-  pickReviewer(author: AgentRuntime, preferred?: string): string {
+  async pickReviewer(author: AgentRuntime, preferred?: string): Promise<string> {
     if (preferred) return preferred
     if (this.rt.config.workspace.reviewer) return this.rt.config.workspace.reviewer
     const authorVendor = vendorOf(author.info.adapter)
-    const usable = (id: string) => {
-      const a = this.rt.registry.get(id)
-      return a !== undefined && id !== "mock"
-    }
-    const candidates = VENDOR_ORDER.filter((id) => vendorOf(id) !== authorVendor && usable(id))
-    return candidates[0] ?? author.info.adapter
+    // only agents that can actually run here (installed and signed in)
+    for (const id of VENDOR_ORDER)
+      if (vendorOf(id) !== authorVendor && id !== "mock" && this.rt.registry.get(id) && !(await this.rt.registry.unusable(id))) return id
+    return author.info.adapter
+  }
+
+  /** The latest review of an agent's work, and whether it covers the current changes. */
+  async reviewState(agentId: string): Promise<{ state: "none" | "pending" | "unfinished" | "approved" | "changes_requested" | "stale"; reviewer?: string }> {
+    const r = [...this.reviews.values()].reverse().find((x) => x.author === agentId)
+    if (!r) return { state: "none" }
+    await this.refresh(agentId)
+    const reviewer = this.rt.state.agents.get(r.reviewer)?.name ?? r.reviewer
+    if (!r.verdict) return { state: r.abandoned ? "unfinished" : "pending", reviewer }
+    if (r.signature !== signature(this.workspaces.byAgent.get(agentId))) return { state: "stale", reviewer }
+    return { state: r.verdict === "approve" ? "approved" : "changes_requested", reviewer }
   }
 
   async requestReview(authorId: string, opts: { reviewer?: string; requester?: string } = {}): Promise<{ reviewId: string; reviewer: string }> {
@@ -376,7 +397,7 @@ When done, call the baton tool submit_review with verdict "approve" or "changes_
       reviewerId = existing.info.agentId
       await this.rt.promptAgent(reviewerId, task, { from: opts.requester })
     } else {
-      const adapter = this.pickReviewer(author, opts.reviewer)
+      const adapter = await this.pickReviewer(author, opts.reviewer)
       const info = await this.rt.spawn({
         adapter,
         label: `review ${author.info.name}`,

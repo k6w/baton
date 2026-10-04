@@ -239,12 +239,25 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime, signal?: Abort
       "merge",
       {
         description:
-          "Merge an agent's worktree changes into the project (three-way, runs workspace.verify first if configured). Returns merged files, or the conflicting files.",
-        inputSchema: { agent: z.string() },
+          "Merge an agent's worktree changes into the project (three-way, runs workspace.verify first if configured). Returns merged files, or the conflicting files. Refuses while a review you asked for is unresolved, unless force is true.",
+        inputSchema: {
+          agent: z.string(),
+          force: z.boolean().optional().describe("merge even though the latest review is pending, failed or asked for changes"),
+        },
       },
       (a) =>
         guard(async () => {
           const t = agentRef(a.agent)
+          const rv = await rt.collab.reviewState(t.info.agentId)
+          if (!a.force && rv.state !== "none" && rv.state !== "approved") {
+            const why = {
+              pending: `${rv.reviewer} hasn't submitted its review of ${t.info.name} yet — wait_for_results first`,
+              unfinished: `${rv.reviewer} stopped without reviewing ${t.info.name} (no verdict) — request_review with a different reviewer`,
+              changes_requested: `${rv.reviewer} requested changes from ${t.info.name} — have them addressed and reviewed again`,
+              stale: `${t.info.name} changed its work after ${rv.reviewer}'s review — request_review again`,
+            }[rv.state]
+            return fail(`not merged: ${why}. (Merge anyway with force: true and tell the user it was unreviewed.)`)
+          }
           const r = await rt.collab.merge(t.info.agentId, me)
           if (r.status === "merged") return ok(`merged ${t.info.name}: ${r.files.map((f) => `${f.path} +${f.added} −${f.removed}`).join(", ")}`)
           if (r.status === "empty") return ok(`${t.info.name} has no changes to merge`)

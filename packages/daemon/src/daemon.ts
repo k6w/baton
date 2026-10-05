@@ -84,6 +84,8 @@ async function acquireLock(lockPath: string, socketPath: string): Promise<() => 
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e
       const owner = Number(readFileSync(lockPath, "utf8").split(":")[0])
+      // a daemon that is shutting down (socket already closed) gets a few seconds to finish
+      for (let i = 0; i < 50 && owner && pidAlive(owner) && !(await socketAlive(socketPath)); i++) await Bun.sleep(100)
       if (owner && pidAlive(owner)) throw new Error(`a baton daemon is already running for this project (pid ${owner})`)
       rmSync(lockPath, { force: true })
     }

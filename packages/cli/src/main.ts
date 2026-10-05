@@ -212,7 +212,13 @@ async function cmdDaemon(args: Args) {
   process.on("uncaughtException", (e) => log(`uncaught: ${e.stack ?? e}`))
   process.on("unhandledRejection", (e) => log(`unhandled: ${e instanceof Error ? e.stack : e}`))
   log(`daemon starting pid=${process.pid} root=${root}`)
-  await runDaemonProcess(root, { overrides: overridesFrom(args.flags), demo: !!args.flags.demo })
+  try {
+    await runDaemonProcess(root, { overrides: overridesFrom(args.flags), demo: !!args.flags.demo })
+  } catch (e) {
+    // stderr goes nowhere for a detached daemon: the log is the only place this shows up
+    log(`daemon failed to start: ${e instanceof Error ? e.message : e}`)
+    throw e
+  }
   log(`daemon ready socket=${socketPathFor(root)}`)
 }
 
@@ -419,6 +425,9 @@ async function cmdStop() {
   const cl = await BatonClient.open(sock, "cli")
   await cl.shutdown()
   cl.close()
+  // return only once it's gone, so `baton stop && baton …` starts a fresh daemon cleanly
+  const lock = join(projectPaths(root).run, "daemon.lock")
+  for (let i = 0; i < 100 && existsSync(lock); i++) await Bun.sleep(100)
   console.log("stopped")
 }
 

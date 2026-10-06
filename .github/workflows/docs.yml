@@ -1,0 +1,34 @@
+name: docs
+# Builds the documentation site (bun scripts/docs.ts) and publishes it to GitHub Pages.
+on:
+  push:
+    branches: [main]
+    paths: ["README.md", "CHANGELOG.md", "docs/**", "install.sh", "scripts/docs.ts", "packages/protocol/src/version.ts"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.pages.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+      - run: bun scripts/docs.ts --repo "$GITHUB_REPOSITORY"
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/site
+      - id: pages
+        uses: actions/deploy-pages@v4

@@ -200,4 +200,12 @@ end
 `,
 )
 
+// release notes: this version's CHANGELOG section (outside dist/release so it isn't uploaded as an asset)
+const changelog = readFileSync("CHANGELOG.md", "utf8")
+const section = new RegExp(`^## ${V.replace(/\./g, "\\.")}\\b[^\\n]*\\n([\\s\\S]*?)(?=^## |(?![\\s\\S]))`, "m").exec(changelog)?.[1]?.trim()
+writeFileSync(
+  "dist/notes.md",
+  `${section || `Baton ${V}`}\n\n**Install:** \`curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | sh\` · \`npm i -g batonsh\` · \`brew install ${REPO.split("/")[0]}/tap/baton\`\n`,
+)
+
 console.log(`release ${V}: ${built.length} platforms → ${OUT} (archives, SHA256SUMS, baton.rb), ${NPM} (${built.length + 1} npm packages)`)

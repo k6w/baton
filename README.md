@@ -22,14 +22,26 @@ each other over a live message bus while you watch every tool call, diff and tok
  ● 1/2 opencode running · 10 calls · 2 msgs                          +24 -1  portfolio@main
 ```
 
-## Quick start
+## Install
 
 ```sh
-bun install                    # Bun ≥ 1.3
-bun run demo                   # simulated agents, no tokens: see what it does
-bun packages/cli/src/main.ts   # start Baton in the current project
-bun run build                  # standalone binary → dist/baton
+curl -fsSL https://raw.githubusercontent.com/batonsh/baton/main/install.sh | sh
 ```
+
+Other ways: `npm i -g batonsh`, or `brew install batonsh/tap/baton`. You get a single binary for
+macOS or Linux (x64 and arm64), checksum-verified. `baton update` keeps it current. Then:
+
+```sh
+baton doctor        # which agents are installed and signed in (baton login <agent> fixes that)
+baton demo          # simulated agents, no tokens: see what it does
+cd my-project && baton
+```
+
+New here? Start with the **[quickstart](docs/quickstart.md)**. If something's off, see
+**[troubleshooting & FAQ](docs/troubleshooting.md)**.
+
+From source (Bun ≥ 1.3): `bun install && bun packages/cli/src/main.ts`, or `bun run build` for
+`dist/baton`.
 
 Run `baton` in any folder. On the first run it sets the folder up:
 
@@ -125,6 +137,7 @@ Keys: `ctrl+p` command palette · `ctrl+a` **inbox** of everything that needs yo
 
 ## Documentation
 
+- [Quickstart](docs/quickstart.md) · [Troubleshooting & FAQ](docs/troubleshooting.md)
 - [Workspaces, merging & reviews](docs/workspaces.md): worktrees, the merge queue, conflicts, reviews, file claims, plans
 - [Configuration](docs/configuration.md): every setting, the order config layers are applied, env vars, `baton config explain`
 - [Agents, providers & plugins](docs/agents.md): supported agents, custom agents, model providers, writing adapters
@@ -147,6 +160,7 @@ baton mcp               Baton as an MCP server for Claude Desktop, Cursor, other
 baton a2a [--stop]      serve this team as an A2A agent
 baton issue <n>         start with a GitHub issue · baton pr [-y]  PR from what the run merged
 baton replay [run]      play a past run back
+baton login [agent]     sign in with the agent's own login · baton update [--check]  latest release
 baton init | doctor | agents | ps | stop | trust | history | export <run> [--format md|html|jsonl]
 baton config get|explain|path|schema|defaults
 baton theme list|set <name>
@@ -156,10 +170,17 @@ flags: --theme <name> --layout <grid|focus|swarm|wide> --orchestrator <adapter> 
 ## Development
 
 ```sh
-bun test                        # ~240 tests: protocol, kernel, daemon, adapters (replayed fixtures), TUI frames
+bun test                        # ~470 tests: protocol, kernel, daemon, adapters (replayed fixtures), TUI frames
 BATON_LIVE=1 bun test packages/adapters/codex    # contract tests against the real CLI (uses your account)
 bunx tsc -p tsconfig.json --noEmit && bunx biome check .
+cd sdk-python && python3 -m unittest discover -s tests
 ```
+
+Releasing: `bun scripts/version.ts 0.2.0` (bumps every copy, dates the changelog), commit, then
+`git tag v0.2.0 && git push --follow-tags`. The release workflow builds and signs the binaries,
+publishes the GitHub release (archives + `SHA256SUMS`), npm, Homebrew and PyPI.
+`bun install --os='*' --cpu='*' && bun scripts/build.ts --all && bun scripts/release.ts` does the same packaging
+locally.
 
 The monorepo's packages:
 

@@ -46,7 +46,9 @@ function fakeAdapter(sessions: Map<string, Fake>): AgentAdapter {
           f.prompts.push(input)
           ctx.emit({ type: "turn.started", data: { turnId: `t${f.prompts.length}`, prompt: input.text } })
         },
-        async interrupt() {},
+        async interrupt() {
+          ctx.emit({ type: "turn.interrupted", data: { turnId: `t${f.prompts.length}` } })
+        },
         async respondPermission(_id, optionId) {
           f.responses.push(optionId)
         },
@@ -188,6 +190,24 @@ describe("runtime lifecycle", () => {
       ?.inbox.map((m) => m.body)
       .join("\n")}`
     expect(lead_).toContain("keep messaging each other")
+  })
+
+  test("an agent out of quota is stopped, the lead is told why, and new spawns of it fail fast", async () => {
+    const { rt, fake } = setup()
+    const lead = await rt.spawn({ adapter: "fake", isOrchestrator: true })
+    endTurn(fake("orchestrator"))
+    await rt.spawn({ adapter: "fake", name: "w", parentId: lead.agentId, prompt: "work" })
+    fake("w").emit({ type: "agent.status", data: { status: "busy", detail: "retrying (attempt 1): Free usage exceeded, subscribe to Go" } })
+    await Bun.sleep(20)
+    const told = `${fake("orchestrator")
+      .prompts.map((p) => p.text)
+      .join("\n")}${rt.agents
+      .get(lead.agentId)
+      ?.inbox.map((m) => m.body)
+      .join("\n")}`
+    expect(told).toContain("out of quota: Free usage exceeded")
+    expect(told).toContain("different agent")
+    await expect(rt.spawn({ adapter: "fake", name: "w2", parentId: lead.agentId })).rejects.toThrow("out of quota")
   })
 
   test("asks resolve (no) when the asking agent exits", async () => {

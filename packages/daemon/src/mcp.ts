@@ -5,6 +5,7 @@
  */
 
 import { formatCost, formatTokens } from "@batonsh/kernel"
+import { BATON_VERSION } from "@batonsh/protocol"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"
 import { z } from "zod"
@@ -25,7 +26,7 @@ async function guard(fn: () => Promise<ToolResult> | ToolResult): Promise<ToolRe
 }
 
 export function buildMcpServer(rt: Runtime, caller: AgentRuntime, signal?: AbortSignal): McpServer {
-  const server = new McpServer({ name: "baton", version: "0.1.0" }, { instructions: "Baton multi-agent coordination tools." })
+  const server = new McpServer({ name: "baton", version: BATON_VERSION }, { instructions: "Baton multi-agent coordination tools." })
   const me = caller.info.agentId
   const isLead = !!caller.info.isOrchestrator
 

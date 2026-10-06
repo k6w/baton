@@ -38,6 +38,8 @@ describe("MCP injection", () => {
       "-c",
       'mcp_servers.baton.default_tools_approval_mode="approve"',
       "-c",
+      "mcp_servers.baton.tool_timeout_sec=1900",
+      "-c",
       'mcp_servers.baton.env_http_headers={"Authorization"="BATON_MCP_BATON_H0","X-Agent"="BATON_MCP_BATON_H1"}',
       "-c",
       'mcp_servers.my_server_v2.url="https://x/mcp"',
@@ -61,6 +63,8 @@ describe("MCP injection", () => {
       'mcp_servers.baton.url="http://h/mcp"',
       "-c",
       'mcp_servers.baton.default_tools_approval_mode="approve"',
+      "-c",
+      "mcp_servers.baton.tool_timeout_sec=1900",
       "--enable",
       "foo",
     ])

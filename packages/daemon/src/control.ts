@@ -4,6 +4,7 @@
  */
 import { existsSync, unlinkSync } from "node:fs"
 import {
+  BATON_VERSION,
   CONTROL_PROTOCOL_VERSION,
   ControlErrorCode,
   type ControlErrorKind,
@@ -26,7 +27,7 @@ import { ensureRemote, qrLines, stopRemote } from "./remote.ts"
 import type { Runtime } from "./runtime.ts"
 import { getScorecards, pickForTask } from "./scores.ts"
 
-export const DAEMON_VERSION = "0.1.0"
+export const DAEMON_VERSION = BATON_VERSION
 
 interface Conn {
   peer: JsonRpcPeer

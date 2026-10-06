@@ -5,7 +5,7 @@
  * Content (prompts, outputs) is never exported. Enable with [telemetry] otlp_endpoint.
  */
 import { createHash } from "node:crypto"
-import type { BatonEvent } from "@batonsh/protocol"
+import { BATON_VERSION, type BatonEvent } from "@batonsh/protocol"
 import type { Runtime } from "./runtime.ts"
 
 type Attr = { key: string; value: { stringValue?: string; intValue?: string; doubleValue?: number; boolValue?: boolean } }
@@ -138,7 +138,7 @@ export class TelemetryExporter {
       resourceSpans: [
         {
           resource: { attributes: [attr("service.name", this.rt.config.telemetry.service_name), attr("baton.run_id", this.rt.runId)].filter(Boolean) },
-          scopeSpans: [{ scope: { name: "baton", version: "0.1.0" }, spans }],
+          scopeSpans: [{ scope: { name: "baton", version: BATON_VERSION }, spans }],
         },
       ],
     }

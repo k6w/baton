@@ -49,6 +49,8 @@ export interface AgentRuntime {
   turnDiff: { added: number; removed: number }
   /** "toolCallId|path" → that edit's stats (updates repeat a tool's content: count each once). */
   turnEdits: Map<string, { added: number; removed: number }>
+  /** Why the last turn failed, when Baton knows better than the agent's own summary. */
+  failReason?: string
   busy: boolean
   closing: boolean
   budgetWarned: boolean
@@ -86,6 +88,8 @@ export interface RuntimeOptions {
 }
 
 const MAX_AUTO_DELIVERIES_PER_MIN = 20
+/** How long an adapter that ran out of quota is kept out of new spawns. */
+const QUOTA_COOLDOWN_MS = 30 * 60_000
 /** Worker↔worker chat messages within PAIR_WINDOW_MS before further ones stop waking the other side. */
 const MAX_PAIR_CHAT = 6
 const PAIR_WINDOW_MS = 5 * 60_000
@@ -94,6 +98,14 @@ const ACK =
   /^(?:ok(?:ay)?|thanks?(?: you)?|thx|ty|ack(?:nowledged)?|got it|received|noted|confirmed|understood|great|perfect|sounds good|all good|closing (?:this )?out|closed out|nothing further|no further action)\b/i
 
 /** A message that needs no answer: "Thanks, acknowledged." / "Got it — closing out." */
+/** Out of quota / credits / plan usage: retrying won't help for a long while. */
+const QUOTA =
+  /usage (?:limit|exceeded|cap)|free usage|quota|insufficient[_ ]?(?:quota|credits?|balance|funds)|credit balance|out of credits|billing|payment required|\b402\b|subscribe to|upgrade your plan|usage_limit|resource[_ ]exhausted/i
+
+export function isQuotaError(text: string): boolean {
+  return QUOTA.test(text)
+}
+
 export function isAck(body: string): boolean {
   const t = body.trim()
   return t.length <= 160 && !t.includes("?") && ACK.test(t)
@@ -229,11 +241,12 @@ export class Runtime {
     let detected = await this.registry.detect(adapterId)
     // fail fast and clearly instead of starting a session that dies with "Not logged in" (a profile
     // with its own env / provider brings its own credentials)
-    if (detected?.auth === "missing" && !profile?.env && !profile?.provider) {
+    // (also: an adapter that just ran out of quota)
+    if ((detected?.auth === "missing" || this.registry.cooling(adapterId)) && !profile?.env && !profile?.provider) {
       const why = await this.registry.unusable(adapterId)
       if (why) {
         const others = (await this.registry.detectAll())
-          .filter((d) => d.installed && d.auth !== "missing" && d.id !== adapterId && d.id !== "mock" && d.id !== "a2a")
+          .filter((d) => d.installed && d.auth !== "missing" && !this.registry.cooling(d.id) && d.id !== adapterId && d.id !== "mock" && d.id !== "a2a")
           .map((d) => d.id)
         throw new Error(`${why}${others.length ? `. Ready to use: ${others.join(", ")}` : ""}`)
       }
@@ -420,7 +433,11 @@ export class Runtime {
         if (stored.data.status === "ready") {
           rt.busy = false
           queueMicrotask(() => this.flushInbox(rt))
-        } else if (stored.data.status === "busy") rt.busy = true
+        } else if (stored.data.status === "busy") {
+          rt.busy = true
+          // agents retry forever on an exhausted plan ("retrying (attempt 3): Free usage exceeded")
+          if (stored.data.detail && /retry/i.test(stored.data.detail) && isQuotaError(stored.data.detail)) this.outOfQuota(rt, stored.data.detail)
+        }
         break
       case "permission.requested":
         this.routePermission(rt, stored.data.requestId, stored.data.title, stored.data.kind, stored.data.detail, stored.data.options)
@@ -432,7 +449,7 @@ export class Runtime {
         if (/not logged in|authenticat|unauthori[sz]ed|\b401\b|invalid api key|please run \/login/i.test(stored.data.message)) {
           this.registry.forget(rt.info.adapter)
           this.authHint(rt)
-        }
+        } else if (isQuotaError(stored.data.message)) this.outOfQuota(rt, stored.data.message)
         break
       case "agent.exited":
         rt.closing = true
@@ -469,6 +486,19 @@ export class Runtime {
   }
 
   private authHinted = new Set<string>()
+
+  /**
+   * The agent's plan / credits ran out: stop the retry loop, say so plainly (to the lead and the
+   * user), and keep this adapter out of new spawns and reviews for a while.
+   */
+  private outOfQuota(rt: AgentRuntime, detail: string) {
+    if (rt.failReason) return
+    const why = detail.replace(/^retrying \(attempt \d+\):\s*/i, "").slice(0, 200)
+    rt.failReason = `${rt.info.adapter} is out of quota: ${why}`
+    this.registry.markUnavailable(rt.info.adapter, `out of quota (${why})`, QUOTA_COOLDOWN_MS)
+    this.emit({ type: "orch.note", data: { level: "warn", text: `${rt.info.name}: ${rt.failReason} — stopped its turn; use another agent` } }, rt.info.agentId)
+    if (rt.busy) void rt.session?.interrupt().catch(() => {})
+  }
 
   /** One actionable note per adapter when it fails on authentication. */
   private authHint(rt: AgentRuntime) {
@@ -783,7 +813,9 @@ export class Runtime {
     const targets = [...rt.resultTo]
     rt.resultTo.clear()
     const diff = rt.turnDiff.added || rt.turnDiff.removed ? ` (+${rt.turnDiff.added} −${rt.turnDiff.removed})` : ""
-    const text = rt.lastAssistantText.trim() || "(no summary)"
+    const text = rt.failReason
+      ? `${rt.failReason}. It cannot work until that is resolved — give its task to a different agent (another adapter).`
+      : rt.lastAssistantText.trim() || "(no summary)"
     const ws = this.collab.workspaces.byAgent.get(rt.info.agentId)
     const where =
       ws?.mode === "worktree" && (rt.turnDiff.added || rt.turnDiff.removed)
@@ -829,8 +861,9 @@ export class Runtime {
       if (now - rt.lastEventAt < (rt.openTools.size > 0 ? stall * 3 : stall)) continue
       rt.flagged = "stalled"
       const mins = Math.round((now - rt.lastEventAt) / 60000)
-      this.emit({ type: "agent.attention", data: { reason: "stalled", detail: `no activity for ${mins}m` } }, rt.info.agentId)
-      this.notifyLeadAbout(rt, `${rt.info.name} has shown no activity for ${mins} minutes.`)
+      const last = this.state.agents.get(rt.info.agentId)?.statusDetail
+      this.emit({ type: "agent.attention", data: { reason: "stalled", detail: `no activity for ${mins}m${last ? ` (${last})` : ""}` } }, rt.info.agentId)
+      this.notifyLeadAbout(rt, `${rt.info.name} has shown no activity for ${mins} minutes${last ? ` — its last status: "${last.slice(0, 200)}"` : ""}.`)
     }
   }
 

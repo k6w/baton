@@ -6,7 +6,7 @@
  *   claude mcp add baton -- baton mcp --root /path/to/project
  */
 import { attentionItems, formatCost } from "@batonsh/kernel"
-import type { BatonEvent } from "@batonsh/protocol"
+import { BATON_VERSION, type BatonEvent } from "@batonsh/protocol"
 import type { BatonClient, LiveRun } from "@batonsh/sdk"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
@@ -79,7 +79,7 @@ export function waitSettled(live: LiveRun, timeoutMs: number): Promise<"idle" | 
 
 export function buildBatonMcp(client: BatonClient, live: LiveRun): McpServer {
   const server = new McpServer(
-    { name: "baton", version: "0.1.0" },
+    { name: "baton", version: BATON_VERSION },
     {
       instructions:
         "Baton runs a team of coding agents (Claude Code, Codex, OpenCode, Gemini…) on this project, each in its own git worktree, coordinated by a lead agent. Use run_task to hand over work, status/wait to follow it, answer for approvals, diff + merge to land changes.",

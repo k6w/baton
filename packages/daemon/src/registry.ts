@@ -22,6 +22,8 @@ const BUILTIN: Loader[] = [
 export class AdapterRegistry {
   private adapters = new Map<string, AgentAdapter>()
   private detected = new Map<string, DetectResult>()
+  /** id → why it can't be used right now, until when (quota exhausted …). */
+  private unavailable = new Map<string, { why: string; until: number }>()
   readonly loadErrors: string[] = []
 
   constructor() {
@@ -71,7 +73,18 @@ export class AdapterRegistry {
   }
 
   /** The adapter definitely can't run: not installed, or its CLI says it isn't signed in. Re-checks before saying so. */
+  cooling(id: string): boolean {
+    return (this.unavailable.get(id)?.until ?? 0) > Date.now()
+  }
+
+  markUnavailable(id: string, why: string, forMs: number) {
+    this.unavailable.set(id, { why, until: Date.now() + forMs })
+  }
+
   async unusable(id: string): Promise<string | undefined> {
+    const u = this.unavailable.get(id)
+    if (u && u.until > Date.now()) return `${id} is ${u.why}`
+    if (u) this.unavailable.delete(id)
     let d = await this.detect(id)
     if (d && (d.auth === "missing" || !d.installed)) d = await this.detect(id, true)
     if (!d) return undefined

@@ -99,7 +99,8 @@ export function mcpConfigArgs(servers: McpServerSpec[]): { args: string[]; env: 
     args.push("-c", `${key}.url=${tomlString(s.url)}`)
     // Baton's own coordination tools never need a human (Baton's policy allows them anyway):
     // skip codex's per-call elicitation round-trip
-    if (s.name === "baton") args.push("-c", `${key}.default_tools_approval_mode="approve"`)
+    // …and wait_for_results long-polls for up to 30 min (codex gives up on tool calls after 300 s by default)
+    if (s.name === "baton") args.push("-c", `${key}.default_tools_approval_mode="approve"`, "-c", `${key}.tool_timeout_sec=1900`)
     const headers = Object.entries(s.headers ?? {})
     if (!headers.length) continue
     const refs: Record<string, string> = {}

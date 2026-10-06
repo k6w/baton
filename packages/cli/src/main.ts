@@ -34,16 +34,17 @@ import {
   revokeTrust,
   trustEntries,
 } from "@batonsh/kernel"
-import { CONTROL_PROTOCOL_VERSION, ControlErrorCode, REQUIRED_PARAMS } from "@batonsh/protocol"
+import { BATON_VERSION, CONTROL_PROTOCOL_VERSION, ControlErrorCode, REQUIRED_PARAMS } from "@batonsh/protocol"
 import { BatonClient, connect, discoverSocket } from "@batonsh/sdk"
 import { listThemes, loadTheme } from "@batonsh/themes"
 import { runHeadless } from "./headless.ts"
 import { detectAgents, initProject, isInitialized } from "./init.ts"
 import { c } from "./style.ts"
+import { update } from "./update.ts"
 
 const c_ = c
 
-const VERSION = "0.1.0"
+const VERSION = BATON_VERSION
 
 interface Args {
   _: string[]
@@ -371,6 +372,18 @@ function loginCommand(a: { login?: string[]; authHint?: string; path?: string })
  * `baton login [agent]`: run that agent's own interactive sign-in (Claude Code's, Codex's, …).
  * Baton never sees the credentials — each CLI stores its own login, and Baton runs the CLI.
  */
+async function cmdUpdate(args: Args) {
+  const check = !!args.flags.check
+  const version = typeof args._[0] === "string" ? args._[0] : undefined
+  const r = await update({ check, version, log: (s) => console.log(c.dim(s)) })
+  if (r.updated) {
+    console.log(`${c.green("✓")} baton ${r.from} → ${c.bold(r.to)}`)
+    console.log(c.dim("running daemons keep the old version until they restart: baton stop (in each project)"))
+  } else if (r.to === r.from) console.log(`${c.green("✓")} baton ${r.from} is the latest`)
+  else if (r.how) console.log(`baton ${c.bold(r.to)} is available (you have ${r.from}). Update with:\n  ${r.how}`)
+  else console.log(`baton ${c.bold(r.to)} is available (you have ${r.from}) — run ${c.bold("baton update")}`)
+}
+
 async function cmdLogin(args: Args) {
   const agents = (await detectAgents()).filter((a) => a.installed)
   let pick = args._[0] ? agents.find((a) => a.id === args._[0]) : undefined
@@ -626,6 +639,7 @@ ${b("Commands")}
   baton mcp             Baton as an MCP server: let Claude Desktop / Cursor / any agent run your team
   baton a2a [--stop]    serve this team as an A2A agent (other agents send it tasks)
   baton login [agent]   sign in to an agent with its own login (Claude Code, Codex, OpenCode, …)
+  baton update [--check]  update Baton to the latest release (verified download)
   baton issue <n>       start with a GitHub issue        baton pr [-y]         PR from what the run merged
   baton replay [run]    watch a past run play back (space pause · , . moments · - + speed)
   baton config get|explain|path|schema|defaults            baton theme list|set <name>
@@ -647,8 +661,48 @@ function hintFor(msg: string): string {
   if (/unknown adapter/i.test(msg)) return "`baton agents` lists what's installed; custom agents go in [agents.<name>] (docs/agents.md)"
   if (/not logged in|auth/i.test(msg)) return "`baton login <agent>` runs the agent's own sign-in (claude, codex, opencode…)"
   if (/config/i.test(msg)) return "`baton config explain <key>` shows where a value comes from"
-  if (/usage:/i.test(msg)) return "`baton --help` has examples"
+  if (/usage:|unknown command/i.test(msg)) return "`baton --help` lists commands, with examples"
   return "`baton doctor` checks your setup"
+}
+
+const COMMANDS = [
+  "demo",
+  "run",
+  "init",
+  "doctor",
+  "agents",
+  "ps",
+  "stop",
+  "config",
+  "theme",
+  "trust",
+  "history",
+  "export",
+  "web",
+  "mcp",
+  "a2a",
+  "login",
+  "update",
+  "issue",
+  "pr",
+  "replay",
+  "watch",
+  "protocol",
+  "attach",
+  "help",
+]
+
+function editDistance(a: string, b: string): number {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array<number>(b.length).fill(0)])
+  for (let j = 1; j <= b.length; j++) (d[0] as number[])[j] = j
+  for (let i = 1; i <= a.length; i++)
+    for (let j = 1; j <= b.length; j++)
+      (d[i] as number[])[j] = Math.min(
+        (d[i - 1] as number[])[j]! + 1,
+        (d[i] as number[])[j - 1]! + 1,
+        (d[i - 1] as number[])[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1),
+      )
+  return (d[a.length] as number[])[b.length]!
 }
 
 async function main() {
@@ -691,6 +745,9 @@ async function main() {
       return cmdMcp(sub)
     case "login":
       return cmdLogin(sub)
+    case "update":
+    case "upgrade":
+      return cmdUpdate(sub)
     case "protocol":
       return cmdProtocol()
     case "a2a":
@@ -723,6 +780,13 @@ async function main() {
     case "help":
       return help()
     default:
+      // a lone word is far more likely a mistyped command than a task
+      if (args._.length === 1 && /^[a-z][a-z0-9-]{0,19}$/.test(cmd)) {
+        const near = COMMANDS.filter((x) => editDistance(x, cmd) <= 2)
+        throw new Error(
+          `unknown command "${cmd}"${near.length ? ` — did you mean ${near.map((x) => `baton ${x}`).join(" or ")}?` : "."} To start with a task, describe it: baton "${cmd} the …"`,
+        )
+      }
       // `baton fix the login bug` → start with that task
       return cmdStart(args)
   }

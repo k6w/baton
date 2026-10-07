@@ -264,16 +264,20 @@ class NativeSession implements AgentSession {
     this.currentSandbox() // logs the effective sandbox
     // the note stays valid when autonomy changes later (yolo lifts the sandbox; the note says "may")
     const sandboxAvailable =
-      this.sandboxSettings.mode === "auto" &&
+      this.sandboxSettings.mode !== "off" &&
       resolveSandbox({ settings: this.sandboxSettings, approval: "ask", cwd: this.ws.root, env: this.env }).kind !== "none"
     this.system = systemPrompt({
       cwd: this.ws.root,
       extra: this.cfg.systemPrompt,
       mcpInstructions,
       sandbox: sandboxAvailable
-        ? `Commands may run in a sandbox: writing outside the workspace, the temp directories and ~/.cache fails with "Operation not permitted"${
-            this.sandboxSettings.network ? "" : ", and network access is blocked"
-          }. If a command fails because of the sandbox, say what you need instead of working around it.`
+        ? this.sandboxSettings.mode === "container"
+          ? `Commands run in a fresh ${this.sandboxSettings.image} container that sees only the workspace (tools you install there don't persist between commands)${
+              this.sandboxSettings.network ? "" : ", without network access"
+            }. If a command fails because of that, say what you need instead of working around it.`
+          : `Commands may run in a sandbox: writing outside the workspace, the temp directories and ~/.cache fails with "Operation not permitted"${
+              this.sandboxSettings.network ? "" : ", and network access is blocked"
+            }. If a command fails because of the sandbox, say what you need instead of working around it.`
         : undefined,
     })
     this.buildModelTools()

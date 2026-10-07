@@ -60,6 +60,11 @@ const bad = (msg: string) => new A2AError(ErrorCode.InvalidParams, `push notific
 
 /** Validate a webhook URL; resolves the host name unless `allowPrivate`. Throws an A2AError (InvalidParams). */
 export async function checkPushUrl(raw: string, allowPrivate: boolean): Promise<URL> {
+  return (await vetPushUrl(raw, allowPrivate)).url
+}
+
+/** checkPushUrl + the vetted address, so plain-http delivery connects exactly there (DNS rebinding). */
+export async function vetPushUrl(raw: string, allowPrivate: boolean): Promise<{ url: URL; ip?: string }> {
   let url: URL
   try {
     url = new URL(raw)
@@ -68,13 +73,13 @@ export async function checkPushUrl(raw: string, allowPrivate: boolean): Promise<
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") throw bad("only http(s) URLs")
   if (url.username || url.password) throw bad("credentials in the URL (use authentication instead)")
-  if (allowPrivate) return url
+  if (allowPrivate) return { url }
   const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase()
   if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal"))
     throw bad(`${host} is a local name (set a2a.allow_private_push to allow it)`)
   if (isIP(host)) {
     if (isPrivateAddress(host)) throw bad(`${host} is a private or loopback address (set a2a.allow_private_push to allow it)`)
-    return url
+    return { url }
   }
   let addrs: { address: string }[]
   try {
@@ -84,7 +89,7 @@ export async function checkPushUrl(raw: string, allowPrivate: boolean): Promise<
   }
   const priv = addrs.find((a) => isPrivateAddress(a.address))
   if (priv || !addrs.length) throw bad(`${host} resolves to ${priv?.address ?? "nothing"} (private; set a2a.allow_private_push to allow it)`)
-  return url
+  return { url, ip: addrs[0]?.address }
 }
 
 export interface PushOptions {
@@ -154,8 +159,16 @@ export class PushDispatcher {
       if (i > 0) await this.wait(base * 2 ** (i - 1))
       if (this.stopped) return
       try {
-        await checkPushUrl(target.url, this.opts.allowPrivate === true)
-        const res = await fetch(target.url, { method: "POST", headers, body, redirect: "manual", signal: AbortSignal.timeout(this.opts.timeoutMs ?? 10_000) })
+        const { url, ip } = await vetPushUrl(target.url, this.opts.allowPrivate === true)
+        // https needs no pinning: a rebound name can't present the right certificate
+        let to = url
+        const pinned = { ...headers }
+        if (ip && url.protocol === "http:") {
+          to = new URL(url)
+          to.hostname = isIP(ip) === 6 ? `[${ip}]` : ip
+          pinned.host = url.host
+        }
+        const res = await fetch(to, { method: "POST", headers: pinned, body, redirect: "manual", signal: AbortSignal.timeout(this.opts.timeoutMs ?? 10_000) })
         await res.body?.cancel().catch(() => {})
         if (res.status >= 200 && res.status < 300) {
           this.delivered.push({ url: target.url, ok: true, status: res.status })

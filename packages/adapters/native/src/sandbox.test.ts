@@ -81,6 +81,46 @@ describe("sandbox settings", () => {
     }
     expect(warnings).toHaveLength(1)
     expect(warnings[0]).toContain("bwrap")
+    expect(warnings[0]).toContain("landrun")
+  })
+
+  test("linux without bwrap: firejail, then landrun (Landlock)", () => {
+    const cwd = tempWorkspace()
+    const only = (bin: string) => (b: string) => (b === bin ? `/usr/bin/${bin}` : null)
+    const fj = resolveSandbox({ settings: sandboxSettings({ sandboxNetwork: false }), approval: "ask", cwd, platform: "linux", which: only("firejail") })
+    expect(fj.kind).toBe("firejail")
+    const a = fj.wrap(["sh", "-c", "make"])
+    expect(a).toContain("--read-only=/")
+    expect(a).toContain(`--read-write=${realpathSync(cwd)}`)
+    expect(a).toContain("--net=none")
+    expect(a.slice(-4)).toEqual(["--", "sh", "-c", "make"])
+    const lr = resolveSandbox({ settings: sandboxSettings({}), approval: "ask", cwd, platform: "linux", which: only("landrun") })
+    expect(lr.kind).toBe("landrun")
+    const b = lr.wrap(["make"])
+    expect(b.slice(0, 3)).toEqual(["/usr/bin/landrun", "--rox", "/"])
+    expect(b.join(" ")).toContain(`--rwx ${realpathSync(cwd)}`)
+    expect(b).toContain("--unrestricted-network")
+  })
+
+  test("container tier: only the workspace is mounted, as the user's uid; never silently unconfined", () => {
+    const cwd = tempWorkspace()
+    const s = resolveSandbox({
+      settings: sandboxSettings({ sandbox: "container", sandboxImage: "oven/bun:1", sandboxNetwork: false }),
+      approval: "ask",
+      cwd,
+      platform: "darwin",
+      which: (b) => (b === "podman" ? "/usr/bin/podman" : null),
+    })
+    expect(s.kind).toBe("container")
+    const a = s.wrap(["sh", "-c", "bun test"])
+    const w = realpathSync(cwd)
+    expect(a.slice(0, 3)).toEqual(["/usr/bin/podman", "run", "--rm"])
+    expect(a.join(" ")).toContain(`-v ${w}:${w} -w ${w}`)
+    expect(a).toContain("--network")
+    expect(a.slice(-4)).toEqual(["oven/bun:1", "sh", "-c", "bun test"])
+    expect(() => resolveSandbox({ settings: sandboxSettings({ sandbox: "container" }), approval: "ask", cwd, platform: "linux", which: () => null })).toThrow(
+      "docker or podman",
+    )
   })
 
   test("git worktrees: the main repository's git dir is writable too", () => {

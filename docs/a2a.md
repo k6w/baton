@@ -250,9 +250,11 @@ options = { url = "http://127.0.0.1:4780", tokenEnv = "TEAM_A_TOKEN" }
   `params.tenant` for JSON-RPC). The server serves one team and ignores tenants.
 - **Push receiving.** The client registers webhooks (`pushUrl`) but doesn't run a webhook receiver of its
   own. It always streams or polls.
-- **DNS rebinding.** The SSRF guard resolves the host name before each delivery, but `fetch` resolves it
-  again. A hostile DNS server could answer differently in between. Use `a2a.allow_private_push = false`
-  (the default) and HTTPS webhooks.
+- **DNS rebinding.**
+  - Push deliveries to plain-`http` webhooks connect to the address the SSRF guard vetted. HTTPS
+    webhooks are protected by their certificate.
+  - The server answers only requests whose `Host` is an IP address, `localhost`, this machine's name,
+    or `a2a.public_url`. Set `public_url` when peers reach it by another DNS name.
 - **Card key trust.** A `jku` from the card proves the card wasn't changed relative to the host that
   serves the JWKS, not who signed it. Pin keys with `cardJwks` for that. The server doesn't rotate its key.
   Delete the `.ed25519.pem` file to get a new one.

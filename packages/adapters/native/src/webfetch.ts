@@ -3,8 +3,9 @@
  *   - follows up to 5 redirects (each hop re-checked), 15 s timeout, 2 MB body cap;
  *   - HTML is converted to text (scripts/styles/nav dropped; headings, links and code kept);
  *   - SSRF guard: loopback / private / link-local addresses are refused unless allowPrivate.
- * The guard resolves the host before connecting; a DNS answer that changes between the check and
- * the connection (rebinding) is not covered.
+ * DNS rebinding: plain-http requests connect to the exact address that passed the check (Host header
+ * kept), so a second, different DNS answer is never used. https needs no pinning: a rebound name
+ * can't present a valid certificate for the internal service, so the TLS handshake fails.
  */
 import { lookup } from "node:dns/promises"
 import { isIP } from "node:net"
@@ -57,15 +58,26 @@ export function isPrivateAddress(ip: string): boolean {
   return false
 }
 
-async function checkHost(url: URL, allowPrivate: boolean): Promise<void> {
+/** Checks the host; returns the vetted address to connect to (undefined when private hosts are allowed). */
+async function checkHost(url: URL, allowPrivate: boolean, resolve = lookup): Promise<string | undefined> {
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new FetchRefused(`only http(s) URLs can be fetched (got ${url.protocol})`)
-  if (allowPrivate) return
+  if (allowPrivate) return undefined
   const host = url.hostname.replace(/^\[|\]$/g, "")
   if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal"))
     throw new FetchRefused(`refusing to fetch a local address (${host})`)
-  const addrs = isIP(host) ? [host] : (await lookup(host, { all: true, verbatim: true })).map((a) => a.address)
+  const addrs = isIP(host) ? [host] : (await resolve(host, { all: true, verbatim: true })).map((a) => a.address)
   const bad = addrs.find(isPrivateAddress)
   if (bad) throw new FetchRefused(`refusing to fetch a private or loopback address (${host} → ${bad})`)
+  if (!addrs[0]) throw new FetchRefused(`${host} did not resolve`)
+  return addrs[0]
+}
+
+/** http://name/path → http://<vetted ip>/path (+ Host: name); https and IP URLs unchanged. */
+export function pinnedTarget(url: URL, ip: string | undefined): { target: URL; host?: string } {
+  if (!ip || url.protocol !== "http:" || isIP(url.hostname.replace(/^\[|\]$/g, ""))) return { target: url }
+  const target = new URL(url)
+  target.hostname = isIP(ip) === 6 ? `[${ip}]` : ip
+  return { target, host: url.host }
 }
 
 // ───────────────────────────── HTML → text ─────────────────────────────
@@ -174,7 +186,7 @@ async function readCapped(res: Response, max: number): Promise<{ buf: Uint8Array
 
 export async function webFetch(
   rawUrl: string,
-  opts: { signal?: AbortSignal; allowPrivate?: boolean; timeoutMs?: number; maxBytes?: number; fetch?: typeof fetch } = {},
+  opts: { signal?: AbortSignal; allowPrivate?: boolean; timeoutMs?: number; maxBytes?: number; fetch?: typeof fetch; resolve?: typeof lookup } = {},
 ): Promise<FetchResult> {
   let url: URL
   try {
@@ -188,12 +200,14 @@ export async function webFetch(
   const signal = AbortSignal.any(signals)
   let res: Response | undefined
   for (let hop = 0; ; hop++) {
-    await checkHost(url, !!opts.allowPrivate)
-    res = await doFetch(url, {
+    const ip = await checkHost(url, !!opts.allowPrivate, opts.resolve)
+    const { target, host } = pinnedTarget(url, ip)
+    res = await doFetch(target, {
       method: "GET",
       redirect: "manual",
       signal,
       headers: {
+        ...(host ? { host } : {}),
         "user-agent": "BatonAgent/0.1 (+https://github.com/batonsh)",
         accept: "text/html,application/xhtml+xml,text/plain,application/json;q=0.9,*/*;q=0.5",
       },

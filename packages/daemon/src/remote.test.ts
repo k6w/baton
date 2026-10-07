@@ -37,6 +37,12 @@ const api = (path: string, body?: unknown, auth = true) =>
   })
 
 describe("web view", () => {
+  test("a page on another domain rebound to this address is refused (Host check)", async () => {
+    const r = await fetch(`${base()}/api/view`, { headers: { host: "evil.example", Authorization: `Bearer ${token}` } })
+    expect(r.status).toBe(421)
+    expect((await fetch(`${base()}/api/view`, { headers: { Authorization: `Bearer ${token}` } })).status).toBe(200)
+  })
+
   test("local only by default; the page loads without a token, the API needs one", async () => {
     expect(web.lan).toBe(false)
     expect(web.openUrl).toBe(`http://127.0.0.1:${web.port}/#t=${token}`)

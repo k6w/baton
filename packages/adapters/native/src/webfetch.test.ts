@@ -1,6 +1,6 @@
 import "./testing/env.ts"
 import { afterAll, describe, expect, test } from "bun:test"
-import { decodeEntities, htmlToText, isPrivateAddress, webFetch } from "./webfetch.ts"
+import { decodeEntities, htmlToText, isPrivateAddress, pinnedTarget, webFetch } from "./webfetch.ts"
 
 const servers: { stop(): void }[] = []
 afterAll(() => {
@@ -106,4 +106,21 @@ describe("web fetch", () => {
     })
     await expect(webFetch(`${base}/`, { allowPrivate: true, timeoutMs: 200 })).rejects.toThrow()
   })
+})
+
+test("plain http is pinned to the vetted address (DNS rebinding can't swap it)", async () => {
+  let calls = 0
+  // first answer public, any later one private: the fetch must still go to the first
+  const resolve = (async () => [{ address: calls++ === 0 ? "93.184.216.34" : "127.0.0.1", family: 4 }]) as never
+  const seen: { url: string; host?: string }[] = []
+  const fakeFetch = (async (u: URL | string, init?: RequestInit) => {
+    seen.push({ url: String(u), host: (init?.headers as Record<string, string>)?.host })
+    return new Response("ok", { headers: { "content-type": "text/plain" } })
+  }) as typeof fetch
+  const r = await webFetch("http://rebind.example/path?q=1", { fetch: fakeFetch, resolve })
+  expect(r.text).toBe("ok")
+  expect(seen).toEqual([{ url: "http://93.184.216.34/path?q=1", host: "rebind.example" }])
+  expect(calls).toBe(1)
+  // https keeps the name (TLS verifies it)
+  expect(pinnedTarget(new URL("https://a.example/x"), "93.184.216.34").target.hostname).toBe("a.example")
 })

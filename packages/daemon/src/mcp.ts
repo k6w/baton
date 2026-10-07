@@ -9,6 +9,7 @@ import { BATON_VERSION } from "@batonsh/protocol"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"
 import { z } from "zod"
+import { hostAllowed, misdirected } from "./host-guard.ts"
 import type { AgentRuntime, Runtime } from "./runtime.ts"
 import { pickForTask } from "./scores.ts"
 
@@ -444,6 +445,7 @@ export function startMcpServer(rt: Runtime, port = 0): McpHttpServer {
     port,
     idleTimeout: 0,
     async fetch(req) {
+      if (!hostAllowed(req.headers.get("host"))) return misdirected()
       const url = new URL(req.url)
       // identity: the per-agent token, as a bearer header (preferred — never visible in `ps`) or in the path
       const m = /^\/mcp(?:\/([\w-]+))?\/?$/.exec(url.pathname)

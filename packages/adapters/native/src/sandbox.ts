@@ -4,10 +4,18 @@
  *   macOS  `sandbox-exec -p <profile>`: reads anywhere; writes only to the workspace, the OS temp
  *          dirs (/private/tmp, /private/var/folders, $TMPDIR), ~/.cache and options.sandboxWritable;
  *          network allowed unless options.sandboxNetwork === false.
- *   Linux  `bwrap` when installed: / read-only, workspace + temp dirs (+ ~/.cache, extra paths)
- *          bound read-write, `--unshare-net` when network is off. Without bwrap: no sandbox (warned once).
+ *   Linux  the first one installed of
+ *            `bwrap`    / read-only, workspace + temp dirs (+ caches, extra paths) bound read-write,
+ *                       `--unshare-net` when network is off;
+ *            `firejail` the same rules (--read-only=/ --read-write=…, --net=none);
+ *            `landrun`  Landlock (kernel ≥ 5.13, no root, no namespaces): read/exec everywhere,
+ *                       write only to those paths (network rules need kernel ≥ 6.7).
+ *          None installed: no sandbox (warned once, with what to install).
+ *   any    options.sandbox = "container": every command runs in a throwaway docker/podman container
+ *          (options.sandboxImage, default "node:22-bookworm") with only the workspace (+ git dirs)
+ *          mounted, as your uid, `--network none` when network is off.
  *
- * options.sandbox = "auto" (default) | "off". The yolo approval mode turns the sandbox off.
+ * options.sandbox = "auto" (default) | "container" | "off". The yolo approval mode turns it off.
  */
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
@@ -16,14 +24,16 @@ import type { ApprovalMode } from "@batonsh/protocol"
 import { which } from "@batonsh/protocol"
 
 export interface SandboxSettings {
-  mode: "auto" | "off"
+  mode: "auto" | "container" | "off"
+  /** Image for mode "container". */
+  image: string
   network: boolean
   /** Extra writable paths (absolute or ~/…). */
   writable: string[]
 }
 
 export interface Sandbox {
-  kind: "seatbelt" | "bwrap" | "none"
+  kind: "seatbelt" | "bwrap" | "firejail" | "landrun" | "container" | "none"
   /** Why there is no sandbox (kind "none"). */
   reason?: string
   writable: string[]
@@ -34,9 +44,10 @@ export interface Sandbox {
 }
 
 export function sandboxSettings(o: Record<string, unknown>): SandboxSettings {
-  const mode = o.sandbox === "off" || o.sandbox === false ? "off" : "auto"
+  const mode = o.sandbox === "off" || o.sandbox === false ? "off" : o.sandbox === "container" ? "container" : "auto"
   const writable = Array.isArray(o.sandboxWritable) ? o.sandboxWritable.filter((x): x is string => typeof x === "string" && !!x.trim()) : []
-  return { mode, network: o.sandboxNetwork !== false, writable }
+  const image = typeof o.sandboxImage === "string" && o.sandboxImage.trim() ? o.sandboxImage.trim() : "node:22-bookworm"
+  return { mode, image, network: o.sandboxNetwork !== false, writable }
 }
 
 function expandHome(p: string, home: string): string {
@@ -138,6 +149,29 @@ export function seatbeltProfile(writable: string[], network: boolean): string {
 
 let warnedNoBwrap = false
 
+/** docker/podman argv for one command: only the workspace and its git dirs are visible. */
+export function containerArgs(engine: string, image: string, cwd: string, mounts: string[], network: boolean, argv: string[]): string[] {
+  const uid = process.getuid?.()
+  const gid = process.getgid?.()
+  const vols = [...new Set([cwd, ...mounts])].filter((p) => existsSync(p)).flatMap((p) => ["-v", `${p}:${p}`])
+  return [
+    engine,
+    "run",
+    "--rm",
+    "-i",
+    "--init",
+    ...vols,
+    "-w",
+    cwd,
+    ...(uid !== undefined && gid !== undefined ? ["--user", `${uid}:${gid}`] : []),
+    "-e",
+    "HOME=/tmp",
+    ...(network ? [] : ["--network", "none"]),
+    image,
+    ...argv,
+  ]
+}
+
 export function resolveSandbox(opts: {
   settings: SandboxSettings
   approval: ApprovalMode
@@ -157,6 +191,20 @@ export function resolveSandbox(opts: {
   const writable = writablePaths(opts.cwd, settings, opts.env)
   const network = settings.network
   const desc = (kind: string) => `${kind} (writes: ${writable.join(", ")}; network: ${network ? "allowed" : "blocked"})`
+  if (settings.mode === "container") {
+    const engine = find("docker") ?? find("podman")
+    // asked for isolation: never silently run unconfined
+    if (!engine) throw new Error('options.sandbox = "container" needs docker or podman on PATH')
+    const cwd = real(opts.cwd)
+    const mounts = gitDirsFor(cwd)
+    return {
+      kind: "container",
+      writable: [cwd, ...mounts],
+      network,
+      wrap: (argv) => containerArgs(engine, settings.image, cwd, mounts, network, argv),
+      describe: () => `container ${settings.image} via ${engine} (only ${cwd} is visible; network: ${network ? "allowed" : "blocked"})`,
+    }
+  }
   if (platform === "darwin") {
     const bin = existsSync("/usr/bin/sandbox-exec") ? "/usr/bin/sandbox-exec" : find("sandbox-exec")
     if (!bin) return none("sandbox-exec not found")
@@ -165,14 +213,29 @@ export function resolveSandbox(opts: {
   }
   if (platform === "linux") {
     const bwrap = find("bwrap")
+    const present = writable.filter((p) => existsSync(p))
     if (!bwrap) {
+      const firejail = find("firejail")
+      if (firejail) {
+        const args = [firejail, "--quiet", "--noprofile", "--read-only=/", ...present.map((p) => `--read-write=${p}`), ...(network ? [] : ["--net=none"])]
+        return { kind: "firejail", writable, network, wrap: (argv) => [...args, "--", ...argv], describe: () => desc("firejail") }
+      }
+      const landrun = find("landrun")
+      if (landrun) {
+        // Landlock: read+exec everywhere, write only where allowed; TCP rules only when network is off
+        const args = [landrun, "--rox", "/", ...present.flatMap((p) => ["--rwx", p]), ...(network ? ["--unrestricted-network"] : [])]
+        return { kind: "landrun", writable, network, wrap: (argv) => [...args, ...argv], describe: () => desc("landrun (Landlock)") }
+      }
       if (!warnedNoBwrap) {
         warnedNoBwrap = true
-        opts.log?.("warn", "run_command is not sandboxed: bubblewrap (bwrap) is not installed — install it to confine commands to the workspace")
+        opts.log?.(
+          "warn",
+          'run_command is not sandboxed: install bubblewrap (bwrap), firejail or landrun to confine commands to the workspace — or set options.sandbox = "container"',
+        )
       }
-      return none("bwrap not installed")
+      return none("no bwrap, firejail or landrun")
     }
-    const binds = writable.filter((p) => existsSync(p)).flatMap((p) => ["--bind", p, p])
+    const binds = present.flatMap((p) => ["--bind", p, p])
     const args = [bwrap, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", ...binds, "--die-with-parent"]
     if (!network) args.push("--unshare-net")
     return { kind: "bwrap", writable, network, wrap: (argv) => [...args, "--", ...argv], describe: () => desc("bwrap") }

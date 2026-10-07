@@ -68,6 +68,7 @@ import type { BatonEvent, PendingApproval } from "@batonsh/protocol"
 import { checkPushUrl, PushDispatcher, type PushOptions, type PushTarget } from "./a2a-push.ts"
 import { a2aSigningKey, loadTasks, type StoredTask, TaskStore, tasksFile } from "./a2a-store.ts"
 import { DAEMON_VERSION } from "./control.ts"
+import { hostAllowed, misdirected } from "./host-guard.ts"
 import type { Runtime } from "./runtime.ts"
 
 export interface A2AServerOptions {
@@ -1007,6 +1008,7 @@ export function startA2AServer(rt: Runtime, opts: A2AServerOptions = {}): A2ASer
     port: opts.port ?? 0,
     idleTimeout: 120,
     fetch: async (req, srv) => {
+      if (!hostAllowed(req.headers.get("host"), opts.publicUrl ? [opts.publicUrl] : [])) return misdirected()
       const url = new URL(req.url)
       if (req.method === "OPTIONS")
         return new Response(null, {

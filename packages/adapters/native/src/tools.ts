@@ -9,6 +9,7 @@ import { augmentedPath, diffLines, diffStat, killProcessTree, runCapture, type T
 import { z } from "zod"
 import type { Sandbox } from "./sandbox.ts"
 import { FETCH_MAX_CHARS, FetchRefused, webFetch } from "./webfetch.ts"
+import { formatResults, webSearch } from "./websearch.ts"
 import type { Workspace } from "./workspace.ts"
 
 /** "network" = web access (asks only under the `ask` approval mode). */
@@ -549,6 +550,30 @@ const webFetchTool: BuiltinTool<{ url: string }> = {
   },
 }
 
+// ───────────────────────────── web_search ─────────────────────────────
+
+const webSearchTool: BuiltinTool<{ query: string; count?: number }> = {
+  name: "web_search",
+  description:
+    "Search the web: returns titles, URLs and snippets (Brave or Tavily with an API key, otherwise DuckDuckGo). Then read the most relevant pages with web_fetch.",
+  schema: z.object({ query: z.string().min(1), count: z.number().int().min(1).max(15).optional().describe("results to return (default 6)") }),
+  kind: "search",
+  category: "network",
+  readOnly: true,
+  title: (i) => `Search(${oneLine(i.query, 100)})`,
+  permissionKey: () => "web_search",
+  async run(i, ctx) {
+    try {
+      const r = await webSearch(i.query, { count: i.count, env: { ...process.env, ...ctx.env }, signal: ctx.signal })
+      const output = formatResults(i.query, r)
+      return { output, summary: `${r.results.length} results · ${r.engine}`, content: [{ type: "text", text: capOutput(output, 4000) }] }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      return { output: `Search failed: ${ctx.signal.aborted ? "interrupted" : msg}`, isError: true, summary: ctx.signal.aborted ? "Interrupted" : "Failed" }
+    }
+  },
+}
+
 function safeRel(ws: Workspace, p: string): string {
   try {
     return ws.rel(ws.resolve(p))
@@ -568,4 +593,5 @@ export const BUILTIN_TOOLS: AnyTool[] = [
   editFileTool,
   runCommandTool,
   webFetchTool,
+  webSearchTool,
 ] as unknown as AnyTool[]

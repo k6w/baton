@@ -140,9 +140,18 @@ the order of the request.
   directory, the temp directories (`/private/tmp`, `/private/var/folders`, `$TMPDIR`), `~/.cache` and the paths in
   `sandboxWritable`. In a git worktree, the main repository's git directory is writable too, so `git commit` works.
   Writing anywhere else fails with "Operation not permitted".
-- **Linux:** `bwrap` (bubblewrap) when it is installed: `/` is mounted read-only and the same writable paths are bound
-  read-write. Without `bwrap`, commands are not sandboxed and the agent logs a warning once.
-- Network access is allowed unless `sandboxNetwork = false` (macOS: `(deny network*)`; Linux: `--unshare-net`).
+- **Linux:** the first of these that is installed:
+  - `bwrap` (bubblewrap): `/` is mounted read-only and the same writable paths are bound read-write.
+  - `firejail`: the same rules (`--read-only=/`, `--read-write=…`).
+  - `landrun`: Landlock, kernel ≥ 5.13, no root or namespaces needed. It allows read and exec everywhere and write only to those paths.
+
+  With none of them installed, commands are not sandboxed and the agent logs a warning once.
+- **Containers (any OS):** `sandbox = "container"` runs every command in a throwaway docker or podman container
+  (`sandboxImage`, default `node:22-bookworm`). Only the workspace (and its git directories) is mounted, and commands
+  run as your uid. Use an image with your toolchain: tools installed during a command don't persist. Without docker or
+  podman the session refuses to start rather than run unconfined.
+- Network access is allowed unless `sandboxNetwork = false` (macOS: `(deny network*)`; bwrap: `--unshare-net`;
+  firejail: `--net=none`; containers: `--network none`; landrun restricts TCP on kernels ≥ 6.7).
 - The `yolo` approval mode and `sandbox = "off"` turn the sandbox off.
 
 The effective sandbox is logged when the session starts and whenever the approval mode changes it
@@ -161,8 +170,20 @@ Fetches an http(s) URL with GET. It follows up to 5 redirects and has a 15 s tim
 returns at most about 20 000 characters, with a note when it truncates. HTML is converted to readable text: scripts,
 styles and navigation are dropped, and headings, links (as `[text](url)`), lists and code blocks are kept. Other
 schemes (`file:`, `ftp:` …) are refused. So are loopback, private, link-local and CGNAT addresses, checked again on
-every redirect, unless `allowPrivateFetch = true`. The check resolves the host before connecting, so DNS rebinding
-between the check and the request is not covered.
+every redirect, unless `allowPrivateFetch = true`.
+
+DNS rebinding is covered:
+- Plain-`http` requests connect to the exact address that passed the check, with the original `Host` header kept.
+- `https` needs no pinning, because a rebound name can't present a valid certificate for the internal service.
+
+### `web_search`
+
+Returns titles, URLs and snippets for a query (6 by default, up to 15). The engine depends on which key is set:
+- `BRAVE_API_KEY`: the Brave Search API.
+- `TAVILY_API_KEY`: Tavily.
+- Neither: DuckDuckGo's HTML endpoint. It needs no key but may rate-limit.
+
+Like `web_fetch`, it asks only in `ask` mode.
 
 ### Images
 
@@ -195,7 +216,8 @@ the system prompt. The clients are closed when the agent exits.
 | `providerOptions` | — | passed to the AI SDK as is, e.g. `{ anthropic = { thinking = { type = "enabled", budgetTokens = 8000 } } }` |
 | `pricing` | models.dev, then a built-in table | `{ input = 0.5, output = 1.5, cachedInput = 0.05, cacheWrite = 0.6 }` USD per million tokens |
 | `promptCaching` | `true` | Anthropic prompt caching (see Behaviour) |
-| `sandbox` | `"auto"` | `"off"` runs commands unsandboxed |
+| `sandbox` | `"auto"` | `"container"` runs each command in a docker/podman container; `"off"` runs commands unsandboxed |
+| `sandboxImage` | `"node:22-bookworm"` | image for `sandbox = "container"` |
 | `sandboxWritable` | `[]` | extra writable paths for the sandbox (`~/` is expanded) |
 | `sandboxNetwork` | `true` | `false` blocks network access from commands |
 | `allowPrivateFetch` | `false` | let `web_fetch` reach loopback and private addresses |

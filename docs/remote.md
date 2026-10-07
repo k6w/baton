@@ -25,6 +25,8 @@ bookmarks.
 - Every API call needs the project's access token. The printed link carries it in the URL *fragment*, which
   browsers never send to a server; the page then keeps it in local storage.
 - `baton web --rotate` makes a new token and invalidates old links.
+- Requests must address the server by IP, `localhost`, this machine's name, its Tailscale name or `remote.public_url`.
+  Other host names get `421`, so a web page can't reach the server through DNS rebinding.
 - Encryption: `--https` serves it with a certificate Baton creates for this machine (your phone asks you to trust it
   once; `baton web` prints its SHA-256 fingerprint to compare), and `--tailscale` publishes it with
   `tailscale serve` on your tailnet name with a real certificate, reachable wherever you're signed in to Tailscale

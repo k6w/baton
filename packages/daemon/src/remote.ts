@@ -14,6 +14,7 @@ import { hostname, networkInterfaces } from "node:os"
 import { join } from "node:path"
 import { attentionItems, type FeedItem, stateDir } from "@batonsh/kernel"
 import qrcode from "qrcode-generator"
+import { hostAllowed, hostOf, misdirected } from "./host-guard.ts"
 import { handleInput } from "./input.ts"
 import { pickOption } from "./policy.ts"
 import { REMOTE_PAGE } from "./remote-page.ts"
@@ -299,6 +300,9 @@ export function startRemoteServer(rt: Runtime, opts: { lan?: boolean; port?: num
     idleTimeout: 0,
     ...(certificate ? { tls: { cert: certificate.cert, key: certificate.key } } : {}),
     async fetch(req) {
+      // DNS rebinding: tailnet names (*.ts.net) are Tailscale's DNS, not an attacker's
+      const host = hostOf(req.headers.get("host"))
+      if (!host.endsWith(".ts.net") && !hostAllowed(host, rt.config.remote.public_url ? [rt.config.remote.public_url] : [])) return misdirected()
       const url = new URL(req.url)
       const path = url.pathname
       if (req.method === "GET" && (path === "/" || path === "/index.html"))

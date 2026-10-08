@@ -295,6 +295,32 @@ function cmdProtocol() {
   )
 }
 
+/** tmux options Baton relies on: [ok?, message]. */
+function tmuxChecks(): [boolean, string][] {
+  const opt = (name: string) => {
+    const p = Bun.spawnSync(["tmux", "show-options", "-gv", name], { stdout: "pipe", stderr: "ignore" })
+    return p.exitCode === 0 ? p.stdout.toString().trim() : undefined
+  }
+  const out: [boolean, string][] = []
+  const ext = opt("extended-keys")
+  out.push(
+    ext === "on" || ext === "always"
+      ? [true, "tmux: extended-keys on (shift+tab, ctrl+ combinations reach Baton)"]
+      : [false, "tmux: `set -g extended-keys on` and `set -as terminal-features 'xterm*:extkeys'` so shift+tab and ctrl+keys work"],
+  )
+  const pass = opt("allow-passthrough")
+  out.push(
+    pass === "on" || pass === "all"
+      ? [true, "tmux: allow-passthrough on (notifications, logos)"]
+      : [false, "tmux: `set -g allow-passthrough on` for desktop notifications and logos"],
+  )
+  const clip = opt("set-clipboard")
+  if (clip === "off") out.push([false, "tmux: `set -g set-clipboard on` so copying from Baton reaches your clipboard"])
+  const focus = opt("focus-events")
+  if (focus === "off") out.push([false, "tmux: `set -g focus-events on` so Baton knows when to notify you"])
+  return out
+}
+
 async function cmdDoctor() {
   const root = findProjectRoot(process.cwd())
   const ok = (s: string) => console.log(`  ${c.green("✓")} ${s}`)
@@ -309,7 +335,9 @@ async function cmdDoctor() {
   ok(`${term}${process.env.TERM_PROGRAM_VERSION ? ` ${process.env.TERM_PROGRAM_VERSION}` : ""} · TERM=${process.env.TERM ?? "?"}`)
   if (process.env.COLORTERM === "truecolor" || process.env.COLORTERM === "24bit") ok("truecolor")
   else warn("COLORTERM is not truecolor — colors may be approximated (export COLORTERM=truecolor)")
-  if (process.env.TMUX) warn("inside tmux — enable `set -g allow-passthrough on` for logos")
+  if (process.env.TMUX) for (const [good, msg] of tmuxChecks()) (good ? ok : warn)(msg)
+  if (process.env.WT_SESSION) ok("Windows Terminal — run Baton inside WSL for agents and worktrees")
+  if (process.env.TERM_PROGRAM === "Apple_Terminal") warn("Terminal.app has no truecolor or inline images — iTerm2, Ghostty, WezTerm or Kitty look much better")
   if (/kitty|ghostty|wezterm|iterm|konsole|warp/i.test(term)) ok("likely supports inline images (logos)")
   else warn("terminal may not support Kitty/Sixel images — logos fall back to glyphs (ui.icons)")
   const nerd = nerdFontInstalled()

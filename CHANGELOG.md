@@ -32,3 +32,14 @@ The first public version: one terminal for a team of coding agents.
   notifications, shared runs with presence.
 - `baton run` for scripts and CI, `baton mcp` (Baton as an MCP server), `baton a2a`, GitHub issues
   → runs → pull requests, replay, HTML/Markdown export, OpenTelemetry, TypeScript and Python SDKs.
+
+**Safety**
+- Agents that aren't signed in, or whose plan ran out of quota, are refused up front with the reason,
+  and the orchestrator is told which agents are ready.
+- The Baton agent's commands run sandboxed: seatbelt on macOS; bubblewrap, firejail or Landlock on
+  Linux; or a docker/podman container on any OS. It also has `web_search` and `web_fetch`.
+- DNS-rebinding protection on every server Baton runs, and on outgoing fetches and webhooks.
+
+**Install**
+- One binary for macOS and Linux (x64 and arm64, plus musl), from `install.sh`, npm or Homebrew,
+  verified against `SHA256SUMS`. `baton update` updates in place. A Python SDK is on PyPI.

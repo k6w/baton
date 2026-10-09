@@ -121,6 +121,15 @@ for (const [file, page, title] of PAGES) {
 `,
   )
 }
+// the recorded demo (docs/demo.tape → dist/demo.gif), when there is one
+if (existsSync("dist/demo.gif")) {
+  copyFileSync("dist/demo.gif", `${OUT}/demo.gif`)
+  const index = readFileSync(`${OUT}/index.html`, "utf8")
+  writeFileSync(
+    `${OUT}/index.html`,
+    index.replace(/<pre>[\s\S]*?<\/pre>/, '<img src="demo.gif" alt="Baton running a team of agents" style="width:100%;border-radius:8px;border:1px solid var(--line)">'),
+  )
+}
 // `curl …/install.sh | sh` also works from the site
 copyFileSync("install.sh", `${OUT}/install.sh`)
 writeFileSync(`${OUT}/.nojekyll`, "")

@@ -86,7 +86,9 @@ async function detect(opts?: { command?: string }): Promise<DetectResult> {
     ...(version ? { version } : {}),
     path,
     auth,
-    ...(auth !== "ok" ? { authHint: "run `baton login claude` (Claude Code's own sign-in), or set ANTHROPIC_API_KEY" } : {}),
+    ...(auth !== "ok"
+      ? { authHint: "run `baton login claude` (Claude Code's own sign-in), or export CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) or ANTHROPIC_API_KEY" }
+      : {}),
     login: [path, "auth", "login"],
     ...(authMethod ? { authMethod } : {}),
     protocols: PROTOCOLS,

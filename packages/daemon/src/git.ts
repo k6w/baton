@@ -46,6 +46,14 @@ export async function headCommit(cwd: string): Promise<string | undefined> {
 }
 
 /** Tree object of the current working tree (tracked + untracked, honoring .gitignore). */
+/**
+ * Dependency and tool-cache folders are never an agent's work, even when a repo forgot to ignore
+ * them. A reviewer running the tests (vitest writing node_modules/.vite, pytest __pycache__)
+ * must not count as "changed after the review".
+ */
+export const CACHE_DIRS = ["node_modules", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".turbo", ".parcel-cache", ".gradle", ".venv"]
+const CACHE_PATHSPECS = [...CACHE_DIRS.map((d) => `:(exclude,glob)**/${d}/**`), ":(exclude,glob)**/.DS_Store"]
+
 export async function snapshotTree(cwd: string, exclude: string[] = []): Promise<string> {
   const dir = mkdtempSync(join(tmpdir(), "baton-idx-"))
   const env = { GIT_INDEX_FILE: join(dir, "index") }
@@ -56,7 +64,7 @@ export async function snapshotTree(cwd: string, exclude: string[] = []): Promise
     // explicitly, but only where they aren't ignored already (git rejects pathspecs for ignored paths)
     const needed: string[] = []
     for (const e of exclude) if ((await git(cwd, ["check-ignore", "-q", e], { allowFail: true })).code !== 0) needed.push(e)
-    await git(cwd, ["add", "-A", "--", ".", ...needed.map((e) => `:(exclude)${e}`)], { env })
+    await git(cwd, ["add", "-A", "--", ".", ...needed.map((e) => `:(exclude)${e}`), ...CACHE_PATHSPECS], { env })
     return (await git(cwd, ["write-tree"], { env })).stdout.trim()
   } finally {
     rmSync(dir, { recursive: true, force: true })

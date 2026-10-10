@@ -8,8 +8,14 @@ config and the daemon, and says what to do about each problem.
 **"claude is not signed in" (or codex, opencode…)**
 Run `baton login claude`, which runs Claude Code's own sign-in. Using Claude Code in another
 app (an IDE extension, the desktop app) doesn't sign in the `claude` command itself: check with
-`claude auth status`. Setting `ANTHROPIC_API_KEY` works too. Baton refuses to start an agent
-that isn't signed in, and the orchestrator is told which agents are ready instead.
+`claude auth status`. Baton refuses to start an agent that isn't signed in, and the orchestrator
+is told which agents are ready instead.
+
+If you sign in with a long-lived token (`claude setup-token`, exported as
+`CLAUDE_CODE_OAUTH_TOKEN` in your shell profile), start Baton from a shell that has it. Baton
+passes your environment to the official `claude` binary unchanged and never reads the token
+itself. A daemon started earlier without it keeps running without it: run `baton stop` first.
+`ANTHROPIC_API_KEY` works too.
 
 **"out of quota" / "Free usage exceeded" / "usage limit"**
 That agent's plan or credits ran out. Baton stops its turn, tells the orchestrator to use a

@@ -52,6 +52,18 @@ describe("WorkspaceManager", () => {
     expect(r?.files).toEqual([])
   })
 
+  test("tool caches (a reviewer running the tests) are not the agent's work", async () => {
+    const wm = new WorkspaceManager(root, cfg(), "run_c")
+    const ws = await wm.create("a1", "codex-1", "worktree")
+    writeFileSync(join(ws.path, "new.ts"), "export {}\n")
+    mkdirSync(join(ws.path, "node_modules/.vite/vitest"), { recursive: true })
+    writeFileSync(join(ws.path, "node_modules/.vite/vitest/results.json"), "{}")
+    mkdirSync(join(ws.path, "pkg/__pycache__"), { recursive: true })
+    writeFileSync(join(ws.path, "pkg/__pycache__/m.pyc"), "x")
+    const r = await wm.refresh("a1")
+    expect(r?.files.map((f) => f.path)).toEqual(["new.ts"])
+  })
+
   test("refresh reports changed files; merge applies them to the working tree only", async () => {
     const wm = new WorkspaceManager(root, cfg(), "run_x")
     const ws = await wm.create("a1", "codex-1", "worktree")

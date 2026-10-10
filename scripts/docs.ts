@@ -127,7 +127,10 @@ if (existsSync("dist/demo.gif")) {
   const index = readFileSync(`${OUT}/index.html`, "utf8")
   writeFileSync(
     `${OUT}/index.html`,
-    index.replace(/<pre>[\s\S]*?<\/pre>/, '<img src="demo.gif" alt="Baton running a team of agents" style="width:100%;border-radius:8px;border:1px solid var(--line)">'),
+    index.replace(
+      /<pre>[\s\S]*?<\/pre>/,
+      '<img src="demo.gif" alt="Baton running a team of agents" style="width:100%;border-radius:8px;border:1px solid var(--line)">',
+    ),
   )
 }
 // `curl …/install.sh | sh` also works from the site

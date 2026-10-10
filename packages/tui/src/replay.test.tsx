@@ -60,19 +60,25 @@ test("replay: the app plays a past run read-only with a timeline", async () => {
     { width: 120, height: 36 },
   )
   replay.seek(events.length)
-  await Bun.sleep(40)
-  await t.renderOnce()
+  // poll instead of fixed sleeps: under a loaded full test run frames come late
+  const until = async (ok: () => boolean) => {
+    for (let i = 0; i < 100 && !ok(); i++) {
+      await Bun.sleep(20)
+      await t.renderOnce()
+    }
+  }
+  await until(() => t.captureCharFrame().includes("replay — read only"))
   const f = t.captureCharFrame()
   expect(f).toContain("REPLAY 4×")
   expect(f).toContain("fix the typo in the README")
   expect(f).toContain("replay — read only")
   t.mockInput.pressKey(" ")
-  await Bun.sleep(20)
+  await until(() => replay.playing)
   expect(replay.playing).toBe(true)
   t.mockInput.pressKey("-")
   expect(replay.speed).toBe(2)
   t.mockInput.pressEscape()
-  await Bun.sleep(20)
+  await until(() => exited)
   expect(exited).toBe(true)
   replay.dispose()
   ui.dispose()

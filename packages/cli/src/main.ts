@@ -28,8 +28,11 @@ import {
   configDir,
   configJsonSchema,
   defaultUser,
+  FEATURES,
+  type FeatureKey,
   findProjectRoot,
   getPath,
+  isFeature,
   loadConfig,
   loadRoles,
   loadSkills,
@@ -37,6 +40,7 @@ import {
   projectPaths,
   readNotes,
   revokeTrust,
+  setFeature,
   trustEntries,
 } from "@batonsh/kernel"
 import { BATON_VERSION, CONTROL_PROTOCOL_VERSION, ControlErrorCode, REQUIRED_PARAMS } from "@batonsh/protocol"
@@ -442,6 +446,7 @@ You are the team's ${name}.
     return
   }
   const loaded = loadConfig({ projectRoot: root })
+  offHint(loaded.config, "roles")
   const roles = [...loadRoles(root, loaded.config).values()]
   for (const r of roles)
     console.log(
@@ -478,13 +483,44 @@ Put examples, templates or scripts next to this file; the agent sees the list an
     return
   }
   const loaded = loadConfig({ projectRoot: root })
+  offHint(loaded.config, "skills")
   const skills = [...loadSkills(root, loaded.config).values()]
   if (!skills.length) return console.log(c.dim("no skills yet: baton skill new <name> (or add folders with a SKILL.md to .baton/skills/)"))
   for (const sk of skills) console.log(`  ${c.bold(sk.name.padEnd(18))} ${sk.description}${c.dim(` · ${sk.source}`)}`)
 }
 
+/** Listing a switched-off feature still works, with a line saying agents don't get it. */
+function offHint(config: BatonConfig, key: FeatureKey) {
+  if (!config.features[key]) console.log(c.yellow(`  ${key} are off: agents don't get them. Turn on with ${c.bold(`baton features ${key} on`)}\n`))
+}
+
+async function cmdFeatures(args: Args) {
+  const root = findProjectRoot(process.cwd())
+  const [key, val] = [args._[0]?.toLowerCase(), args._[1]?.toLowerCase()]
+  if (key) {
+    if (!isFeature(key)) throw new Error(`no feature "${key}". These exist: ${FEATURES.map((f) => f.key).join(", ")}`)
+    if (!val || !["on", "off", "true", "false"].includes(val)) throw new Error(`usage: baton features ${key} on|off`)
+    const on = val === "on" || val === "true"
+    const file = setFeature(root, key, on)
+    console.log(`${c.green("✓")} ${FEATURES.find((f) => f.key === key)?.label}: ${on ? c.green("on") : c.dim("off")} ${c.dim(`(${file})`)}`)
+    // a running Baton picks it up now; agents started from here on get the change
+    const sock = discoverSocket(root)
+    if (daemonListening(sock, root)) {
+      const cl = await BatonClient.open(sock, "cli")
+      const { errors } = await cl.call("config.reload", {}).finally(() => cl.close())
+      for (const e of errors) console.log(c.yellow(e))
+    }
+    console.log(c.dim("  applies to agents started from now on"))
+    return
+  }
+  const { config } = loadConfig({ projectRoot: root })
+  for (const f of FEATURES) console.log(`  ${config.features[f.key] ? c.green("✓ on ") : c.dim("✗ off")}  ${c.bold(f.key.padEnd(11))} ${f.what}`)
+  console.log(c.dim("\n  baton features <name> on|off · or /features and /settings → Team features in the app"))
+}
+
 async function cmdNotes(args: Args) {
   const root = findProjectRoot(process.cwd())
+  offHint(loadConfig({ projectRoot: root }).config, "notes")
   if (args._[0] === "add") {
     const text = args._.slice(1).join(" ").trim()
     if (!text) throw new Error('usage: baton notes add "<fact the next agent should know>"')
@@ -766,6 +802,7 @@ ${b("Commands")}
   baton login [agent]   sign in to an agent with its own login (Claude Code, Codex, OpenCode, …)
   baton update [--check]  update Baton to the latest release (verified download)
   baton roles | skills | notes   what workers can be, know and remember (role new · skill new · notes add)
+  baton features [name on|off]  switch roles, skills, acceptance checks, team notes
   baton issue <n>       start with a GitHub issue        baton pr [-y]         PR from what the run merged
   baton replay [run]    watch a past run play back (space pause · , . moments · - + speed)
   baton config get|explain|path|schema|defaults            baton theme list|set <name>
@@ -814,6 +851,10 @@ const COMMANDS = [
   "replay",
   "watch",
   "protocol",
+  "roles",
+  "skills",
+  "notes",
+  "features",
   "attach",
   "help",
 ]
@@ -882,6 +923,9 @@ async function main() {
       return cmdSkills(sub)
     case "notes":
       return cmdNotes(sub)
+    case "features":
+    case "feature":
+      return cmdFeatures(sub)
     case "protocol":
       return cmdProtocol()
     case "a2a":

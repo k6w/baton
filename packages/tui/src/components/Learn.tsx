@@ -451,7 +451,9 @@ Everything that needs you — approvals, failed or stuck agents, conflicts, fini
 A worker only knows what it is told. Baton gives the lead three ways to make workers better, and you can use them too:
 - **Roles**: tester, reviewer, debugger, refactorer, docs, security, researcher, frontend, plus your own (\`baton role new api\` → \`.baton/roles/api.md\`). A role brings instructions, a model size, an access level and a "done when" check. \`/roles\` lists them; \`/spawn tester\` starts one.
 - **Skills**: folders with a \`SKILL.md\` (\`baton skill new deploy\`, or your \`.claude/skills\`). Workers see each skill's one-line description and load the full text when they need it. \`/skills\` lists them.
-- **Team notes**: facts agents learn ("tests need DB_URL") go into \`.baton/notes.md\`, and every new worker starts with them. \`/notes add …\` adds one yourself.
+- **Team notes** (opt-in): facts agents learn ("tests need DB_URL") go into \`.baton/notes.md\`, and every new worker starts with them. \`/features notes on\` turns them on; \`/notes add …\` adds one yourself.
+
+Each of these has its own switch: \`/features\` shows them, \`/features skills off\` turns one off, and \`/settings\` → Team features does the same. Switched off, the agents never hear of it.
 
 ## What the lead can ask for
 \`spawn_agent\` takes a role, extra instructions, skills, the files the worker owns (claimed for it), and an **acceptance** command. Baton runs that command when the worker finishes: its work counts only when the check passes, and it gets two more tries if not. Read-only workers (reviewer, security, researcher) can't edit files, even in YOLO.`,

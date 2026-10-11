@@ -57,6 +57,7 @@ export function AgentCard(props: { agentId: string; width: number; height: numbe
         width,
         look: l.look,
         showThoughts: ui.prefs.show_thoughts,
+        markdown: ui.prefs.markdown,
         maxDiffLines: compact ? 2 : 4,
         maxOutputLines: compact ? 1 : 2,
         who: whoFn(ui),

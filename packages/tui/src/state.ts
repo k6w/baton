@@ -33,6 +33,7 @@ export type Prefs = Pick<
   | "status_style"
   | "background"
   | "brand_borders"
+  | "markdown"
 >
 
 export const PREF_KEYS: (keyof Prefs)[] = [
@@ -52,6 +53,7 @@ export const PREF_KEYS: (keyof Prefs)[] = [
   "status_style",
   "background",
   "brand_borders",
+  "markdown",
 ]
 
 /**
@@ -217,6 +219,7 @@ export function createUiState(opts: {
     render_style: opts.config.ui.render_style,
     show_bus: opts.config.ui.show_bus,
     show_thoughts: opts.config.ui.show_thoughts,
+    markdown: opts.config.ui.markdown,
     animations: opts.config.ui.animations,
     spinner: styled("spinner", opts.config.ui.spinner),
   }

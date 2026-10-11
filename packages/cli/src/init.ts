@@ -98,7 +98,15 @@ export function chooseDefaults(agents: DetectedAgent[]): { orchestrator: string;
   return { orchestrator, worker }
 }
 
-export function configToml(opts: { name: string; orchestrator: string; worker: string; agents: DetectedAgent[]; toolchain?: Toolchain }): string {
+export function configToml(opts: {
+  name: string
+  orchestrator: string
+  worker: string
+  agents: DetectedAgent[]
+  toolchain?: Toolchain
+  /** Team notes on (opt-in at setup). */
+  notes?: boolean
+}): string {
   const installed = opts.agents.filter((a) => a.installed).map((a) => `${a.id} ${a.version ?? ""}`.trim())
   const verify = Object.entries(opts.toolchain?.commands ?? {})
     .filter(([k, v]) => v && k !== "dev")
@@ -131,6 +139,13 @@ preset = "balanced"                  # strict | balanced | yolo
 # kinds = ["execute"]
 # match = "^Bash\\\\((bun|npm) test"
 # action = "allow"
+
+# Team features: switch any of them off and the agents never hear of it (baton features, /features).
+[features]
+roles = true                         # tester, reviewer, debugger, … and .baton/roles (baton roles)
+skills = true                        # SKILL.md know-how workers load (.baton/skills, .claude/skills)
+acceptance = true                    # a worker's check (e.g. bun test) must pass before its work counts
+notes = ${opts.notes ? "true " : "false"}                        # agents keep facts about the project in .baton/notes.md
 
 [ui]
 theme = "baton"                      # ctrl+t to browse; "system" uses your terminal's colors
@@ -255,7 +270,13 @@ export async function initProject(opts: InitOptions): Promise<{ created: string[
   const gi = join(paths.dir, ".gitignore")
   if (!existsSync(gi)) writeFileSync(gi, "run/\nstate.db*\nworktrees/\nconfig.local.toml\n")
   if (!existsSync(paths.config)) {
-    writeFileSync(paths.config, configToml({ name, orchestrator, worker, agents, toolchain: tc }))
+    // the one opt-in feature: it writes a file into the project, so ask
+    const notes =
+      !yes &&
+      !opts.quiet &&
+      process.stdin.isTTY === true &&
+      (await ask(`  Let agents keep ${c.bold("team notes")} (facts about this project in .baton/notes.md that every new worker reads)?`, false))
+    writeFileSync(paths.config, configToml({ name, orchestrator, worker, agents, toolchain: tc, notes }))
     created.push(".baton/config.toml")
     say(`  ${c.green("✓")} .baton/config.toml ${c.dim(`(orchestrator: ${orchestrator}, workers: ${worker})`)}\n`)
   } else {

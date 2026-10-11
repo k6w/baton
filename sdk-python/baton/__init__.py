@@ -28,7 +28,7 @@ from .client import (
 )
 from .run import BUSY_STATUSES, Agent, Approval, RunState, Workspace
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 __all__ = [
     "CONTROL_PROTOCOL_VERSION",

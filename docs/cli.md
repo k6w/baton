@@ -54,8 +54,9 @@ The exit code is `0` when the run finished cleanly and `1` when it failed or tim
 | `baton skills` | Every skill workers can load, and where it comes from. |
 | `baton skill new <name>` | Scaffold `.baton/skills/<name>/SKILL.md`. |
 | `baton notes` · `baton notes add "<fact>"` | The team's notes about this project, or add one. |
+| `baton features` · `baton features <name> on\|off` | Which team features are on (roles, skills, acceptance, notes), or switch one. |
 
-In the app: `/roles`, `/skills`, `/notes [add <text>]`, `/spawn <role> [agent] [count] [label]`,
+In the app: `/features [name on|off]`, `/roles`, `/skills`, `/notes [add <text>]`, `/spawn <role> [agent] [count] [label]`,
 `/team <name> [task]`. See [roles, skills and notes](roles.md).
 
 ## Runs and history

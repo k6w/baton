@@ -94,7 +94,8 @@ The lead can give a worker:
 - the **files** it owns;
 - an **acceptance** command. Baton runs it, and the work counts only when the check passes.
 
-Facts agents learn go into **team notes** that every new worker starts with. Details:
+If you turn on **team notes**, facts agents learn go into `.baton/notes.md` and every new worker
+starts with them. Each of these has its own on/off switch (`baton features`). Details:
 [roles, skills and notes](roles.md).
 
 ## Agents talking to each other

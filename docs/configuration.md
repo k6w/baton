@@ -105,6 +105,12 @@ api_key = "env:OPENROUTER_API_KEY"   # env:VAR · cmd:<shell command> · keychai
 headers = {}
 models = { kimi = "moonshotai/kimi-k2" }   # aliases: model = "kimi"
 
+[features]                        # each one on its own switch: off = agents never hear of it (baton features)
+roles = true                      # roles for workers; reviews use the read-only reviewer
+skills = true                     # SKILL.md folders workers load with load_skill
+acceptance = true                 # run a worker's check before its result counts
+notes = false                     # team notes (opt-in): agents note facts, new workers start with them
+
 [roles.tester]                    # built-in roles, .baton/roles/*.md and these merge field by field (see roles.md)
 description = "Writes and fixes tests"
 prompt = "Use the fixtures in test/fixtures; never mock the database."
@@ -119,8 +125,7 @@ dirs = []                         # extra folders of <name>/SKILL.md
 claude = true                     # offer the project's .claude/skills to every agent
 claude_user = false               # and your ~/.claude/skills
 
-[notes]
-enabled = true                    # agents record facts (note) in .baton/notes.md; new workers start with them
+[notes]                           # used when features.notes = true
 max = 30                          # notes given to each new worker (all stay searchable with recall)
 reviews = true                    # save review findings (changes requested) as notes
 
@@ -235,6 +240,7 @@ min_card_height = 9
 max_columns = 4
 show_bus = true
 show_thoughts = false
+markdown = true                   # render agents' Markdown (bold, lists, tables, code); false = raw text
 card_fields = ["adapter", "version", "model", "dir", "approval"]   # idle identity card (+ role, session)
 status_left = "{dot} {running}/{total} {noun} running · {calls} calls · {msgs} msgs"
 status_right = "{unmerged}  {cost}  {added} {removed}  {repo}@{branch}"

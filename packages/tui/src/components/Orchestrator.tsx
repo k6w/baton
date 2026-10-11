@@ -165,6 +165,7 @@ export function Orchestrator(props: OrchestratorProps) {
       width,
       look,
       showThoughts: ui.prefs.show_thoughts,
+      markdown: ui.prefs.markdown,
       maxDiffLines: 4,
       maxOutputLines: 2,
       who: whoFn(ui),

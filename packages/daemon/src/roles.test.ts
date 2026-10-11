@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { addNote, BatonConfig, loadRoles, loadSkills, notesBlock, readNotes, readSkill, searchNotes } from "@batonsh/kernel"
 import type { AdapterContext, AgentAdapter, AgentEvent, AgentSession, SessionConfig } from "@batonsh/protocol"
 import { buildMcpServer } from "./mcp.ts"
+import { applyFeatures, loadPlaybook } from "./playbooks.ts"
 import { PolicyEngine } from "./policy.ts"
 import { Runtime } from "./runtime.ts"
 
@@ -66,7 +67,8 @@ afterEach(async () => {
 
 function setup(over: Record<string, unknown> = {}) {
   const sessions = new Map<string, Fake>()
-  const config = BatonConfig.parse({ bus: { heartbeat_s: 0 }, workspace: { isolation: "shared" }, ...over })
+  // team notes are opt-in; these tests cover them, so they start on
+  const config = BatonConfig.parse({ bus: { heartbeat_s: 0 }, workspace: { isolation: "shared" }, features: { notes: true }, ...over })
   const rt = new Runtime({ projectRoot: root, config })
   rt.registry.register(fakeAdapter(sessions))
   runtimes.push(rt)
@@ -252,5 +254,63 @@ describe("slash commands", () => {
     const team = await handleInput(rt, "/team qa")
     expect(team.routedTo).toHaveLength(3)
     expect((await handleInput(rt, "/team")).output).toContain("qa")
+  })
+})
+
+describe("feature switches", () => {
+  const OFF = { features: { roles: false, skills: false, acceptance: false, notes: false } }
+  const tools = (server: unknown) => Object.keys((server as { _registeredTools: Record<string, { inputSchema?: unknown }> })._registeredTools)
+
+  test("notes are opt-in: off by default, everything else on", () => {
+    expect(BatonConfig.parse({}).features).toEqual({ roles: true, skills: true, acceptance: true, notes: false })
+    expect(BatonConfig.parse({}).ui.markdown).toBe(true)
+  })
+
+  test("switched off, agents never hear of them: no prompt text, no tools, spawn fields ignored", async () => {
+    writeSkill("rest", "Our REST conventions", "Use snake_case.")
+    addNote(root, "codex-1", "Integration tests need DB_URL")
+    const { rt, fake } = setup({ ...OFF, orchestrator: { agent: "fake" }, policy: { preset: "yolo" } })
+    const lead = await rt.spawn({ adapter: "fake", isOrchestrator: true })
+    const leadPrompt = fake("orchestrator").cfg.systemPrompt ?? ""
+    for (const word of ["list_roles", "list_skills", "recall(", "acceptance?", "role?"]) expect(leadPrompt).not.toContain(word)
+    expect(leadPrompt).toContain("spawn_agent(adapter?, task?, label?, instructions?, files?, access?")
+
+    const server = buildMcpServer(rt, rt.agents.get(lead.agentId)!)
+    const names = tools(server)
+    for (const t of ["list_roles", "list_skills", "load_skill", "note", "recall"]) expect(names).not.toContain(t)
+    expect(names).toContain("spawn_agent")
+    expect(names).toContain("pick_agent")
+
+    const info = await rt.spawn({ adapter: "fake", name: "w", role: "reviewer", skills: ["rest"], acceptance: "exit 3", parentId: lead.agentId, prompt: "x" })
+    const sp = fake("w").cfg.systemPrompt ?? ""
+    for (const word of ["## Your role", "## Read-only", "## Skills", "## Done means", "Team notes", "load_skill", "note("]) expect(sp).not.toContain(word)
+    expect(info.access).toBeUndefined()
+    expect(info.acceptance).toBeUndefined()
+    expect(info.skills).toBeUndefined()
+  })
+
+  test("/features lists and switches them (written to .baton/config.toml); /roles explains how to turn on", async () => {
+    const { handleInput } = await import("./input.ts")
+    const { rt } = setup(OFF)
+    expect((await handleInput(rt, "/roles")).output).toContain("/features roles on")
+    expect((await handleInput(rt, "/notes")).output).toContain("/features notes on")
+    expect((await handleInput(rt, "/features")).output).toContain("✗ notes")
+    expect((await handleInput(rt, "/features notes on")).output).toContain("Team notes: on")
+    expect(rt.config.features.notes).toBe(true)
+    expect(readFileSync(join(root, ".baton", "config.toml"), "utf8")).toContain("notes = true")
+    await handleInput(rt, "/features roles")
+    expect(rt.config.features.roles).toBe(true)
+    expect((await handleInput(rt, "/roles")).output).toContain("tester")
+    await expect(handleInput(rt, "/features nope on")).rejects.toThrow("no feature")
+  })
+
+  test("playbooks keep {{#x}} parts only when x is on, {{^x}} only when off", () => {
+    expect(applyFeatures("a{{#notes}} b{{/notes}}{{^notes}} c{{/notes}}", { notes: true })).toBe("a b")
+    expect(applyFeatures("a{{#notes}} b{{/notes}}{{^notes}} c{{/notes}}", {})).toBe("a c")
+    const all = loadPlaybook("orchestrator", root)
+    expect(all).toContain("list_roles()")
+    expect(all).not.toContain("{{")
+    expect(loadPlaybook("worker", root, { skills: true })).toContain("load_skill")
+    expect(loadPlaybook("worker", root, {})).not.toContain("load_skill")
   })
 })

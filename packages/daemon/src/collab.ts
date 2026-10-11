@@ -428,7 +428,7 @@ When done, call the baton tool submit_review with verdict "approve" or "changes_
     const author = this.rt.agents.get(review.author)
     const reviewer = this.rt.agents.get(reviewerId)?.info.name ?? "reviewer"
     // what one reviewer had to point out, the next worker shouldn't repeat
-    if (verdict === "changes_requested" && this.rt.config.notes.enabled && this.rt.config.notes.reviews) {
+    if (verdict === "changes_requested" && this.rt.config.features.notes && this.rt.config.notes.reviews) {
       const finding = notes
         .split("\n")
         .map((l) => l.replace(/^[-*\d.)\s]+/, "").trim())

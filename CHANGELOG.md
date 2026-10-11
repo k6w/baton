@@ -5,6 +5,19 @@ All notable changes to Baton. Versions follow [semver](https://semver.org); the 
 
 ## Unreleased
 
+## 0.3.1 — 2026-10-11
+
+**Every team feature has its own switch**
+- `[features]` in the config: `roles`, `skills`, `acceptance` and `notes`. Switched off, the agents
+  never hear of it: no tools, no text in their instructions, and the matching `spawn_agent` fields
+  go away.
+- Team notes are now opt-in (they write a file into your project). `baton init` asks.
+- `baton features [name on|off]`, `/features [name on|off]` in the app, and a Team features page
+  in `/settings`.
+- `ui.markdown`: turn Markdown rendering off to see agents' raw text (`/settings` → Layout).
+- Your own playbooks can follow the switches with `{{#notes}}…{{/notes}}` and `{{^notes}}…{{/notes}}`.
+- `notes.enabled` is replaced by `features.notes`.
+
 ## 0.3.0 — 2026-10-11
 
 **Roles, skills and team memory**

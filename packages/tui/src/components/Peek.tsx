@@ -74,6 +74,7 @@ export function PeekOverlay(props: { agentId: string; onClose: () => void; onZoo
       width,
       look: look.look,
       showThoughts: ui.prefs.show_thoughts,
+      markdown: ui.prefs.markdown,
       maxDiffLines: 8,
       maxOutputLines: 6,
       who: whoFn(ui),

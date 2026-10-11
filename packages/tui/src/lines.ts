@@ -44,6 +44,8 @@ export interface RenderCtx {
   compact?: boolean
   /** Your own name: messages typed by someone else in a shared run show who wrote them. */
   me?: string
+  /** Render agents' Markdown (default); false shows the raw text. */
+  markdown?: boolean
 }
 
 export const width = (s: string): number => Bun.stringWidth(s)
@@ -295,7 +297,7 @@ export function renderItem(it: FeedItem, ctx: RenderCtx, out: Line[]): void {
       const text = it.text.trim()
       if (!text) return
       // agents answer in Markdown: render it (bold, code, lists, tables, …) instead of showing ** and `
-      const lines = renderMarkdown(text, w - 2, t)
+      const lines = ctx.markdown === false ? wrap(text, w - 2).map((l): Line => ({ segs: [{ text: l, fg: t.text }] })) : renderMarkdown(text, w - 2, t)
       const cut = ctx.compact && lines.length > 4
       const shown = cut ? lines.slice(-4) : lines
       shown.forEach((l, i) => {

@@ -1,5 +1,5 @@
 /** Input completion: @mentions, /commands and their arguments. */
-import { type BatonConfig, loadRoles, type RunState } from "@batonsh/kernel"
+import { type BatonConfig, FEATURES, loadRoles, type RunState } from "@batonsh/kernel"
 import { FRAME_STYLES, listThemes, STYLES } from "@batonsh/themes"
 
 export interface Completion {
@@ -43,6 +43,7 @@ export const REMOTE_COMMANDS: Record<string, string> = {
   skills: "/skills — skills workers can load (.baton/skills)",
   notes: "/notes [add <text>] — what the team learned about this project",
   team: "/team <name> [task] — start a saved team ([teams] in the config)",
+  features: "/features [name on|off] — switch roles, skills, acceptance checks, team notes",
   kill: "/kill <name|all>",
   interrupt: "/interrupt <name|all>",
   mode: "/mode <orchestrator|…>",
@@ -115,7 +116,10 @@ export function completions(input: string, run: RunState, config: BatonConfig): 
     switch (c) {
       case "spawn":
         options = [
-          ...[...loadRoles(run.projectRoot || process.cwd(), config).values()].map((r) => ({ v: r.name, d: `role · ${r.description}` })),
+          ...[...(config.features?.roles === false ? [] : loadRoles(run.projectRoot || process.cwd(), config).values())].map((r) => ({
+            v: r.name,
+            d: `role · ${r.description}`,
+          })),
           ...Object.keys(config.agents).map((k) => ({ v: k, d: `profile → ${config.agents[k]?.adapter}` })),
           ...KNOWN_ADAPTERS.map((v) => ({ v, d: "adapter" })),
         ]
@@ -123,6 +127,9 @@ export function completions(input: string, run: RunState, config: BatonConfig): 
       case "kill":
       case "interrupt":
         options = [{ v: "all", d: "every agent" }, ...agents()]
+        break
+      case "features":
+        options = FEATURES.map((f) => ({ v: f.key, d: `${config.features?.[f.key] ? "on" : "off"} · ${f.what}` }))
         break
       case "model":
       case "label":

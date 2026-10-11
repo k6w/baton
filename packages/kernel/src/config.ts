@@ -122,6 +122,8 @@ export const UiConfig = z.object({
   hints: z.boolean().default(true),
   /** Show "⚑ 2 baton · project" in the terminal tab title. */
   tab_title: z.boolean().default(true),
+  /** Render agents' Markdown (bold, lists, tables, code blocks); off shows the raw text. */
+  markdown: z.boolean().default(true),
 })
 export type UiConfig = z.infer<typeof UiConfig>
 
@@ -164,16 +166,31 @@ export const BatonConfig = z.object({
       claude_user: z.boolean().default(false),
     })
     .default({ dirs: [], claude: true, claude_user: false }),
-  /** Team notes: facts agents record (note) and every new worker starts with (.baton/notes.md). */
+  /**
+   * Team features, each on its own switch. Off means the agents never hear of it: no tools, no
+   * prompt text, and the matching spawn fields are ignored.
+   */
+  features: z
+    .object({
+      /** Roles for workers (tester, reviewer, …, .baton/roles): instructions, access, size. Reviews use the read-only reviewer role. */
+      roles: z.boolean().default(true),
+      /** Skills (SKILL.md folders) workers can load with load_skill. */
+      skills: z.boolean().default(true),
+      /** Acceptance checks: a command Baton runs when a worker finishes; its result counts only if it passes. */
+      acceptance: z.boolean().default(true),
+      /** Team notes: agents record facts (note / recall) in .baton/notes.md and new workers start with them. Opt-in. */
+      notes: z.boolean().default(false),
+    })
+    .default({ roles: true, skills: true, acceptance: true, notes: false }),
+  /** Team notes settings (turn them on with features.notes). */
   notes: z
     .object({
-      enabled: z.boolean().default(true),
       /** Notes given to each new worker (the most recent). */
       max: z.number().int().nonnegative().default(30),
       /** Save review findings (changes requested) as notes. */
       reviews: z.boolean().default(true),
     })
-    .default({ enabled: true, max: 30, reviews: true }),
+    .default({ max: 30, reviews: true }),
   /** Saved teams for /team <name>: who to start. */
   teams: z.record(z.string(), z.array(TeamMember)).default({}),
   budget: z

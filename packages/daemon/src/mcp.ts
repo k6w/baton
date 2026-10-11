@@ -144,34 +144,37 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime, signal?: Abort
     (a) => guard(() => ok(`review submitted for ${rt.collab.submitReview(me, a.verdict, a.notes).author}`)),
   )
 
-  // ───────────── skills and team notes (every agent) ─────────────
-  server.registerTool(
-    "list_skills",
-    { description: "List the skills available in this project (name and what each is for). Load one with load_skill.", inputSchema: {} },
-    () =>
-      guard(() => {
-        const skills = [...rt.skills().values()]
-        if (!skills.length) return ok("(no skills: add folders with a SKILL.md to .baton/skills/)")
-        return ok(skills.map((x) => `- ${x.name}: ${x.description}`).join("\n"))
-      }),
-  )
+  // ───────────── skills and team notes (every agent; each can be switched off in [features]) ─────────────
+  const f = rt.config.features
+  if (f.skills) {
+    server.registerTool(
+      "list_skills",
+      { description: "List the skills available in this project (name and what each is for). Load one with load_skill.", inputSchema: {} },
+      () =>
+        guard(() => {
+          const skills = [...rt.skills().values()]
+          if (!skills.length) return ok("(no skills: add folders with a SKILL.md to .baton/skills/)")
+          return ok(skills.map((x) => `- ${x.name}: ${x.description}`).join("\n"))
+        }),
+    )
 
-  server.registerTool(
-    "load_skill",
-    {
-      description: "Load a skill's full instructions (and the list of files it comes with). Use it before the part of the work the skill covers.",
-      inputSchema: { name: z.string() },
-    },
-    (a) =>
-      guard(() => {
-        const skill = rt.skills().get(a.name.toLowerCase())
-        if (!skill) return fail(`no skill "${a.name}" (list_skills shows them)`)
-        rt.emit({ type: "log", data: { level: "info", message: `[${caller.info.name}] loaded skill ${skill.name}` } }, me)
-        return ok(readSkill(skill))
-      }),
-  )
+    server.registerTool(
+      "load_skill",
+      {
+        description: "Load a skill's full instructions (and the list of files it comes with). Use it before the part of the work the skill covers.",
+        inputSchema: { name: z.string() },
+      },
+      (a) =>
+        guard(() => {
+          const skill = rt.skills().get(a.name.toLowerCase())
+          if (!skill) return fail(`no skill "${a.name}" (list_skills shows them)`)
+          rt.emit({ type: "log", data: { level: "info", message: `[${caller.info.name}] loaded skill ${skill.name}` } }, me)
+          return ok(readSkill(skill))
+        }),
+    )
+  }
 
-  if (rt.config.notes.enabled) {
+  if (rt.config.features.notes) {
     server.registerTool(
       "note",
       {
@@ -208,10 +211,10 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime, signal?: Abort
             .join(
               ", ",
             )} or a configured profile (${Object.keys(rt.config.agents).join(", ") || "none"}); omitted → the role's adapter or ${rt.config.defaults.worker}. With \`task\` it starts at once and its result comes back to you.
-Roles (role:): ${roles.map((r) => `${r.name}${r.access === "read-only" ? " [read-only]" : ""} — ${r.description}`).join("; ")}.${
-            skills.length ? `\nSkills (skills:): ${skills.map((x) => `${x.name} — ${x.description}`).join("; ")}.` : ""
-          }
-Give each worker what it needs to succeed: a role, the files it owns, an acceptance command that proves it is done, and instructions only it needs.`
+${
+  roles.length ? `\nRoles (role:): ${roles.map((r) => `${r.name}${r.access === "read-only" ? " [read-only]" : ""} — ${r.description}`).join("; ")}.` : ""
+}${skills.length ? `\nSkills (skills:): ${skills.map((x) => `${x.name} — ${x.description}`).join("; ")}.` : ""}
+Give each worker what it needs to succeed: ${[f.roles && "a role", "the files it owns", f.acceptance && "an acceptance command that proves it is done", "and instructions only it needs"].filter(Boolean).join(", ")}.`
         })(),
         inputSchema: {
           adapter: z.string().optional().describe("Which agent CLI (omit to use the role's or the default worker)"),
@@ -219,11 +222,20 @@ Give each worker what it needs to succeed: a role, the files it owns, an accepta
           name: z.string().optional(),
           label: z.string().optional().describe("2-3 word task label shown on the agent's card"),
           model: z.string().optional(),
-          role: z.string().optional().describe("A role from the list (tester, reviewer, debugger, …): instructions, access and defaults for this kind of work"),
+          ...(f.roles
+            ? {
+                role: z
+                  .string()
+                  .optional()
+                  .describe("A role from the list (tester, reviewer, debugger, …): instructions, access and defaults for this kind of work"),
+              }
+            : {}),
           instructions: z.string().optional().describe("Extra instructions for this agent only (conventions, constraints, context it needs)"),
-          skills: z.array(z.string()).optional().describe("Skills it starts with (it loads them with load_skill)"),
+          ...(f.skills ? { skills: z.array(z.string()).optional().describe("Skills it starts with (it loads them with load_skill)") } : {}),
           files: z.array(z.string()).optional().describe("Files / globs it owns: claimed for it so others are warned off"),
-          acceptance: z.string().optional().describe("A command that must pass before its result counts (e.g. 'bun test src/auth'). Baton runs it."),
+          ...(f.acceptance
+            ? { acceptance: z.string().optional().describe("A command that must pass before its result counts (e.g. 'bun test src/auth'). Baton runs it.") }
+            : {}),
           access: z.enum(["read-only", "write"]).optional().describe("read-only: may not edit files (reviews, research, audits)"),
           count: z.number().int().min(1).max(10).optional().describe("Spawn several identical agents"),
           task_id: z.string().optional().describe("Plan task this agent works on (from plan_tasks)"),
@@ -284,24 +296,25 @@ Give each worker what it needs to succeed: a role, the files it owns, an accepta
   }
 
   if (isLead) {
-    server.registerTool(
-      "list_roles",
-      {
-        description: "The roles you can give workers (spawn_agent role:), with what each is for, its access, model size, acceptance check and skills.",
-        inputSchema: {},
-      },
-      () =>
-        guard(() =>
-          ok(
-            [...rt.roles().values()]
-              .map(
-                (r) =>
-                  `- ${r.name}: ${r.description}${r.access === "read-only" ? " · read-only" : ""}${r.tier ? ` · ${r.tier}` : ""}${r.adapter ? ` · ${r.adapter}` : ""}${r.acceptance ? ` · done when \`${r.acceptance}\` passes` : ""}${r.skills?.length ? ` · skills: ${r.skills.join(", ")}` : ""}${r.source !== "builtin" ? ` (${r.source})` : ""}`,
-              )
-              .join("\n"),
+    if (f.roles)
+      server.registerTool(
+        "list_roles",
+        {
+          description: "The roles you can give workers (spawn_agent role:), with what each is for, its access, model size, acceptance check and skills.",
+          inputSchema: {},
+        },
+        () =>
+          guard(() =>
+            ok(
+              [...rt.roles().values()]
+                .map(
+                  (r) =>
+                    `- ${r.name}: ${r.description}${r.access === "read-only" ? " · read-only" : ""}${r.tier ? ` · ${r.tier}` : ""}${r.adapter ? ` · ${r.adapter}` : ""}${r.acceptance ? ` · done when \`${r.acceptance}\` passes` : ""}${r.skills?.length ? ` · skills: ${r.skills.join(", ")}` : ""}${r.source !== "builtin" ? ` (${r.source})` : ""}`,
+                )
+                .join("\n"),
+            ),
           ),
-        ),
-    )
+      )
 
     server.registerTool(
       "pick_agent",

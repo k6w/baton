@@ -1,4 +1,4 @@
-import { addNote, readNotes } from "@batonsh/kernel"
+import { addNote, FEATURES, type FeatureKey, isFeature, readNotes, setFeature } from "@batonsh/kernel"
 /**
  * Main-input router. One line from the user can be:
  *   /command args          → daemon command (spawn, kill, mode, …)
@@ -93,7 +93,32 @@ async function handleCommand(rt: Runtime, text: string, opts: { who?: string } =
     if (!a) throw new Error(`no agent "${n}"`)
     return a
   }
+  // a switched-off feature explains how to turn it on instead of acting as if it were empty
+  const off = (key: FeatureKey) => {
+    const f = FEATURES.find((x) => x.key === key)
+    return { routedTo: [], command: cmd, output: `${f?.label ?? key} are off. /features ${key} on turns them on (or /settings → Team features).` }
+  }
   switch (cmd) {
+    case "features": {
+      // /features · /features notes on · /features roles off
+      const [key, val] = [args[0]?.toLowerCase(), args[1]?.toLowerCase()]
+      if (key && isFeature(key)) {
+        const on = val ? ["on", "true", "yes", "1"].includes(val) : !rt.config.features[key]
+        setFeature(rt.projectRoot, key, on)
+        rt.config.features[key] = on
+        return {
+          routedTo: [],
+          command: cmd,
+          output: `${FEATURES.find((f) => f.key === key)?.label}: ${on ? "on" : "off"} (.baton/config.toml) · applies to agents started from now on`,
+        }
+      }
+      if (key) throw new Error(`no feature "${key}" (${FEATURES.map((f) => f.key).join(", ")})`)
+      return {
+        routedTo: [],
+        command: cmd,
+        output: `${FEATURES.map((f) => `${rt.config.features[f.key] ? "✓" : "✗"} ${f.key.padEnd(11)} ${f.what}`).join("\n")}\n/features <name> on|off`,
+      }
+    }
     case "spawn": {
       // /spawn [role] [adapter] [count] [label…] — any part optional: `/spawn tester`, `/spawn codex 3 hunt`,
       // `/spawn tester codex 2 auth tests`; no adapter → the role's, else the default worker
@@ -110,12 +135,14 @@ async function handleCommand(rt: Runtime, text: string, opts: { who?: string } =
       return { routedTo: names, command: cmd, output: `spawned ${names.join(", ")}${role ? ` as ${role}` : ""}` }
     }
     case "roles": {
+      if (!rt.config.features.roles) return off("roles")
       const lines = [...rt.roles().values()].map(
         (r) => `${r.name.padEnd(12)} ${r.description}${r.access === "read-only" ? " · read-only" : ""}${r.source !== "builtin" ? ` · ${r.source}` : ""}`,
       )
       return { routedTo: [], command: cmd, output: `${lines.join("\n")}\n/spawn <role> starts one · add your own in .baton/roles/<name>.md` }
     }
     case "skills": {
+      if (!rt.config.features.skills) return off("skills")
       const list = [...rt.skills().values()]
       return {
         routedTo: [],
@@ -126,6 +153,7 @@ async function handleCommand(rt: Runtime, text: string, opts: { who?: string } =
       }
     }
     case "notes": {
+      if (!rt.config.features.notes) return off("notes")
       if (args[0] === "add" && args.length > 1) {
         const added = addNote(rt.projectRoot, opts.who ?? "you", args.slice(1).join(" "))
         return { routedTo: [], command: cmd, output: added ? "noted: every new worker will start with it" : "already noted" }

@@ -9,8 +9,39 @@ instructions, the right know-how and what the team already learned.
 | **Skills** | What a worker can *look up*: step-by-step know-how for one kind of work | `.baton/skills/<name>/SKILL.md`, `.claude/skills` | `/skills` · `baton skills` |
 | **Team notes** | What the team *remembers*: facts about this project | `.baton/notes.md` | `/notes` · `baton notes` |
 
-All three are on by default and cost nothing until used. The orchestrator knows about them and
-uses them when it spawns workers; you can use them directly too.
+The orchestrator knows about them and uses them when it spawns workers; you can use them directly
+too.
+
+## Turning them on and off
+
+Each feature has its own switch. Switched off, the agents never hear of it: no tools, no text in
+their instructions, and the matching `spawn_agent` fields go away.
+
+| Feature | Default | What it does |
+|---|---|---|
+| `roles` | on | roles for workers; reviews use the read-only reviewer |
+| `skills` | on | workers load SKILL.md know-how with `load_skill` |
+| `acceptance` | on | a worker's check must pass before its work counts |
+| `notes` | **off** | agents keep facts in `.baton/notes.md`, new workers start with them |
+
+Team notes are the one you opt into, because they write a file into your project. `baton init` asks;
+later, any of these work:
+
+```sh
+baton features                 # see what's on
+baton features notes on        # or: /features notes on in the app
+```
+
+Or `/settings` → **Team features**, or in `.baton/config.toml`:
+
+```toml
+[features]
+notes = true
+acceptance = false
+```
+
+Your own playbooks (`.baton/playbooks/*.md`) can follow the switches too: `{{#notes}}…{{/notes}}`
+is kept only when notes are on, `{{^notes}}…{{/notes}}` only when they're off.
 
 ## Roles
 
@@ -138,6 +169,8 @@ description: How to deploy this service to staging and production
 
 ## Team notes
 
+Team notes are opt-in: turn them on with `baton features notes on`.
+
 When an agent learns something the next one should know, it calls `note`:
 - "integration tests need DB_URL";
 - "the API uses snake_case";
@@ -150,7 +183,7 @@ default 30). Agents search all of them with `recall`.
   so the next worker doesn't repeat the mistake (`notes.reviews`).
 - **Add your own:** `/notes add <text>` in the app or `baton notes add "…"`. Edit the file freely:
   it's plain Markdown, one bullet per note.
-- **Turn it off:** `notes.enabled = false`.
+- **Turn them on:** `baton features notes on`, `/features notes on`, or `features.notes = true`.
 
 ## Saved teams
 

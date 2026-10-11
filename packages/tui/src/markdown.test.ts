@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { loadTheme } from "@batonsh/themes"
+import { renderFeed } from "./lines.ts"
 import { renderMarkdown } from "./markdown.ts"
 
 const t = loadTheme("github-dark")
@@ -39,4 +40,20 @@ test("headings, quotes, rules, code blocks and tables", () => {
 test("paragraph soft breaks join; escape codes are stripped", () => {
   expect(text("one\ntwo\n\nthree")).toEqual(["one two", "", "three"])
   expect(text("red \x1b[31mtext\x1b[0m")).toEqual(["red text"])
+})
+
+test("ui.markdown = false shows the raw text in the feed", () => {
+  const item = { kind: "message" as const, id: "m", role: "assistant" as const, text: "a **bold** move", done: true, ts: 0 }
+  const ctx = {
+    theme: t,
+    width: 60,
+    look: "codex" as const,
+    showThoughts: false,
+    maxDiffLines: 10,
+    maxOutputLines: 10,
+    who: (n: string) => ({ name: n, color: "" }),
+  }
+  const flat = (markdown?: boolean) => renderFeed([item], { ...ctx, markdown }).map((l) => l.segs.map((s) => s.text).join(""))
+  expect(flat()).toEqual(["• a bold move"])
+  expect(flat(false)).toEqual(["• a **bold** move"])
 })

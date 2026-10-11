@@ -12,6 +12,7 @@ import {
   loadSkills,
   notesBlock,
   projectName,
+  type Role,
   RunState,
   readSkill,
   resolveSecret,
@@ -216,12 +217,13 @@ export class Runtime {
 
   /** Resolve a configured agent profile ("reviewer") or a raw adapter id ("codex"). */
   /** Roles and skills, read fresh (cheap: a few small files) so edits apply to the next spawn. */
+  /** Switched off in [features] → empty, so nothing offers or applies them. */
   roles() {
-    return loadRoles(this.projectRoot, this.config)
+    return this.config.features.roles ? loadRoles(this.projectRoot, this.config) : new Map<string, Role>()
   }
 
   skills() {
-    return loadSkills(this.projectRoot, this.config)
+    return this.config.features.skills ? loadSkills(this.projectRoot, this.config) : new Map<string, Skill>()
   }
 
   /** The skills section of a worker's instructions: a menu (load_skill) or, without the bus, the full text. */
@@ -309,7 +311,7 @@ export class Runtime {
     const wanted = [...new Set([...(role?.skills ?? []), ...(params.skills ?? [])].map((x) => x.toLowerCase()))]
     const skills = wanted.filter((x) => catalog.has(x))
     const missingSkills = wanted.filter((x) => !catalog.has(x))
-    const acceptance = params.acceptance?.trim() || role?.acceptance?.trim() || undefined
+    const acceptance = this.config.features.acceptance ? params.acceptance?.trim() || role?.acceptance?.trim() || undefined : undefined
     const info: AgentInfo = {
       agentId,
       name,
@@ -354,8 +356,8 @@ export class Runtime {
       this.emit({ type: "log", data: { level: "warn", message: `[${name}] unknown skills: ${missingSkills.join(", ")} (baton skills lists them)` } }, agentId)
 
     const peers = [...this.agents.values()].filter((a) => a !== rt && !a.closing).map((a) => a.info.name)
-    const rolePrompt = role?.prompt || (info.role ? this.config.roles[info.role]?.prompt : undefined)
-    const playbook = loadPlaybook(params.isOrchestrator ? this.config.orchestrator.mode : "worker", this.projectRoot)
+    const rolePrompt = role?.prompt || (info.role && this.config.features.roles ? this.config.roles[info.role]?.prompt : undefined)
+    const playbook = loadPlaybook(params.isOrchestrator ? this.config.orchestrator.mode : "worker", this.projectRoot, this.config.features)
     // agents that can't reach Baton's bus (no MCP: remote A2A agents, plain CLIs) get a short brief
     // instead of a playbook full of tools they don't have
     const busless = !rt.caps.mcp && !params.isOrchestrator
@@ -375,7 +377,7 @@ export class Runtime {
         ? `\n## Done means\nBaton runs \`${acceptance}\` in your workspace when you finish; your result counts only if it passes. Run it yourself before you report.`
         : undefined,
       skills.length ? this.skillsBlock(skills, busless) : undefined,
-      this.config.notes.enabled ? notesBlock(this.projectRoot, this.config.notes.max) : undefined,
+      this.config.features.notes ? notesBlock(this.projectRoot, this.config.notes.max) : undefined,
     ]
       .filter(Boolean)
       .join("\n")

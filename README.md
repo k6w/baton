@@ -145,10 +145,11 @@ Workers are only as good as their brief, so Baton helps the lead write a good on
   worker finishes. The work counts only when it passes; the worker gets two more tries.
 - **Skills:** `.baton/skills/<name>/SKILL.md` (or your `.claude/skills`). Every agent sees what's
   available and loads what it needs. Works with Codex, OpenCode and Gemini too, not just Claude.
-- **Team notes:** facts agents learn ("tests need DB_URL") go into `.baton/notes.md`, and every
-  new worker starts with them.
+- **Team notes** (opt-in): facts agents learn ("tests need DB_URL") go into `.baton/notes.md`,
+  and every new worker starts with them.
 
-`/roles`, `/skills`, `/notes`, `/team <name>` in the app. All of it: [roles, skills and notes](docs/roles.md).
+Each one has its own switch: `baton features notes on`, or `/settings` → Team features. Switched
+off, the agents never hear of it. `/roles`, `/skills`, `/notes`, `/team <name>` in the app. All of it: [roles, skills and notes](docs/roles.md).
 
 ## How much freedom agents get
 

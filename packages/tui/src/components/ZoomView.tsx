@@ -36,6 +36,7 @@ export function ZoomView(props: { agentId: string; width: number; height: number
       width: inner().width - 1,
       look: l.look,
       showThoughts: true,
+      markdown: ui.prefs.markdown,
       maxDiffLines: Number.POSITIVE_INFINITY,
       maxOutputLines: 40,
       who: whoFn(ui),

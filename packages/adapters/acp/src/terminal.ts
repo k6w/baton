@@ -66,7 +66,7 @@ export class TerminalManager {
     const cmd = o.args && o.args.length > 0 ? [o.command, ...o.args] : [this.shell, "-c", o.command]
     const display = o.args && o.args.length > 0 ? [o.command, ...o.args].join(" ") : o.command
     // Own process group, so kill/release reach the whole tree (`cmd1; cmd2`, pipelines, `&` jobs).
-    const proc = Bun.spawn(cmd, { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: !IS_WINDOWS })
+    const proc = Bun.spawn(cmd, { windowsHide: true, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: !IS_WINDOWS })
     const limit = o.outputByteLimit != null && o.outputByteLimit >= 0 ? o.outputByteLimit : DEFAULT_LIMIT
     const t: Term = {
       id,

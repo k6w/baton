@@ -195,7 +195,7 @@ async function cmdStart(args: Args) {
 
 async function cmdDemo(args: Args) {
   const root = mkdtempSync(join(tmpdir(), "baton-demo-"))
-  Bun.spawnSync(["git", "init", "-q"], { cwd: root })
+  Bun.spawnSync(["git", "init", "-q"], { windowsHide: true, cwd: root })
   const socketPath = join(root, "baton.sock")
   const daemon = await startDaemon({
     projectRoot: root,
@@ -278,7 +278,7 @@ function nerdFontInstalled(): string | undefined {
     } catch {}
   }
   if (Bun.which("fc-list")) {
-    const r = Bun.spawnSync(["fc-list", ":", "family"], { stdout: "pipe", stderr: "ignore" })
+    const r = Bun.spawnSync(["fc-list", ":", "family"], { windowsHide: true, stdout: "pipe", stderr: "ignore" })
     const hit = r.stdout
       .toString()
       .split("\n")
@@ -310,7 +310,7 @@ function cmdProtocol() {
 /** tmux options Baton relies on: [ok?, message]. */
 function tmuxChecks(): [boolean, string][] {
   const opt = (name: string) => {
-    const p = Bun.spawnSync(["tmux", "show-options", "-gv", name], { stdout: "pipe", stderr: "ignore" })
+    const p = Bun.spawnSync(["tmux", "show-options", "-gv", name], { windowsHide: true, stdout: "pipe", stderr: "ignore" })
     return p.exitCode === 0 ? p.stdout.toString().trim() : undefined
   }
   const out: [boolean, string][] = []

@@ -326,7 +326,13 @@ export async function connect(opts: ConnectOptions = {}): Promise<BatonClient> {
   if (existing) return existing
   if (opts.autostart === false) throw new Error(`no baton daemon running for ${root}`)
   const cmd = opts.daemonCommand?.(root) ?? defaultDaemonCommand(root)
-  const proc = Bun.spawn(cmd, { cwd: root, stdio: ["ignore", "ignore", "ignore"], detached: true, env: { ...process.env, BATON_DAEMON: "1" } })
+  const proc = Bun.spawn(cmd, {
+    windowsHide: true,
+    cwd: root,
+    stdio: ["ignore", "ignore", "ignore"],
+    detached: true,
+    env: { ...process.env, BATON_DAEMON: "1" },
+  })
   proc.unref()
   const deadline = Date.now() + (opts.startTimeoutMs ?? 15_000)
   while (Date.now() < deadline) {

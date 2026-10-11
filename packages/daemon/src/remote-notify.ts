@@ -3,6 +3,7 @@
  * finished work even when no TUI is attached. Same events and rules as the TUI's notifications.
  */
 import { noticeFor, projectName } from "@batonsh/kernel"
+import { shellCommand } from "@batonsh/protocol"
 import { approvalLinks } from "./remote.ts"
 import type { Runtime } from "./runtime.ts"
 
@@ -29,7 +30,8 @@ export function attachRemoteNotify(rt: Runtime): () => void {
       )
     if (cfg.command) {
       try {
-        Bun.spawn(["sh", "-c", cfg.command], {
+        Bun.spawn(shellCommand(cfg.command), {
+          windowsHide: true,
           cwd: rt.projectRoot,
           stdin: new TextEncoder().encode(JSON.stringify(payload)),
           stdout: "ignore",

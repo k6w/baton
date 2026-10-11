@@ -61,7 +61,7 @@ export function suggestTasks(root: string): string[] {
   const out: string[] = []
   let files: string[] = []
   try {
-    const r = Bun.spawnSync(["git", "ls-files"], { cwd: root, stdout: "pipe", stderr: "ignore" })
+    const r = Bun.spawnSync(["git", "ls-files"], { windowsHide: true, cwd: root, stdout: "pipe", stderr: "ignore" })
     if (r.exitCode === 0) files = r.stdout.toString().split("\n").filter(Boolean).slice(0, 5000)
   } catch {}
   const src = files.filter((f) => SOURCE.has(extname(f)) && !isTest(f) && !f.includes("node_modules/") && !f.startsWith("."))

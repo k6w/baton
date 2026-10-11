@@ -25,7 +25,7 @@ export function tempWorkspace(files: Record<string, string> = {}): string {
   // the long form of the path: Windows' temp dir may be an 8.3 short name (RUNNER~1) that git won't echo back
   const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "baton-test-")))
   for (const [p, c] of Object.entries(files)) writeFileSync(join(dir, p), c)
-  Bun.spawnSync(["git", "init", "-q"], { cwd: dir })
+  Bun.spawnSync(["git", "init", "-q"], { windowsHide: true, cwd: dir })
   return dir
 }
 

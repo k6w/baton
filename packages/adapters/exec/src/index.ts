@@ -92,15 +92,15 @@ function expand(args: string[], vars: Record<string, string>): string[] {
 
 /** Tree of the working directory via a temporary index (null outside git repos). */
 function snapshot(cwd: string): string | null {
-  const inside = Bun.spawnSync(["git", "rev-parse", "--is-inside-work-tree"], { cwd, stdout: "pipe", stderr: "ignore" })
+  const inside = Bun.spawnSync(["git", "rev-parse", "--is-inside-work-tree"], { windowsHide: true, cwd, stdout: "pipe", stderr: "ignore" })
   if (inside.exitCode !== 0) return null
   const dir = mkdtempSync(join(tmpdir(), "baton-exec-"))
   const env = { ...process.env, GIT_INDEX_FILE: join(dir, "index") }
   try {
-    const head = Bun.spawnSync(["git", "rev-parse", "--verify", "-q", "HEAD"], { cwd, stdout: "pipe", stderr: "ignore" })
-    if (head.exitCode === 0) Bun.spawnSync(["git", "read-tree", head.stdout.toString().trim()], { cwd, env })
-    Bun.spawnSync(["git", "add", "-A", "--", "."], { cwd, env, stderr: "ignore" })
-    const t = Bun.spawnSync(["git", "write-tree"], { cwd, env, stdout: "pipe" })
+    const head = Bun.spawnSync(["git", "rev-parse", "--verify", "-q", "HEAD"], { windowsHide: true, cwd, stdout: "pipe", stderr: "ignore" })
+    if (head.exitCode === 0) Bun.spawnSync(["git", "read-tree", head.stdout.toString().trim()], { windowsHide: true, cwd, env })
+    Bun.spawnSync(["git", "add", "-A", "--", "."], { windowsHide: true, cwd, env, stderr: "ignore" })
+    const t = Bun.spawnSync(["git", "write-tree"], { windowsHide: true, cwd, env, stdout: "pipe" })
     return t.exitCode === 0 ? t.stdout.toString().trim() : null
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -225,6 +225,7 @@ class ExecSession implements AgentSession {
         void pump(p.stderr)
       } else
         this.proc = Bun.spawn([this.bin, ...args], {
+          windowsHide: true,
           cwd: this.cfg.cwd,
           env,
           terminal: { cols: 160, rows: 50, data: (_t: unknown, d: Uint8Array) => onData(d) },
@@ -236,7 +237,7 @@ class ExecSession implements AgentSession {
       // file changes made during the turn → one edit tool call with diffs
       const after = before ? snapshot(this.cfg.cwd) : null
       if (before && after && before !== after) {
-        const patch = Bun.spawnSync(["git", "diff", "--no-color", before, after], { cwd: this.cfg.cwd, stdout: "pipe" }).stdout.toString()
+        const patch = Bun.spawnSync(["git", "diff", "--no-color", before, after], { windowsHide: true, cwd: this.cfg.cwd, stdout: "pipe" }).stdout.toString()
         const files = parseUnifiedDiff(patch).filter((f) => f.path)
         if (files.length) {
           this.emit({

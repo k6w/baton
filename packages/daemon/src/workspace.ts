@@ -14,6 +14,7 @@ import { copyFileSync, existsSync, lstatSync, mkdirSync, rmdirSync, symlinkSync 
 import { basename, dirname, join, resolve } from "node:path"
 import type { BatonConfig } from "@batonsh/kernel"
 import { stateDir } from "@batonsh/kernel"
+import { shellCommand } from "@batonsh/protocol"
 import {
   applyPatch,
   branchExists,
@@ -383,7 +384,7 @@ export class WorkspaceManager {
 }
 
 async function runShell(cmd: string, cwd: string, timeoutMs: number): Promise<{ code: number; output: string }> {
-  const proc = Bun.spawn(["sh", "-c", cmd], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore" })
+  const proc = Bun.spawn(shellCommand(cmd), { windowsHide: true, cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore" })
   const timer = setTimeout(() => proc.kill(), timeoutMs)
   const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()])
   const code = await proc.exited

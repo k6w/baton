@@ -5,6 +5,15 @@ All notable changes to Baton. Versions follow [semver](https://semver.org); the 
 
 ## Unreleased
 
+## 0.3.2 — 2026-10-11
+
+**Windows: no more flashing console windows**
+- Baton's background process has no console, so every command it started (git, agent CLIs,
+  checks) used to pop up a console window that closed right away, sometimes dozens in a row.
+  Every process Baton starts is now hidden, and a test keeps it that way.
+- The verify command before a merge, `cmd:` secrets and notification commands now run in Git
+  Bash or PowerShell on Windows instead of `sh`, which isn't there.
+
 ## 0.3.1 — 2026-10-11
 
 **Every team feature has its own switch**

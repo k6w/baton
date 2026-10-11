@@ -25,6 +25,7 @@ export async function git(cwd: string, args: string[], opts: { env?: Record<stri
   // byte-exact copies: no CRLF conversion (core.autocrlf=true is common on Windows) when Baton
   // snapshots the project, fills a worktree or merges back
   const proc = Bun.spawn(["git", "-c", "core.autocrlf=false", "-c", "core.safecrlf=false", ...args], {
+    windowsHide: true,
     cwd,
     env: { ...process.env, ...IDENTITY, GIT_TERMINAL_PROMPT: "0", ...opts.env },
     stdin: opts.input !== undefined ? new TextEncoder().encode(opts.input) : "ignore",
@@ -123,7 +124,7 @@ export async function repoPrefix(cwd: string): Promise<{ prefix: string; cdup: s
 }
 
 export function repoPrefixSync(cwd: string): { prefix: string; cdup: string } | undefined {
-  const r = Bun.spawnSync(["git", "rev-parse", "--show-prefix", "--show-cdup"], { cwd, stdout: "pipe", stderr: "ignore", stdin: "ignore" })
+  const r = Bun.spawnSync(["git", "rev-parse", "--show-prefix", "--show-cdup"], { windowsHide: true, cwd, stdout: "pipe", stderr: "ignore", stdin: "ignore" })
   if (r.exitCode !== 0) return undefined
   const [prefix = "", cdup = ""] = r.stdout.toString().split("\n")
   return { prefix: prefix.trim(), cdup: cdup.trim() }

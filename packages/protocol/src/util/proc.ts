@@ -81,7 +81,7 @@ export function killProcessTree(
     // no process groups or signals: taskkill ends the process and everything it started
     if (proc && (proc.exitCode !== null || (proc.signalCode ?? null) !== null)) return
     try {
-      Bun.spawnSync(["taskkill", "/pid", String(pid), "/T", "/F"], { stdout: "ignore", stderr: "ignore" })
+      Bun.spawnSync(["taskkill", "/pid", String(pid), "/T", "/F"], { windowsHide: true, stdout: "ignore", stderr: "ignore" })
     } catch {}
     return
   }
@@ -100,10 +100,11 @@ export function killProcessTree(
  * (PATHEXT: codex → codex.cmd); Bun runs .cmd / .bat shims itself, with correct quoting.
  * Elsewhere argv is returned unchanged.
  */
-export function spawnable(argv: string[]): { cmd: string[]; opts: { windowsVerbatimArguments?: boolean } } {
-  if (!IS_WINDOWS || !argv[0]) return { cmd: argv, opts: {} }
+export function spawnable(argv: string[]): { cmd: string[]; opts: { windowsVerbatimArguments?: boolean; windowsHide: true } } {
+  // windowsHide: the daemon has no console, so without it every child would flash a console window
+  if (!IS_WINDOWS || !argv[0]) return { cmd: argv, opts: { windowsHide: true } }
   const bin = /[\\/]/.test(argv[0]) ? argv[0] : (which(argv[0]) ?? argv[0])
-  return { cmd: [bin, ...argv.slice(1)], opts: {} }
+  return { cmd: [bin, ...argv.slice(1)], opts: { windowsHide: true } }
 }
 
 /**

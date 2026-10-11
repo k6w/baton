@@ -10,6 +10,7 @@
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { shellCommand } from "@batonsh/protocol"
 import { parse as parseToml } from "smol-toml"
 import { z } from "zod"
 import { PROJECT_LAYERS, stripUntrusted, type TrustEntry, trustedIds, trustSurface } from "./trust.ts"
@@ -566,12 +567,12 @@ export async function resolveSecret(ref: string | undefined): Promise<string | u
   if (!ref) return undefined
   if (ref.startsWith("env:")) return process.env[ref.slice(4)]
   if (ref.startsWith("cmd:")) {
-    const p = Bun.spawn(["sh", "-c", ref.slice(4)], { stdout: "pipe", stderr: "ignore" })
+    const p = Bun.spawn(shellCommand(ref.slice(4)), { windowsHide: true, stdout: "pipe", stderr: "ignore" })
     const out = (await new Response(p.stdout).text()).trim()
     return (await p.exited) === 0 ? out : undefined
   }
   if (ref.startsWith("keychain:")) {
-    const p = Bun.spawn(["security", "find-generic-password", "-s", ref.slice(9), "-w"], { stdout: "pipe", stderr: "ignore" })
+    const p = Bun.spawn(["security", "find-generic-password", "-s", ref.slice(9), "-w"], { windowsHide: true, stdout: "pipe", stderr: "ignore" })
     const out = (await new Response(p.stdout).text()).trim()
     return (await p.exited) === 0 ? out : undefined
   }

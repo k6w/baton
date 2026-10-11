@@ -47,7 +47,7 @@ export async function githubToken(rt: Runtime): Promise<string | undefined> {
   const env = process.env.GITHUB_TOKEN || process.env.GH_TOKEN
   if (env) return env
   if (Bun.which("gh")) {
-    const p = Bun.spawnSync(["gh", "auth", "token"], { stdout: "pipe", stderr: "ignore" })
+    const p = Bun.spawnSync(["gh", "auth", "token"], { windowsHide: true, stdout: "pipe", stderr: "ignore" })
     const t = p.stdout.toString().trim()
     if (p.exitCode === 0 && t) return t
   }

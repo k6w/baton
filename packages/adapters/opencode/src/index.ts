@@ -47,6 +47,7 @@ export function spawnWatched(cmd: string[], opts: { cwd?: string; env?: Record<s
     return Bun.spawn(run.cmd, { ...run.opts, cwd: opts.cwd, env: opts.env, stdin: "pipe", stdout: "pipe", stderr: "pipe" })
   }
   return Bun.spawn(["/bin/sh", "-c", WATCHDOG, "baton-opencode", ...cmd], {
+    windowsHide: true,
     cwd: opts.cwd,
     env: opts.env,
     stdin: "pipe",

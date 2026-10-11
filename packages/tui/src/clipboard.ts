@@ -16,7 +16,7 @@ export function copyText(renderer: CliRenderer | undefined, text: string): strin
     for (const cmd of tools) {
       if (!Bun.which(cmd[0] as string)) continue
       try {
-        const r = Bun.spawnSync(cmd, { stdin: new TextEncoder().encode(text), stdout: "ignore", stderr: "ignore" })
+        const r = Bun.spawnSync(cmd, { windowsHide: true, stdin: new TextEncoder().encode(text), stdout: "ignore", stderr: "ignore" })
         if (r.exitCode === 0) return cmd[0] as string
       } catch {}
     }

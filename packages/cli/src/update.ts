@@ -102,12 +102,12 @@ export async function update(opts: UpdateOptions = {}): Promise<{ from: string; 
     writeFileSync(join(tmp, archive), data)
     // Windows 10+ ships bsdtar, which also reads zip files
     const unpack = archive.endsWith(".zip") ? (process.platform === "win32" ? ["tar", "-xf", archive] : ["unzip", "-q", archive]) : ["tar", "-xzf", archive]
-    const p = Bun.spawnSync(unpack, { cwd: tmp, stderr: "pipe" })
+    const p = Bun.spawnSync(unpack, { windowsHide: true, cwd: tmp, stderr: "pipe" })
     if (p.exitCode !== 0) throw new Error(`could not unpack ${archive}: ${p.stderr.toString()}`)
     const exe = process.platform === "win32" ? "baton.exe" : "baton"
     const fresh = join(tmp, archive.replace(/\.(tar\.gz|zip)$/, ""), exe)
     // smoke test before swapping: the new binary must run
-    const v = Bun.spawnSync([fresh, "--version"], { stdout: "pipe", stderr: "pipe" })
+    const v = Bun.spawnSync([fresh, "--version"], { windowsHide: true, stdout: "pipe", stderr: "pipe" })
     if (v.exitCode !== 0 || !v.stdout.toString().includes(target)) throw new Error(`the downloaded binary did not run (${v.stderr.toString().trim()})`)
     const dest = process.execPath
     const staged = join(dirname(dest), `.baton-${target}.new`)

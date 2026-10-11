@@ -251,7 +251,7 @@ export function remoteCertificate(projectRoot: string): { cert: string; key: str
         "-addext",
         `subjectAltName=${san}`,
       ],
-      { stdout: "ignore", stderr: "pipe" },
+      { windowsHide: true, stdout: "ignore", stderr: "pipe" },
     )
     if (r.exitCode !== 0) throw new Error(`openssl failed: ${r.stderr.toString().trim().split("\n").at(-1)}`)
     chmodSync(`${base}.key.pem`, 0o600)
@@ -266,17 +266,17 @@ export function remoteCertificate(projectRoot: string): { cert: string; key: str
 /** `tailscale serve` the web view on this machine's tailnet name (real HTTPS certificate). */
 export function tailscaleServe(port: number): string {
   if (!Bun.which("tailscale")) throw new Error("tailscale isn't installed (https://tailscale.com/download)")
-  const st = Bun.spawnSync(["tailscale", "status", "--json"], { stdout: "pipe", stderr: "pipe" })
+  const st = Bun.spawnSync(["tailscale", "status", "--json"], { windowsHide: true, stdout: "pipe", stderr: "pipe" })
   if (st.exitCode !== 0) throw new Error(`tailscale isn't running: ${st.stderr.toString().trim()}`)
   const dns = (JSON.parse(st.stdout.toString()) as { Self?: { DNSName?: string } }).Self?.DNSName?.replace(/\.$/, "")
   if (!dns) throw new Error("tailscale reports no DNS name for this machine (enable MagicDNS)")
-  const r = Bun.spawnSync(["tailscale", "serve", "--bg", `http://127.0.0.1:${port}`], { stdout: "pipe", stderr: "pipe" })
+  const r = Bun.spawnSync(["tailscale", "serve", "--bg", `http://127.0.0.1:${port}`], { windowsHide: true, stdout: "pipe", stderr: "pipe" })
   if (r.exitCode !== 0) throw new Error(`tailscale serve failed: ${r.stderr.toString().trim() || r.stdout.toString().trim()}`)
   return `https://${dns}`
 }
 
 export function tailscaleUnserve(): void {
-  if (Bun.which("tailscale")) Bun.spawnSync(["tailscale", "serve", "--https=443", "off"], { stdout: "ignore", stderr: "ignore" })
+  if (Bun.which("tailscale")) Bun.spawnSync(["tailscale", "serve", "--https=443", "off"], { windowsHide: true, stdout: "ignore", stderr: "ignore" })
 }
 
 export function startRemoteServer(rt: Runtime, opts: { lan?: boolean; port?: number; tls?: boolean } = {}): RemoteServer {

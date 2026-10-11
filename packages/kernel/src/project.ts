@@ -26,7 +26,7 @@ export interface GitInfo {
 
 export function gitInfo(root: string): GitInfo {
   const run = (args: string[]) => {
-    const r = Bun.spawnSync(["git", ...args], { cwd: root, stdout: "pipe", stderr: "ignore" })
+    const r = Bun.spawnSync(["git", ...args], { windowsHide: true, cwd: root, stdout: "pipe", stderr: "ignore" })
     return r.exitCode === 0 ? r.stdout.toString().trim() : undefined
   }
   if (run(["rev-parse", "--is-inside-work-tree"]) !== "true") return { isRepo: false }
@@ -68,7 +68,7 @@ export function projectPaths(root: string) {
 export function defaultUser(): string {
   if (process.env.BATON_USER) return process.env.BATON_USER
   try {
-    const r = Bun.spawnSync(["git", "config", "--get", "user.name"], { stdout: "pipe", stderr: "ignore" })
+    const r = Bun.spawnSync(["git", "config", "--get", "user.name"], { windowsHide: true, stdout: "pipe", stderr: "ignore" })
     const name = r.stdout.toString().trim()
     if (r.exitCode === 0 && name) return name
   } catch {}

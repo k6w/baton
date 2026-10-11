@@ -449,6 +449,7 @@ export function shellName(): string {
 async function runCommand(command: string, timeoutMs: number, ctx: ToolRunContext): Promise<ToolOutcome> {
   const argv = shellArgv(command)
   const proc = Bun.spawn(ctx.sandbox ? ctx.sandbox.wrap(argv) : argv, {
+    windowsHide: true,
     cwd: ctx.ws.root,
     env: { ...process.env, PATH: augmentedPath(), ...ctx.env, PAGER: "cat", GIT_PAGER: "cat", GIT_TERMINAL_PROMPT: "0", CI: ctx.env.CI ?? "1" },
     stdin: "ignore",

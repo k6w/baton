@@ -48,7 +48,7 @@ export function playSound(kind: string, cfg: BatonConfig["notify"]): void {
     return
   }
   try {
-    Bun.spawn(play(file), { stdout: "ignore", stderr: "ignore", stdin: "ignore" }).unref()
+    Bun.spawn(play(file), { windowsHide: true, stdout: "ignore", stderr: "ignore", stdin: "ignore" }).unref()
   } catch {
     process.stdout.write("\x07")
   }

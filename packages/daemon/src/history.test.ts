@@ -39,6 +39,12 @@ test("history: runs persist across daemon restarts, export to markdown, resume r
   const res = await c.call("run.resume", { runId: firstRun })
   expect(res.agents).toEqual(["historian"])
   expect(d.runtime.findAgent("historian")?.info.label).toBe("remember")
+  // the resumed card shows the earlier conversation, above a marker
+  const h = d.runtime.findAgent("historian")!
+  const feed = d.runtime.state.feed(h.info.agentId).items
+  expect(feed.some((x) => x.kind === "user" && x.text === "pong")).toBe(true)
+  expect(feed.some((x) => x.kind === "message" && x.text === "PONG")).toBe(true)
+  expect(feed.some((x) => x.kind === "note" && x.text.includes("earlier"))).toBe(true)
   c.close()
   await d.stop()
 })

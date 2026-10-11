@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "batonsh"
-version = "0.3.5"
+version = "0.3.6"
 description = "Python SDK for Baton, the multi-agent coding TUI/daemon"
 readme = "README.md"
 requires-python = ">=3.9"

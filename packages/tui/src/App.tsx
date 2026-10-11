@@ -230,6 +230,12 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       .filter((c) => c.kind === "agent")
       .findIndex((c) => c.kind === "agent" && c.agentId === f.agentId)
   }
+  /** The lead can be selected like a card: it sits "above" the grid. */
+  const leadId = () => [...ui.run.agents.values()].find((a) => a.isOrchestrator && a.status !== "exited")?.agentId
+  const leadFocused = () => {
+    const f = ui.focus()
+    return f.kind === "agent" && f.agentId === leadId()
+  }
   const focusedAgent = () => {
     const f = ui.focus()
     return f.kind === "agent" ? ui.run.agents.get(f.agentId) : undefined
@@ -380,9 +386,16 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
         const agents = cells().filter((c) => c.kind === "agent").length
         const idx = focusedIndex()
         const dir = id === "focus.next" ? 1 : -1
+        const lead = leadId()
+        // order: typing → orchestrator → cards → typing
         if (ui.focus().kind === "input") {
-          if (agents) focusAgentAt(dir === 1 ? 0 : agents - 1)
-        } else if (idx + dir < 0 || idx + dir >= agents) ui.setFocus({ kind: "input" })
+          if (dir === 1 && lead) ui.setFocus({ kind: "agent", agentId: lead })
+          else if (agents) focusAgentAt(dir === 1 ? 0 : agents - 1)
+        } else if (leadFocused()) {
+          if (dir === 1 && agents) focusAgentAt(0)
+          else ui.setFocus({ kind: "input" })
+        } else if (idx + dir < 0) lead ? ui.setFocus({ kind: "agent", agentId: lead }) : ui.setFocus({ kind: "input" })
+        else if (idx + dir >= agents) ui.setFocus({ kind: "input" })
         else focusAgentAt(idx + dir)
         break
       }
@@ -390,16 +403,25 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
         ui.setFocus({ kind: "input" })
         break
       case "grid.left":
+        if (leadFocused()) break
         focusAgentAt(focusedIndex() - 1)
         break
       case "grid.right":
-        focusAgentAt(focusedIndex() + 1)
+        if (leadFocused()) focusAgentAt(0)
+        else focusAgentAt(focusedIndex() + 1)
         break
-      case "grid.up":
-        focusAgentAt(focusedIndex() - (ui.prefs.layout === "list" ? 1 : gridCols()))
+      case "grid.up": {
+        if (leadFocused()) break
+        const up = focusedIndex() - (ui.prefs.layout === "list" ? 1 : gridCols())
+        // from the top row, up selects the orchestrator
+        const lead = leadId()
+        if (up < 0 && lead) ui.setFocus({ kind: "agent", agentId: lead })
+        else focusAgentAt(up)
         break
+      }
       case "grid.down":
-        focusAgentAt(focusedIndex() + (ui.prefs.layout === "list" ? 1 : gridCols()))
+        if (leadFocused()) focusAgentAt(0)
+        else focusAgentAt(focusedIndex() + (ui.prefs.layout === "list" ? 1 : gridCols()))
         break
       case "grid.pageDown": {
         const g = computeGrid(cells().length, frame().grid.w, frame().grid.h, {
@@ -577,6 +599,7 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
         ui.setOverlay("costs")
         break
       case "history":
+      case "resume":
         ui.setOverlay("history")
         break
       case "compare":
@@ -735,7 +758,14 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
   return (
     <box width={dims().width} height={dims().height} flexDirection="column" backgroundColor={ui.theme().background}>
       <box flexDirection={frame().direction} height={dims().height - chromeH()}>
-        <Orchestrator width={frame().orch.w} height={frame().orch.h} focused={inputFocused()} onSubmit={submit} slim={!!frame().slim} />
+        <Orchestrator
+          width={frame().orch.w}
+          height={frame().orch.h}
+          focused={inputFocused()}
+          selected={!!leadId() && ui.focus().kind === "agent" && (ui.focus() as { agentId: string }).agentId === leadId()}
+          onSubmit={submit}
+          slim={!!frame().slim}
+        />
         <Show when={frame().grid.h > 0 && frame().grid.w > 0}>
           <Switch>
             <Match when={zoomTarget()}>

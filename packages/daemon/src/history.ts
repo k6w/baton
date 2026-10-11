@@ -127,19 +127,31 @@ export async function resumeRun(rt: Runtime, runId: string): Promise<string[]> {
   const infos = new Map<string, AgentInfo>()
   const sessions = new Map<string, string>()
   const workspaces = new Map<string, { path: string; branch?: string; base?: string; mode: string }>()
+  // the old run as the screen showed it: its feeds become the resumed agents' history
+  const old = new RunState()
   for (const e of events) {
+    old.apply(e)
     if (e.type === "agent.spawned") infos.set(e.data.agentId, e.data)
     else if (e.type === "agent.session" && e.agentId) sessions.set(e.agentId, e.data.sessionId)
     else if (e.type === "workspace.created" && e.agentId) workspaces.set(e.agentId, e.data)
+  }
+  const history = (oldId: string, newId: string) => {
+    const items = old.feed(oldId).items.slice(-HISTORY_ITEMS)
+    if (items.length) rt.emit({ type: "agent.history", data: { fromRun: runId, items: items as unknown as Record<string, unknown>[] } }, newId)
   }
   const started: string[] = []
   const live = new Set([...rt.agents.values()].filter((a) => !a.closing).map((a) => a.info.name))
   for (const [oldId, info] of infos) {
     if (info.isOrchestrator) {
-      if (!rt.orchestrator()) {
+      // a lead that hasn't done anything yet makes way for the resumed one (which remembers the conversation)
+      const cur = rt.orchestrator()
+      if (cur && !rt.state.feed(cur.info.agentId).items.some((it) => it.kind === "user" || it.kind === "message")) await rt.kill(cur.info.agentId)
+      const lead = rt.orchestrator()
+      if (!lead) {
         const a = await rt.spawn({ adapter: info.adapter, isOrchestrator: true, model: info.model, label: info.label, resumeId: sessions.get(oldId) })
+        history(oldId, a.agentId)
         started.push(a.name)
-      }
+      } else history(oldId, lead.info.agentId)
       continue
     }
     if (live.has(info.name)) continue
@@ -156,6 +168,7 @@ export async function resumeRun(rt: Runtime, runId: string): Promise<string[]> {
         resumeId: sessions.get(oldId),
         adoptWorkspace: adopt ? { path: adopt.path, branch: adopt.branch, base: adopt.base } : undefined,
       })
+      history(oldId, a.agentId)
       started.push(a.name)
     } catch (e) {
       rt.emit({ type: "log", data: { level: "warn", message: `resume ${info.name}: ${e instanceof Error ? e.message : e}` } })
@@ -163,6 +176,9 @@ export async function resumeRun(rt: Runtime, runId: string): Promise<string[]> {
   }
   return started
 }
+
+/** How much of each agent's earlier conversation a resume brings back. */
+const HISTORY_ITEMS = 300
 
 // ───────────────────────────── HTML export ─────────────────────────────
 

@@ -200,6 +200,16 @@ export class RunState {
         }
         for (const [k, p] of this.approvals) if (p.agentId === aid) this.approvals.delete(k)
         break
+      case "agent.history": {
+        if (!aid) break
+        const f = this.feed(aid)
+        const old = (e.data.items as FeedItem[]).map((it) => ({ ...it, id: `h_${it.id}` }) as FeedItem)
+        const marker: FeedItem = { kind: "note", id: `n_${e.id}`, text: "↑ earlier, from the resumed run", ts: e.ts }
+        f.items.unshift(...old, marker)
+        for (const it of [...old, marker]) f.index.set(it.id, it)
+        if (f.items.length > MAX_FEED) for (const r of f.items.splice(0, f.items.length - MAX_FEED)) f.index.delete(r.id)
+        break
+      }
       case "turn.started":
         if (agent) {
           agent.turnStartedAt = e.ts

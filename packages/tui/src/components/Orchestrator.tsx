@@ -21,6 +21,8 @@ export interface OrchestratorProps {
   width: number
   height: number
   focused: boolean
+  /** Selected like an agent card (tab / ↑ from the grid): z zooms, d diff, space peek; esc goes back to typing. */
+  selected?: boolean
   onSubmit: (text: string) => void
   /** Swarm layout: a single prompt row instead of a full pane. */
   slim?: boolean
@@ -404,12 +406,15 @@ export function Orchestrator(props: OrchestratorProps) {
         width={props.width}
         height={props.height}
         border={ui.prefs.border}
-        borderColor={yolo() ? ui.theme().error : props.focused ? ui.theme().borderActive : ui.theme().border}
-        focused={props.focused}
+        borderColor={props.selected ? ui.theme().borderActive : yolo() ? ui.theme().error : props.focused ? ui.theme().borderActive : ui.theme().border}
+        focused={props.focused || !!props.selected}
         accent={yolo() ? ui.theme().error : ui.theme().primary}
         icon={{ text: orch() ? agentLook(ui, orch()!).glyph : "✱", fg: ui.theme().primary, bold: true }}
         logo={orch() ? agentLook(ui, orch()!).logo : undefined}
-        title={[{ text: "orchestrator", fg: ui.theme().text, bold: true }]}
+        title={[
+          { text: "orchestrator", fg: ui.theme().text, bold: true },
+          ...(props.selected ? [{ text: "  selected · z zoom · esc type", fg: ui.theme().textMuted }] : []),
+        ]}
         right={headerRight()}
       >
         <box height={bodyRows()} overflow="hidden">

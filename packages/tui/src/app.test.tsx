@@ -239,6 +239,27 @@ describe("TUI", () => {
     m.dispose()
   }, 30000)
 
+  test("the orchestrator can be selected like a card (tab from the input) and zoomed", async () => {
+    const findLead = () => [...live.state.agents.values()].find((a) => a.isOrchestrator && a.status !== "exited")
+    if (!findLead()) await client.submit("hello")
+    await until(() => !!findLead())
+    const lead = findLead()!
+    const m = await mount(140, 44)
+    await m.frame()
+    m.ui.setFocus({ kind: "input" })
+    m.t.mockInput.pressTab()
+    let f = await m.frame()
+    expect(m.ui.focus()).toEqual({ kind: "agent", agentId: lead.agentId })
+    expect(f).toContain("selected · z zoom")
+    m.t.mockInput.pressKey("z")
+    await m.frame()
+    expect(m.ui.zoomed()).toBe(lead.agentId)
+    m.t.mockInput.pressEscape()
+    f = await m.frame()
+    expect(m.ui.zoomed()).toBeNull()
+    m.dispose()
+  })
+
   test("theme picker previews live and reverts on escape", async () => {
     const m = await mount(120, 40)
     await m.frame()

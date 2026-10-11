@@ -315,6 +315,8 @@ export const EventSchemas = {
   /** A named person sent text to an agent (shared runs): attributes that agent's next turn. */
   "user.input": z.object({ author: z.string(), agentId: z.string(), text: z.string() }),
   "orch.note": z.object({ text: z.string(), level: z.enum(["info", "warn", "error"]).default("info") }),
+  /** A resumed agent's earlier conversation (feed items from the run it came from), shown above its new work. */
+  "agent.history": z.object({ fromRun: z.string(), items: z.array(z.record(z.string(), z.unknown())) }),
   error: z.object({ message: z.string(), detail: z.string().optional(), fatal: z.boolean().optional() }),
   log: z.object({ level: z.enum(["debug", "info", "warn", "error"]), message: z.string() }),
 } as const

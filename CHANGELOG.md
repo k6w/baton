@@ -5,6 +5,22 @@ All notable changes to Baton. Versions follow [semver](https://semver.org); the 
 
 ## Unreleased
 
+## 0.3.6 — 2026-10-11
+
+**Resume brings the conversation back**
+- Resuming a past run (`/history`, now also `/resume`) shows each agent's earlier conversation on
+  its card, above an "earlier, from the resumed run" marker. Agents that support it (Claude,
+  Codex, OpenCode, Gemini, …) also continue their own session, so they remember it too.
+- The orchestrator is resumed as well: a lead that hasn't done anything yet makes way for the
+  resumed one; a busy lead gets the earlier conversation shown above its own.
+
+**Select the orchestrator like any agent**
+- `tab` from the input (or ↑ from the top row of cards) selects the orchestrator: `z` zooms it,
+  and the other card keys work on it too. `esc` goes back to typing.
+
+**npm**
+- Packages carry the repository link in the form npm expects (no more warnings on publish).
+
 ## 0.3.5 — 2026-10-11
 
 **Pick models from a list**

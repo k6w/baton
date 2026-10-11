@@ -80,7 +80,7 @@ export function RemoteOverlay(props: { onClose: () => void }) {
         keycap(t, "s"),
         { text: " stop  ", fg: t.textMuted },
         keycap(t, "esc"),
-        { text: " close", fg: t.textMuted },
+        { text: " close (keeps running)", fg: t.textMuted },
       ],
     })
     return out

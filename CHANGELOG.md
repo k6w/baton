@@ -5,6 +5,20 @@ All notable changes to Baton. Versions follow [semver](https://semver.org); the 
 
 ## Unreleased
 
+## 0.3.3 — 2026-10-11
+
+**Phone & web view**
+- Closing the QR code screen and opening it again no longer fails with "port already in use".
+  Reopening `/web` shows the running web view as it is (phone access stays on, same link), and
+  esc says that it keeps running.
+- When the web view does restart (switching phone access, HTTPS or Tailscale), it waits for the
+  old port to free up, then picks a free one if it has to. A port you set yourself
+  (`remote.port`) gets a clear message instead.
+
+**Releases**
+- npm publishing works without a token (trusted publishing), skips versions already up, and can
+  be re-run for a released version (`only: npm`).
+
 ## 0.3.2 — 2026-10-11
 
 **Windows: no more flashing console windows**

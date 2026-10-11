@@ -437,17 +437,20 @@ export function remoteServer(rt: Runtime): RemoteServer | undefined {
 
 /** Start the web view (or return the running one; a different `lan` setting restarts it). */
 export function ensureRemote(rt: Runtime, opts: { lan?: boolean; port?: number; rotate?: boolean; tls?: boolean; tailscale?: boolean } = {}): RemoteServer {
-  const lan = opts.lan ?? rt.config.remote.lan
-  const port = opts.port ?? rt.config.remote.port
-  const tls = opts.tls ?? rt.config.remote.tls === "self-signed"
-  const tailscale = opts.tailscale ?? rt.config.remote.tailscale
   const cur = running.get(rt)
+  // anything not asked for keeps what is running (reopening /web after pressing l stays on the
+  // network instead of restarting), else the config
+  const lan = opts.lan ?? cur?.lan ?? rt.config.remote.lan
+  const port = opts.port ?? rt.config.remote.port
+  const tls = opts.tls ?? cur?.tls ?? rt.config.remote.tls === "self-signed"
+  const tailscale = opts.tailscale ?? (cur ? !!cur.publicUrl : rt.config.remote.tailscale)
   if (cur && !opts.rotate && cur.lan === lan && cur.tls === tls && !!cur.publicUrl === tailscale && (!port || cur.port === port)) return cur
   cur?.stop()
+  running.delete(rt)
   if (cur?.publicUrl) tailscaleUnserve()
   if (opts.rotate) remoteSecrets(rt.projectRoot, true)
   // tailscale terminates TLS itself and proxies to the local (plain) server
-  const s = startRemoteServer(rt, { lan, port: port || cur?.port || 0, tls: tls && !tailscale })
+  const s = listenWithRetry(rt, { lan, tls: tls && !tailscale }, port, cur?.port)
   if (tailscale) {
     try {
       s.publicUrl = tailscaleServe(s.port)
@@ -461,6 +464,30 @@ export function ensureRemote(rt: Runtime, opts: { lan?: boolean; port?: number; 
   running.set(rt, s)
   rt.emit({ type: "log", data: { level: "info", message: `web view at ${s.url}${lan ? " (reachable on your network)" : ""}` } })
   return s
+}
+
+const inUse = (e: unknown) => /EADDRINUSE|address already in use|port \d+ in use|Failed to start server/i.test(String((e as { code?: string })?.code ?? e))
+
+/**
+ * Bind the web view. A restart reuses the previous port so the phone's link keeps working; the old
+ * socket can take a moment to let go (Windows especially), so wait a little, then fall back to a
+ * free port. A port you configured yourself is never swapped: that is a clear error instead.
+ */
+function listenWithRetry(rt: Runtime, o: { lan: boolean; tls: boolean }, configured: number, previous?: number): RemoteServer {
+  const want = configured || previous || 0
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return startRemoteServer(rt, { ...o, port: want })
+    } catch (e) {
+      if (!want || !inUse(e)) throw e
+      if (attempt < 10) {
+        Bun.sleepSync(100)
+        continue
+      }
+      if (configured) throw new Error(`port ${configured} is in use by another program: free it, or set remote.port = 0 to let Baton pick one`)
+      return startRemoteServer(rt, { ...o, port: 0 })
+    }
+  }
 }
 
 export function stopRemote(rt: Runtime): void {

@@ -12,6 +12,7 @@ import {
   DEFAULT_PERMISSION_OPTIONS,
   diffLines,
   diffStat,
+  newId,
   type PermissionOption,
   type PermissionOptionKind,
   parseUnifiedDiff,
@@ -86,7 +87,6 @@ export class CodexTranslator {
   private tools = new Map<string, OpenTool>()
   private pending = new Map<string, PendingPermission>()
   private byRpcId = new Map<RpcId, string>()
-  private permSeq = 0
   private currentRaw: unknown
   /** True once one of our turns has started (usage before that belongs to earlier sessions). */
   private sawTurn = false
@@ -437,7 +437,9 @@ export class CodexTranslator {
     try {
       const req = this.describeRequest(method, params)
       if (!req) return undefined
-      const requestId = `codex-perm-${++this.permSeq}`
+      // unique across agents: every Codex process numbers its requests from 1, and the inbox holds
+      // all agents' requests together (a per-process counter let one agent's request replace another's)
+      const requestId = newId("codex-perm")
       this.pending.set(requestId, { requestId, rpcId, method: method as ServerRequest["method"], params, options: req.options })
       this.byRpcId.set(rpcId, requestId)
       this.emit({

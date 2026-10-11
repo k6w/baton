@@ -214,6 +214,31 @@ describe("TUI", () => {
     m.dispose()
   })
 
+  test("inbox: with several agents waiting, the selected request is the one approved", async () => {
+    // earlier tests leave requests waiting: start from an empty inbox
+    await client.submit("/deny all")
+    await until(() => live.state.approvals.size === 0)
+    for (const n of ["r-one", "r-two", "r-three"]) {
+      const g = await client.spawn({ adapter: "mock", name: n, approval: "ask", options: { speed: 0, steps: ["exec"] } })
+      await client.prompt(g.agentId, "risky")
+      await until(() => [...live.state.approvals.values()].some((p) => p.agentId === g.agentId), 10000)
+    }
+    const waiting = () => [...live.state.approvals.values()].map((p) => live.state.agents.get(p.agentId)?.name)
+    const m = await mount(140, 44)
+    await m.frame()
+    m.t.mockInput.pressKey("a", { ctrl: true })
+    await m.frame()
+    const order = (await m.frame()).split("\n").flatMap((l) => /(r-one|r-two|r-three):/.exec(l)?.[1] ?? [])
+    m.t.mockInput.pressArrow("down")
+    await m.frame()
+    m.t.mockInput.pressKey("a")
+    await until(() => !waiting().includes(order[1]))
+    expect(waiting()).toContain(order[0])
+    expect(waiting()).toContain(order[2])
+    m.t.mockInput.pressEscape()
+    m.dispose()
+   }, 30000)
+
   test("theme picker previews live and reverts on escape", async () => {
     const m = await mount(120, 40)
     await m.frame()

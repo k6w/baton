@@ -5,6 +5,15 @@ All notable changes to Baton. Versions follow [semver](https://semver.org); the 
 
 ## Unreleased
 
+## 0.3.4 — 2026-10-11
+
+**Approvals with several Codex workers**
+- Every Codex worker numbered its approval requests the same way, so when two of them were
+  waiting, the newer request replaced the older one: the inbox showed only the last worker's
+  request (or none, once that one was answered) while the other worker sat at "Waiting for
+  approval". Requests are now unique across agents, so the inbox lists every one and approves
+  the one you select.
+
 ## 0.3.3 — 2026-10-11
 
 **Phone & web view**

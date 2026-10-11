@@ -182,6 +182,13 @@ describe("permission mapping", () => {
     expect(t.resolvePermission(r?.requestId ?? "", option)).toBeUndefined()
   })
 
+  test("request ids are unique across Codex processes (two workers' requests never replace each other)", () => {
+    const one = make().t.serverRequest(1, "item/commandExecution/requestApproval", cmdParams)
+    const two = make().t.serverRequest(1, "item/commandExecution/requestApproval", cmdParams)
+    expect(one?.requestId).toBeDefined()
+    expect(one?.requestId).not.toBe(two?.requestId)
+  })
+
   test("file change approval uses the same decisions", () => {
     const { t } = make()
     const r = t.serverRequest(1, "item/fileChange/requestApproval", { threadId: "thr_1", turnId: "t", itemId: "f1", startedAtMs: 0 })

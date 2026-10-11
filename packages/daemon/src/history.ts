@@ -6,6 +6,7 @@
 import { existsSync } from "node:fs"
 import { formatCost, formatDuration, RunState } from "@batonsh/kernel"
 import type { AgentInfo, BatonEvent } from "@batonsh/protocol"
+import { mdToHtml } from "./md-html.ts"
 import type { Runtime } from "./runtime.ts"
 
 export interface RunSummary {
@@ -208,7 +209,7 @@ function exportHtml(rt: Runtime, runId: string, events: BatonEvent[]): string {
           break
         case "message":
           if (it.role === "assistant" && it.text.trim())
-            rows.push({ ts: it.ts, html: `<div class="ev msg">${who(id)}<div class="txt">${esc(it.text)}</div></div>` })
+            rows.push({ ts: it.ts, html: `<div class="ev msg">${who(id)}<div class="txt md">${mdToHtml(it.text)}</div></div>` })
           break
         case "tool": {
           const diffs = it.diffs
@@ -248,7 +249,7 @@ function exportHtml(rt: Runtime, runId: string, events: BatonEvent[]): string {
     if (e.type === "review.verdict")
       rows.push({
         ts: e.ts,
-        html: `<div class="ev review">✎ review of ${who(e.data.author)} by ${who(e.data.reviewer)}: <b>${esc(e.data.verdict)}</b><div class="txt">${esc(e.data.notes)}</div></div>`,
+        html: `<div class="ev review">✎ review of ${who(e.data.author)} by ${who(e.data.reviewer)}: <b>${esc(e.data.verdict)}</b><div class="txt md">${mdToHtml(e.data.notes)}</div></div>`,
       })
   }
   rows.sort((a, b) => a.ts - b.ts)
@@ -272,7 +273,7 @@ h1{font-size:22px;margin:0 0 6px} .meta{color:var(--muted);font-size:14px} .logo
 .stat b{display:block;font-size:18px} .chip{display:inline-block;border:1px solid;border-radius:999px;padding:2px 10px;margin:2px;font-size:13px}
 .ev{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin:8px 0}
 .ev.bus,.ev.tool{background:transparent;border-style:dashed} .who{font-weight:700} .muted{color:var(--muted)}
-.txt{white-space:pre-wrap;margin-top:4px} code{font:13px ui-monospace,Menlo,monospace}
+.txt{white-space:pre-wrap;margin-top:4px} code{font:13px ui-monospace,Menlo,monospace} .txt.md{white-space:normal} .md p,.md ul,.md ol,.md pre{margin:4px 0} .md code{background:#8882;padding:1px 4px;border-radius:4px} .md pre{background:#8881;padding:8px;border-radius:6px;overflow:auto} .md blockquote{border-left:3px solid #8886;margin:4px 0;padding-left:10px}
 summary{cursor:pointer} .st.completed{color:var(--ok)} .st.failed{color:var(--err)}
 pre{font:12.5px/1.4 ui-monospace,Menlo,monospace;overflow:auto;background:var(--bg);border-radius:8px;padding:8px;margin:6px 0 0}
 .diff .add{color:var(--ok)} .diff .del{color:var(--err)} .diff .ctx{color:var(--muted)} .path{margin-top:8px;font:13px ui-monospace,Menlo,monospace}

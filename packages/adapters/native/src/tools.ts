@@ -5,7 +5,19 @@
 import { mkdirSync, readdirSync, statSync } from "node:fs"
 import { readdir, readFile, stat, writeFile } from "node:fs/promises"
 import { dirname, extname, join, relative } from "node:path"
-import { augmentedPath, diffLines, diffStat, IS_WINDOWS, killProcessTree, runCapture, type ToolContent, type ToolKind, toSlash, which } from "@batonsh/protocol"
+import {
+  augmentedPath,
+  diffLines,
+  diffStat,
+  IS_WINDOWS,
+  killProcessTree,
+  runCapture,
+  shellCommand,
+  type ToolContent,
+  type ToolKind,
+  toSlash,
+  which,
+} from "@batonsh/protocol"
 import { z } from "zod"
 import type { Sandbox } from "./sandbox.ts"
 import { FETCH_MAX_CHARS, FetchRefused, webFetch } from "./webfetch.ts"
@@ -425,11 +437,8 @@ const runCommandTool: BuiltinTool<{ command: string; timeout_ms?: number; descri
  * Git for Windows), otherwise PowerShell on Windows.
  */
 export function shellArgv(command: string): string[] {
-  if (!IS_WINDOWS) return ["bash", "-lc", command]
-  const bash = which("bash")
-  // C:\Windows\System32\bash.exe is WSL's launcher, not a shell for this filesystem
-  if (bash && !/system32/i.test(bash)) return [bash, "-lc", command]
-  return ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command]
+  // bash -l here (login profile: the user's PATH additions); elsewhere the shared choice
+  return IS_WINDOWS ? shellCommand(command) : ["bash", "-lc", command]
 }
 
 export function shellName(): string {

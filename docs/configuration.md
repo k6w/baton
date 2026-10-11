@@ -105,8 +105,27 @@ api_key = "env:OPENROUTER_API_KEY"   # env:VAR · cmd:<shell command> · keychai
 headers = {}
 models = { kimi = "moonshotai/kimi-k2" }   # aliases: model = "kimi"
 
-[roles.reviewer]
-prompt = "Review diffs from other agents. Be specific; run the tests before approving."
+[roles.tester]                    # built-in roles, .baton/roles/*.md and these merge field by field (see roles.md)
+description = "Writes and fixes tests"
+prompt = "Use the fixtures in test/fixtures; never mock the database."
+adapter = "codex"                 # who plays it (default: whoever the lead picks)
+tier = "medium"                   # small | medium | large → [routing]
+access = "write"                  # read-only: Baton refuses its edits, even in yolo
+acceptance = "bun test"           # must pass before its result counts (2 retries)
+skills = ["bun-testing"]          # skills it starts with
+
+[skills]
+dirs = []                         # extra folders of <name>/SKILL.md
+claude = true                     # offer the project's .claude/skills to every agent
+claude_user = false               # and your ~/.claude/skills
+
+[notes]
+enabled = true                    # agents record facts (note) in .baton/notes.md; new workers start with them
+max = 30                          # notes given to each new worker (all stay searchable with recall)
+reviews = true                    # save review findings (changes requested) as notes
+
+[teams]                           # /team <name> [task] starts these
+frontend = [{ role = "frontend", adapter = "claude" }, { role = "tester", adapter = "codex" }]
 
 [budget]
 run_usd = 10                      # interrupt everything at $10 (warn at warn_at × limit)

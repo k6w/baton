@@ -3,6 +3,8 @@
  * following the device. Talks to /api/* with the token from the URL fragment.
  * A plain template (not String.raw): Bun escapes non-ASCII characters in raw templates.
  */
+import { mdToHtml } from "./md-html.ts"
+
 export const REMOTE_PAGE = `<!doctype html>
 <html lang="en">
 <head>
@@ -51,6 +53,10 @@ pre { font: 12.5px/1.4 var(--mono); white-space: pre-wrap; word-break: break-wor
 .btn { border: 1px solid var(--line); background: var(--raised); color: var(--text); font: inherit; font-weight: 600; padding: 8px 14px; border-radius: 10px; }
 .btn.ok { background: var(--ok); border-color: var(--ok); color: #0b1a0b; } .btn.no { color: var(--err); } .btn.pri { background: var(--accent); border-color: var(--accent); color: #fff; }
 .empty { text-align: center; color: var(--subtle); padding: 48px 12px; }
+.md p, .md ul, .md ol, .md pre, .md blockquote { margin: 4px 0; } .md ul, .md ol { padding-left: 20px; }
+.md code { font: 12.5px ui-monospace, Menlo, monospace; background: color-mix(in srgb, var(--line) 45%, transparent); padding: 1px 4px; border-radius: 4px; }
+.md pre { overflow: auto; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--line) 35%, transparent); } .md pre code { background: none; padding: 0; }
+.md blockquote { border-left: 3px solid var(--line); padding-left: 10px; opacity: .85; } .md h3, .md h4, .md h5, .md h6 { margin: 8px 0 4px; font-size: 1em; }
 .feed .it { padding: 6px 0; border-bottom: 1px dashed color-mix(in srgb, var(--line) 60%, transparent); }
 .feed .it:last-child { border-bottom: 0; }
 .who { font-weight: 700; } .you { color: var(--accent); } .lead { color: var(--primary); }
@@ -107,6 +113,8 @@ pre { font: 12.5px/1.4 var(--mono); white-space: pre-wrap; word-break: break-wor
     try { localStorage.setItem(NAME_KEY, me); } catch (e) {}
   }
   var $ = function (id) { return document.getElementById(id); };
+  // agent text is Markdown: the same escaping renderer as HTML export (see md-html.ts)
+  var mdToHtml = ${mdToHtml.toString()};
   var esc = function (s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); };
   var money = function (n) { return n ? "$" + n.toFixed(2) : ""; };
 
@@ -146,7 +154,7 @@ pre { font: 12.5px/1.4 var(--mono); white-space: pre-wrap; word-break: break-wor
 
   function itemHtml(it) {
     if (it.k === "user") return '<div class="it"><span class="who you">' + esc(it.from && it.from !== me ? it.from : "you") + "</span> " + esc(it.text) + "</div>";
-    if (it.k === "text") return '<div class="it ' + (it.role === "thought" ? "thought" : "") + '">' + esc(it.text) + "</div>";
+    if (it.k === "text") return it.role === "thought" ? '<div class="it thought">' + esc(it.text) + "</div>" : '<div class="it md">' + mdToHtml(it.text) + "</div>";
     if (it.k === "bus") return '<div class="it bus"><b>' + esc(it.from) + "</b> → <b>" + esc(it.to) + "</b> " + esc(it.body) + "</div>";
     if (it.k === "error") return '<div class="it err">✗ ' + esc(it.text) + "</div>";
     if (it.k === "note" || it.k === "ask") return '<div class="it note">' + (it.k === "ask" ? "? " : "") + esc(it.text) + "</div>";

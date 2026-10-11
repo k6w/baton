@@ -4,7 +4,19 @@
  * socket, MCP server) are thin wrappers around this class.
  */
 
-import { type BatonConfig, EventStore, gitInfo, projectName, RunState, resolveSecret } from "@batonsh/kernel"
+import {
+  type BatonConfig,
+  EventStore,
+  gitInfo,
+  loadRoles,
+  loadSkills,
+  notesBlock,
+  projectName,
+  RunState,
+  readSkill,
+  resolveSecret,
+  type Skill,
+} from "@batonsh/kernel"
 import {
   type AdapterCapabilities,
   type AgentAdapter,
@@ -18,7 +30,9 @@ import {
   deferred,
   newId,
   type PermissionOption,
+  runCapture,
   type SpawnParams,
+  shellCommand,
   type ToolKind,
 } from "@batonsh/protocol"
 import { Collaboration } from "./collab.ts"
@@ -51,6 +65,10 @@ export interface AgentRuntime {
   turnEdits: Map<string, { added: number; removed: number }>
   /** Why the last turn failed, when Baton knows better than the agent's own summary. */
   failReason?: string
+  /** Acceptance check outcome to append to the next result. */
+  acceptanceNote?: string
+  /** Failed acceptance checks in a row (the worker gets two more tries). */
+  acceptanceTries?: number
   busy: boolean
   closing: boolean
   budgetWarned: boolean
@@ -197,6 +215,31 @@ export class Runtime {
   }
 
   /** Resolve a configured agent profile ("reviewer") or a raw adapter id ("codex"). */
+  /** Roles and skills, read fresh (cheap: a few small files) so edits apply to the next spawn. */
+  roles() {
+    return loadRoles(this.projectRoot, this.config)
+  }
+
+  skills() {
+    return loadSkills(this.projectRoot, this.config)
+  }
+
+  /** The skills section of a worker's instructions: a menu (load_skill) or, without the bus, the full text. */
+  private skillsBlock(names: string[], inline: boolean): string {
+    const catalog = this.skills()
+    const list = names.map((n) => catalog.get(n)).filter((x): x is Skill => !!x)
+    if (inline) {
+      let text = "\n## Skills\n"
+      for (const s of list) {
+        const body = readSkill(s)
+        if (text.length + body.length > 24_000) break
+        text += `\n${body}\n`
+      }
+      return text
+    }
+    return `\n## Skills\nYou have these skills. Load one with the load_skill tool before you start the part of the work it covers:\n${list.map((s) => `- ${s.name}: ${s.description}`).join("\n")}`
+  }
+
   private resolveProfile(ref: string): { adapterId: string; profile?: BatonConfig["agents"][string] } {
     const profile = this.config.agents[ref]
     if (profile) return { adapterId: profile.adapter, profile }
@@ -212,7 +255,10 @@ export class Runtime {
       adoptWorkspace?: { path: string; branch?: string; base?: string }
     },
   ): Promise<AgentInfo> {
-    const { adapterId, profile } = this.resolveProfile(params.adapter)
+    // a role supplies defaults (adapter, model, tier, access, acceptance, skills); explicit params win
+    const role = params.role && !params.isOrchestrator ? this.roles().get(params.role.toLowerCase()) : undefined
+    const adapterRef = params.adapter || role?.adapter || this.config.defaults.worker
+    const { adapterId, profile } = this.resolveProfile(adapterRef)
     const adapter = this.registry.get(adapterId)
     if (!adapter)
       throw new Error(
@@ -237,7 +283,7 @@ export class Runtime {
     }
 
     const agentId = newId("ag")
-    const name = params.isOrchestrator ? "orchestrator" : this.allocateName(adapterId, params.name ?? (profile ? params.adapter : undefined))
+    const name = params.isOrchestrator ? "orchestrator" : this.allocateName(adapterId, params.name ?? (profile ? adapterRef : undefined))
     let detected = await this.registry.detect(adapterId)
     // fail fast and clearly instead of starting a session that dies with "Not logged in" (a profile
     // with its own env / provider brings its own credentials)
@@ -252,10 +298,18 @@ export class Runtime {
       }
       detected = await this.registry.detect(adapterId)
     }
+    const access = params.access ?? role?.access ?? "write"
     const baseApproval = params.approval ?? profile?.approval ?? (params.isOrchestrator ? this.config.orchestrator.approval : this.config.defaults.approval)
-    const approval = effectiveApproval(baseApproval, this.autonomy)
-    const tierModel = params.tier ? this.config.routing[adapterId]?.[params.tier] : undefined
-    const model = params.model ?? profile?.model ?? tierModel ?? (params.isOrchestrator ? this.config.orchestrator.model : undefined)
+    const approval = capApproval(effectiveApproval(baseApproval, this.autonomy), access)
+    const tier = params.tier ?? role?.tier
+    const tierModel = tier ? this.config.routing[adapterId]?.[tier] : undefined
+    const model = params.model ?? role?.model ?? profile?.model ?? tierModel ?? (params.isOrchestrator ? this.config.orchestrator.model : undefined)
+    // skills: the role's plus any asked for; unknown names are reported, not fatal
+    const catalog = this.skills()
+    const wanted = [...new Set([...(role?.skills ?? []), ...(params.skills ?? [])].map((x) => x.toLowerCase()))]
+    const skills = wanted.filter((x) => catalog.has(x))
+    const missingSkills = wanted.filter((x) => !catalog.has(x))
+    const acceptance = params.acceptance?.trim() || role?.acceptance?.trim() || undefined
     const info: AgentInfo = {
       agentId,
       name,
@@ -268,6 +322,9 @@ export class Runtime {
       label: params.label ?? profile?.label,
       parentId: params.parentId,
       isOrchestrator: params.isOrchestrator,
+      ...(skills.length ? { skills } : {}),
+      ...(access === "read-only" ? { access } : {}),
+      ...(acceptance ? { acceptance } : {}),
     }
     const rt: AgentRuntime = {
       info,
@@ -291,10 +348,13 @@ export class Runtime {
       openTools: new Set(),
     }
     this.agents.set(agentId, rt)
+    this.policy.setAccess(agentId, access)
     this.emit({ type: "agent.spawned", data: info }, agentId)
+    if (missingSkills.length)
+      this.emit({ type: "log", data: { level: "warn", message: `[${name}] unknown skills: ${missingSkills.join(", ")} (baton skills lists them)` } }, agentId)
 
     const peers = [...this.agents.values()].filter((a) => a !== rt && !a.closing).map((a) => a.info.name)
-    const rolePrompt = info.role ? this.config.roles[info.role]?.prompt : undefined
+    const rolePrompt = role?.prompt || (info.role ? this.config.roles[info.role]?.prompt : undefined)
     const playbook = loadPlaybook(params.isOrchestrator ? this.config.orchestrator.mode : "worker", this.projectRoot)
     // agents that can't reach Baton's bus (no MCP: remote A2A agents, plain CLIs) get a short brief
     // instead of a playbook full of tools they don't have
@@ -306,7 +366,16 @@ export class Runtime {
       busless ? undefined : identityBlock({ name, adapter: adapterId, isOrchestrator: params.isOrchestrator, peers }),
       params.isOrchestrator ? this.config.orchestrator.instructions : undefined,
       params.isOrchestrator ? workspacePolicy(this.config) : undefined,
-      rolePrompt ? `\n## Role: ${info.role}\n${rolePrompt}` : undefined,
+      rolePrompt ? `\n## Your role: ${info.role}\n${rolePrompt}` : undefined,
+      access === "read-only"
+        ? "\n## Read-only\nYou may read files and run commands, but not edit files: Baton refuses your edits. Report what should change instead."
+        : undefined,
+      params.instructions?.trim() ? `\n## Instructions for you\n${params.instructions.trim()}` : undefined,
+      acceptance
+        ? `\n## Done means\nBaton runs \`${acceptance}\` in your workspace when you finish; your result counts only if it passes. Run it yourself before you report.`
+        : undefined,
+      skills.length ? this.skillsBlock(skills, busless) : undefined,
+      this.config.notes.enabled ? notesBlock(this.projectRoot, this.config.notes.max) : undefined,
     ]
       .filter(Boolean)
       .join("\n")
@@ -339,6 +408,18 @@ export class Runtime {
       }
     } else this.emit({ type: "workspace.created", data: { path: info.cwd, mode: "shared" } }, agentId)
     if (params.taskId) this.collab.assignTask(params.taskId, agentId)
+    // the files it owns: claimed for it, so others are warned off (and told who to talk to)
+    if (params.files?.length) {
+      const c = this.collab.claim(agentId, params.files)
+      if (!c.ok)
+        this.emit(
+          {
+            type: "orch.note",
+            data: { level: "warn", text: `${name}: ${c.conflicts.map((x) => `${x.globs.join(", ")} already claimed by ${x.agent}`).join("; ")}` },
+          },
+          agentId,
+        )
+    }
 
     const ac = new AbortController()
     try {
@@ -426,7 +507,12 @@ export class Runtime {
       case "turn.interrupted":
         rt.busy = false
         rt.openTools.clear()
-        this.reportResult(rt, stored.type === "turn.interrupted" ? "interrupted" : stored.data.stopReason === "error" ? "failed" : "ok")
+        {
+          const outcome = stored.type === "turn.interrupted" ? "interrupted" : stored.data.stopReason === "error" ? "failed" : "ok"
+          // a worker with an acceptance check is done only when the check passes
+          if (outcome === "ok" && rt.info.acceptance && rt.resultTo.size && !rt.closing) void this.checkAcceptance(rt)
+          else this.reportResult(rt, outcome)
+        }
         queueMicrotask(() => this.flushInbox(rt))
         break
       case "agent.status":
@@ -821,13 +907,73 @@ export class Runtime {
       ws?.mode === "worktree" && (rt.turnDiff.added || rt.turnDiff.removed)
         ? `\n[changes are in ${rt.info.name}'s own worktree — call merge("${rt.info.name}") to bring them into the project]`
         : ""
-    const body = `result ${outcome}${diff}\n${text.length > 4000 ? `${text.slice(0, 4000)}…` : text}${where}`
+    const check = rt.acceptanceNote ? `\n${rt.acceptanceNote}` : ""
+    rt.acceptanceNote = undefined
+    const body = `result ${outcome}${diff}\n${text.length > 4000 ? `${text.slice(0, 4000)}…` : text}${check}${where}`
     for (const t of targets) {
       if (!this.agents.get(t) || this.agents.get(t)?.closing) continue
       try {
         this.send({ from: rt.info.agentId, to: t, body, kind: "result", delivery: "queue" })
       } catch {}
     }
+  }
+
+  /**
+   * Run the worker's acceptance check in its workspace (through the policy, like any command).
+   * Pass → its result goes out with "acceptance ✓". Fail → the worker gets the output and two
+   * more tries; after that the result goes out as failed.
+   */
+  private async checkAcceptance(rt: AgentRuntime): Promise<void> {
+    const cmd = rt.info.acceptance as string
+    const id = rt.info.agentId
+    let d = this.policy.decide({ agentId: id, agentName: rt.info.name, adapter: rt.info.adapter, title: `Bash(${cmd})`, kind: "execute", detail: cmd })
+    if (d === "ask") d = (await this.askUser(id, `run ${rt.info.name}'s acceptance check?`, cmd)) ? "allow" : "deny"
+    if (d === "deny") {
+      rt.acceptanceNote = `acceptance check \`${cmd}\` was not run (not allowed)`
+      return this.reportResult(rt, "ok")
+    }
+    const toolCallId = newId("acc")
+    this.emit({ type: "tool.call", data: { toolCallId, kind: "execute", name: "acceptance", title: `Acceptance: ${cmd}`, status: "in_progress" } }, id)
+    const r = await runCapture(shellCommand(cmd), { cwd: rt.info.cwd, timeoutMs: 10 * 60_000, env: this.collab.workspaces.env(id) }).catch((e: unknown) => ({
+      code: null as number | null,
+      stdout: "",
+      stderr: e instanceof Error ? e.message : String(e),
+    }))
+    if (rt.closing) return
+    const output = `${r.stdout}${r.stderr}`.trim().split("\n").slice(-40).join("\n")
+    const ok = r.code === 0
+    this.emit(
+      {
+        type: "tool.update",
+        data: {
+          toolCallId,
+          status: ok ? "completed" : "failed",
+          content: [{ type: "terminal", terminalId: toolCallId, command: cmd, output, exitCode: r.code }],
+          summary: ok ? "passed" : `failed (exit ${r.code ?? "timeout"})`,
+        },
+      },
+      id,
+    )
+    if (ok) {
+      rt.acceptanceTries = 0
+      rt.acceptanceNote = `acceptance ✓ \`${cmd}\` passed`
+      return this.reportResult(rt, "ok")
+    }
+    rt.acceptanceTries = (rt.acceptanceTries ?? 0) + 1
+    if (rt.acceptanceTries <= 2) {
+      try {
+        this.send({
+          from: "baton",
+          to: id,
+          kind: "chat",
+          body: `Your acceptance check failed: \`${cmd}\` exited ${r.code ?? "(timed out)"}.\n\n${output}\n\nFix it, run the check yourself, then finish again.`,
+        })
+        return
+      } catch {}
+    }
+    rt.acceptanceTries = 0
+    rt.acceptanceNote = `acceptance ✗ \`${cmd}\` still failing (exit ${r.code ?? "timeout"}):\n${output.split("\n").slice(-15).join("\n")}`
+    this.reportResult(rt, "failed")
   }
 
   /** Same tool call N times in a row → the agent is probably looping. */
@@ -1096,7 +1242,7 @@ export class Runtime {
     if (changed) this.emit({ type: "run.autonomy", data: { mode } })
     for (const rt of this.agents.values()) {
       if (rt.closing || !rt.session) continue
-      const next = effectiveApproval(rt.baseApproval, mode)
+      const next = capApproval(effectiveApproval(rt.baseApproval, mode), rt.info.access ?? "write")
       if (next === rt.info.approval) continue
       if (!rt.session.setApproval) {
         pending.push(rt.info.name)
@@ -1162,6 +1308,11 @@ function workspacePolicy(c: BatonConfig): string {
 }
 
 /** Approval an agent runs with under a run-wide autonomy level. */
+/** Read-only agents always ask (so Baton's policy can refuse their edits), whatever the autonomy. */
+export function capApproval(mode: ApprovalMode, access: "read-only" | "write"): ApprovalMode {
+  return access === "read-only" ? "ask" : mode
+}
+
 export function effectiveApproval(base: ApprovalMode, autonomy: Autonomy): ApprovalMode {
   switch (autonomy) {
     case "ask":

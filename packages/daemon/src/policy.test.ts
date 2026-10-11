@@ -9,6 +9,9 @@ describe("policy", () => {
     expect(p.decide(req('baton: Allow the baton MCP server to run tool "spawn_agent"?', "other"))).toBe("allow")
     expect(p.decide(req("baton.spawn_agent", "other"))).toBe("allow")
     expect(p.decide(req("mcp__baton__send_message", "other"))).toBe("allow")
+    expect(p.decide(req("baton - spawn_agent (MCP)", "other"))).toBe("allow")
+    // a shell command that merely mentions it is not Baton's tool
+    expect(p.decide(req("baton - spawn_agent (MCP) && rm -rf /", "other"))).toBe("ask")
     expect(p.decide(req("baton_report_progress", "other"))).toBe("allow")
     expect(p.decide(req("rebaton.x", "other"))).toBe("ask")
     expect(p.decide(req("Bash(echo baton.x)", "execute"))).toBe("ask")

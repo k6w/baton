@@ -1,3 +1,4 @@
+import { addNote } from "@batonsh/kernel"
 /**
  * Collaboration layer on top of the runtime: per-agent workspaces (git worktrees), predicted
  * conflicts, the merge queue, file leases, cross-vendor reviews and the task plan.
@@ -355,10 +356,13 @@ export class Collaboration {
     if (preferred) return preferred
     if (this.rt.config.workspace.reviewer) return this.rt.config.workspace.reviewer
     const authorVendor = vendorOf(author.info.adapter)
-    // only agents that can actually run here (installed and signed in)
+    // only agents that can actually run here (installed and signed in); confirmed sign-ins before
+    // ones whose status is unknown (they may not even be able to call submit_review)
+    const usable: { id: string; sure: boolean }[] = []
     for (const id of VENDOR_ORDER)
-      if (vendorOf(id) !== authorVendor && id !== "mock" && this.rt.registry.get(id) && !(await this.rt.registry.unusable(id))) return id
-    return author.info.adapter
+      if (vendorOf(id) !== authorVendor && id !== "mock" && this.rt.registry.get(id) && !(await this.rt.registry.unusable(id)))
+        usable.push({ id, sure: (await this.rt.registry.detect(id))?.auth === "ok" })
+    return (usable.find((u) => u.sure) ?? usable[0])?.id ?? author.info.adapter
   }
 
   /** The latest review of an agent's work, and whether it covers the current changes. */
@@ -401,7 +405,8 @@ When done, call the baton tool submit_review with verdict "approve" or "changes_
       const info = await this.rt.spawn({
         adapter,
         label: `review ${author.info.name}`,
-        role: this.rt.config.roles.reviewer ? "reviewer" : undefined,
+        // the built-in (or your) reviewer role: read-only, with review instructions
+        role: "reviewer",
         parentId: opts.requester,
         cwd: wsAny.path,
         isolation: "shared",
@@ -422,6 +427,14 @@ When done, call the baton tool submit_review with verdict "approve" or "changes_
     this.rt.emit({ type: "review.verdict", data: { reviewId: review.reviewId, author: review.author, reviewer: reviewerId, verdict, notes } }, review.author)
     const author = this.rt.agents.get(review.author)
     const reviewer = this.rt.agents.get(reviewerId)?.info.name ?? "reviewer"
+    // what one reviewer had to point out, the next worker shouldn't repeat
+    if (verdict === "changes_requested" && this.rt.config.notes.enabled && this.rt.config.notes.reviews) {
+      const finding = notes
+        .split("\n")
+        .map((l) => l.replace(/^[-*\d.)\s]+/, "").trim())
+        .find((l) => l.length > 12)
+      if (finding) addNote(this.rt.projectRoot, reviewerName(this.rt, reviewerId), `review finding: ${finding.slice(0, 220)}`)
+    }
     if (verdict === "changes_requested" && author && !author.closing) {
       try {
         this.rt.send({ from: reviewerId, to: review.author, kind: "request", delivery: "queue", body: `Review from ${reviewer}: changes requested.\n${notes}` })
@@ -488,6 +501,8 @@ When done, call the baton tool submit_review with verdict "approve" or "changes_
 }
 
 /** Minimal glob support: `*` (segment), `**` (any depth), `?`; plain paths match prefixes (dirs). */
+const reviewerName = (rt: Runtime, id: string) => rt.agents.get(id)?.info.name ?? "reviewer"
+
 export function matchGlob(glob: string, path: string): boolean {
   const g = glob.replace(/^\.\//, "")
   const p = path.replace(/^\.\//, "")

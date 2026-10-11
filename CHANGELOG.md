@@ -5,6 +5,31 @@ All notable changes to Baton. Versions follow [semver](https://semver.org); the 
 
 ## Unreleased
 
+## 0.3.0 — 2026-10-11
+
+**Roles, skills and team memory**
+- Roles: tester, reviewer, debugger, refactorer, docs, security, researcher and frontend are built
+  in, plus your own in `.baton/roles/*.md` (`baton role new`). A role brings instructions, an
+  access level, a model size, an agent, an acceptance check and skills. `/spawn tester`, `/roles`.
+- Worker specs: the lead's `spawn_agent` takes `instructions`, `skills`, `files` (claimed for the
+  worker), `acceptance` and `access`. Its instructions now include a brief template with examples.
+- Acceptance checks: Baton runs the command when the worker finishes. The work counts only when it
+  passes, with two retries on failure, and the check goes through your approval rules.
+- Read-only workers can't edit files, even in YOLO. Reviews now use the reviewer role.
+- Skills (Agent Skills layout, from `.baton/skills` and `.claude/skills`) for every agent, not just
+  Claude: a menu in their instructions and `load_skill` to read one. `baton skill new`, `/skills`.
+- Team notes in `.baton/notes.md`: agents `note` and `recall` facts, new workers start with them,
+  and review findings are kept. `/notes`, `baton notes`.
+- Saved teams: `[teams]` plus `/team <name> [task]`.
+- `pick_agent` suggests a role. Cards show the worker's role, and `r/o` for read-only workers.
+- Reviews prefer agents confirmed to be signed in.
+
+**Markdown everywhere**
+- Agent messages render as Markdown in the TUI (bold, italics, code, lists, task lists, quotes,
+  tables, code blocks, links) instead of showing `**` and backticks.
+- The phone/web view and HTML exports render it too, with a renderer that escapes everything
+  first, so agent text can't inject markup.
+
 ## 0.2.0 — 2026-10-11
 
 **Windows**

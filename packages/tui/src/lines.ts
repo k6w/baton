@@ -10,6 +10,7 @@ import type { FeedItem } from "@batonsh/kernel"
 import { formatClock, formatDuration, formatTokens } from "@batonsh/kernel"
 import type { AgentView } from "@batonsh/protocol"
 import type { ResolvedTheme } from "@batonsh/themes"
+import { renderMarkdown } from "./markdown.ts"
 
 export interface Seg {
   text: string
@@ -293,15 +294,17 @@ export function renderItem(it: FeedItem, ctx: RenderCtx, out: Line[]): void {
       }
       const text = it.text.trim()
       if (!text) return
-      const lines = wrap(text, w - 2)
+      // agents answer in Markdown: render it (bold, code, lists, tables, …) instead of showing ** and `
+      const lines = renderMarkdown(text, w - 2, t)
       const cut = ctx.compact && lines.length > 4
       const shown = cut ? lines.slice(-4) : lines
       shown.forEach((l, i) => {
         out.push({
+          ...(l.bg ? { bg: l.bg } : {}),
           segs: [
             { text: i === 0 ? (claude ? "● " : "• ") : "  ", fg: claude ? t.text : t.textMuted },
             ...(i === 0 && cut ? [{ text: "… ", fg: t.textMuted }] : []),
-            { text: l, fg: t.text },
+            ...l.segs,
           ],
         })
       })

@@ -21,6 +21,23 @@ const KIND_WORDS: [TaskKind, RegExp][] = [
   ["feature", /\badd|implement|build|create|support|introduce|new\b/i],
 ]
 
+/** The built-in role that fits a kind of task (pick_agent suggests it). */
+export const ROLE_FOR_KIND: Partial<Record<TaskKind, string>> = {
+  tests: "tester",
+  bugfix: "debugger",
+  refactor: "refactorer",
+  docs: "docs",
+  ui: "frontend",
+  review: "reviewer",
+  research: "researcher",
+}
+
+/** A role for a task: security work gets the auditor, otherwise by kind. */
+export function roleFor(text: string): string | undefined {
+  if (/\bsecurity|vulnerab|exploit|auth[nz]?\b|injection|xss|csrf|secret/i.test(text)) return "security"
+  return ROLE_FOR_KIND[classifyTask(text)]
+}
+
 /** Rough kind of a task from its label / prompt. */
 export function classifyTask(text: string): TaskKind {
   for (const [kind, re] of KIND_WORDS) if (re.test(text)) return kind

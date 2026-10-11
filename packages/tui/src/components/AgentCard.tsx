@@ -121,7 +121,8 @@ export function AgentCard(props: { agentId: string; width: number; height: numbe
       return [{ text: `${st.glyph} ${word}`, fg: t[st.token], bold: true }]
     }
     const pct = a.progress !== undefined && a.status === "busy" ? ` ${Math.round(a.progress * 100)}%` : ""
-    const text = a.label ?? a.role ?? ""
+    // the role is in the title; the label says what it is doing
+    const text = a.label && a.label !== a.role ? a.label : a.role ? "" : (a.label ?? "")
     return text || pct ? [{ text: `${text}${pct}`, fg: t.textMuted }] : []
   }
 
@@ -135,7 +136,12 @@ export function AgentCard(props: { agentId: string; width: number; height: numbe
       accent={look()?.color}
       icon={look() ? { text: look()!.glyph, fg: look()!.color, bold: true } : undefined}
       logo={look()?.logo}
-      title={[{ text: agent()?.name ?? "?", fg: ui.theme().text, bold: true }]}
+      title={[
+        { text: agent()?.name ?? "?", fg: ui.theme().text, bold: true },
+        // its role (and r/o for read-only workers) next to the name
+        ...(agent()?.role ? [{ text: ` ${agent()?.role}`, fg: ui.theme().textSubtle }] : []),
+        ...(agent()?.access === "read-only" ? [{ text: " r/o", fg: ui.theme().info }] : []),
+      ]}
       right={label()}
       onMouseDown={() => {
         props.onSelect?.()

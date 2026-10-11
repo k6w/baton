@@ -1,5 +1,5 @@
 /** Input completion: @mentions, /commands and their arguments. */
-import type { BatonConfig, RunState } from "@batonsh/kernel"
+import { type BatonConfig, loadRoles, type RunState } from "@batonsh/kernel"
 import { FRAME_STYLES, listThemes, STYLES } from "@batonsh/themes"
 
 export interface Completion {
@@ -38,7 +38,11 @@ export const LOCAL_COMMANDS: Record<string, string> = {
 }
 
 export const REMOTE_COMMANDS: Record<string, string> = {
-  spawn: "/spawn <adapter|profile> [count] [label…]",
+  spawn: "/spawn [role] [adapter] [count] [label…] — a tester, a reviewer, 3 codex agents…",
+  roles: "/roles — what workers can be: tester, reviewer, debugger, … and yours",
+  skills: "/skills — skills workers can load (.baton/skills)",
+  notes: "/notes [add <text>] — what the team learned about this project",
+  team: "/team <name> [task] — start a saved team ([teams] in the config)",
   kill: "/kill <name|all>",
   interrupt: "/interrupt <name|all>",
   mode: "/mode <orchestrator|…>",
@@ -111,6 +115,7 @@ export function completions(input: string, run: RunState, config: BatonConfig): 
     switch (c) {
       case "spawn":
         options = [
+          ...[...loadRoles(run.projectRoot || process.cwd(), config).values()].map((r) => ({ v: r.name, d: `role · ${r.description}` })),
           ...Object.keys(config.agents).map((k) => ({ v: k, d: `profile → ${config.agents[k]?.adapter}` })),
           ...KNOWN_ADAPTERS.map((v) => ({ v, d: "adapter" })),
         ]
@@ -134,6 +139,12 @@ export function completions(input: string, run: RunState, config: BatonConfig): 
         break
       case "recipe":
         options = RECIPES.map((r) => ({ v: r[0], d: r[1] }))
+        break
+      case "team":
+        options = Object.entries(config.teams ?? {}).map(([k, m]) => ({ v: k, d: m.map((x) => x.role ?? x.adapter ?? "worker").join(", ") }))
+        break
+      case "notes":
+        options = [{ v: "add", d: "add a note every new worker starts with" }]
         break
       case "plan":
         options = [

@@ -4,7 +4,7 @@
  * the per-agent token in the URL path is the caller's identity.
  */
 
-import { formatCost, formatTokens } from "@batonsh/kernel"
+import { addNote, formatCost, formatTokens, readSkill, roleFor, searchNotes } from "@batonsh/kernel"
 import { BATON_VERSION } from "@batonsh/protocol"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"
@@ -144,23 +144,87 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime, signal?: Abort
     (a) => guard(() => ok(`review submitted for ${rt.collab.submitReview(me, a.verdict, a.notes).author}`)),
   )
 
+  // ───────────── skills and team notes (every agent) ─────────────
+  server.registerTool(
+    "list_skills",
+    { description: "List the skills available in this project (name and what each is for). Load one with load_skill.", inputSchema: {} },
+    () =>
+      guard(() => {
+        const skills = [...rt.skills().values()]
+        if (!skills.length) return ok("(no skills: add folders with a SKILL.md to .baton/skills/)")
+        return ok(skills.map((x) => `- ${x.name}: ${x.description}`).join("\n"))
+      }),
+  )
+
+  server.registerTool(
+    "load_skill",
+    {
+      description: "Load a skill's full instructions (and the list of files it comes with). Use it before the part of the work the skill covers.",
+      inputSchema: { name: z.string() },
+    },
+    (a) =>
+      guard(() => {
+        const skill = rt.skills().get(a.name.toLowerCase())
+        if (!skill) return fail(`no skill "${a.name}" (list_skills shows them)`)
+        rt.emit({ type: "log", data: { level: "info", message: `[${caller.info.name}] loaded skill ${skill.name}` } }, me)
+        return ok(readSkill(skill))
+      }),
+  )
+
+  if (rt.config.notes.enabled) {
+    server.registerTool(
+      "note",
+      {
+        description:
+          "Save a short fact about this project for the whole team (and future agents): conventions, gotchas, commands, decisions. One sentence; not progress updates.",
+        inputSchema: { text: z.string().describe("e.g. 'integration tests need DB_URL=postgres://localhost/test'") },
+      },
+      (a) => guard(() => ok(addNote(rt.projectRoot, caller.info.name, a.text) ? "noted" : "already noted")),
+    )
+    server.registerTool(
+      "recall",
+      {
+        description: "Search the team notes (facts earlier agents recorded about this project). Without a query: all of them.",
+        inputSchema: { query: z.string().optional() },
+      },
+      (a) =>
+        guard(() => {
+          const found = searchNotes(rt.projectRoot, a.query)
+          return ok(found.length ? found.map((n) => `- ${n.text}${n.author ? ` (${n.author})` : ""}`).join("\n") : "(no matching notes)")
+        }),
+    )
+  }
+
   if (isLead || rt.config.budget.max_depth > 0) {
     server.registerTool(
       "spawn_agent",
       {
-        description: `Start a new coding agent. adapter: one of ${rt.registry
-          .list()
-          .map((a) => a.id)
-          .join(
-            ", ",
-          )} or a configured profile name (${Object.keys(rt.config.agents).join(", ") || "none"}). If \`task\` is given it starts working immediately and its result is reported back to you.`,
+        description: (() => {
+          const roles = [...rt.roles().values()]
+          const skills = [...rt.skills().values()]
+          return `Start a new coding agent. adapter: one of ${rt.registry
+            .list()
+            .map((x) => x.id)
+            .join(
+              ", ",
+            )} or a configured profile (${Object.keys(rt.config.agents).join(", ") || "none"}); omitted → the role's adapter or ${rt.config.defaults.worker}. With \`task\` it starts at once and its result comes back to you.
+Roles (role:): ${roles.map((r) => `${r.name}${r.access === "read-only" ? " [read-only]" : ""} — ${r.description}`).join("; ")}.${
+            skills.length ? `\nSkills (skills:): ${skills.map((x) => `${x.name} — ${x.description}`).join("; ")}.` : ""
+          }
+Give each worker what it needs to succeed: a role, the files it owns, an acceptance command that proves it is done, and instructions only it needs.`
+        })(),
         inputSchema: {
-          adapter: z.string(),
+          adapter: z.string().optional().describe("Which agent CLI (omit to use the role's or the default worker)"),
           task: z.string().optional(),
           name: z.string().optional(),
           label: z.string().optional().describe("2-3 word task label shown on the agent's card"),
           model: z.string().optional(),
-          role: z.string().optional(),
+          role: z.string().optional().describe("A role from the list (tester, reviewer, debugger, …): instructions, access and defaults for this kind of work"),
+          instructions: z.string().optional().describe("Extra instructions for this agent only (conventions, constraints, context it needs)"),
+          skills: z.array(z.string()).optional().describe("Skills it starts with (it loads them with load_skill)"),
+          files: z.array(z.string()).optional().describe("Files / globs it owns: claimed for it so others are warned off"),
+          acceptance: z.string().optional().describe("A command that must pass before its result counts (e.g. 'bun test src/auth'). Baton runs it."),
+          access: z.enum(["read-only", "write"]).optional().describe("read-only: may not edit files (reviews, research, audits)"),
           count: z.number().int().min(1).max(10).optional().describe("Spawn several identical agents"),
           task_id: z.string().optional().describe("Plan task this agent works on (from plan_tasks)"),
           tier: z
@@ -195,7 +259,12 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime, signal?: Abort
           const names: string[] = []
           for (let i = 0; i < n; i++) {
             const info = await rt.spawn({
-              adapter: a.adapter,
+              adapter: a.adapter ?? "",
+              instructions: a.instructions,
+              skills: a.skills,
+              files: a.files,
+              acceptance: a.acceptance,
+              access: a.access,
               name: a.name && n > 1 ? `${a.name}-${i + 1}` : a.name,
               label: a.label,
               model: a.model,
@@ -208,12 +277,32 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime, signal?: Abort
             })
             names.push(info.name)
           }
-          return ok(`spawned: ${names.join(", ")}${a.task ? " (task dispatched)" : ""}`)
+          const roleNote = a.role && !rt.roles().has(a.role.toLowerCase()) ? ` (note: no role "${a.role}" is defined; list_roles shows them)` : ""
+          return ok(`spawned: ${names.join(", ")}${a.task ? " (task dispatched)" : ""}${roleNote}`)
         }),
     )
   }
 
   if (isLead) {
+    server.registerTool(
+      "list_roles",
+      {
+        description: "The roles you can give workers (spawn_agent role:), with what each is for, its access, model size, acceptance check and skills.",
+        inputSchema: {},
+      },
+      () =>
+        guard(() =>
+          ok(
+            [...rt.roles().values()]
+              .map(
+                (r) =>
+                  `- ${r.name}: ${r.description}${r.access === "read-only" ? " · read-only" : ""}${r.tier ? ` · ${r.tier}` : ""}${r.adapter ? ` · ${r.adapter}` : ""}${r.acceptance ? ` · done when \`${r.acceptance}\` passes` : ""}${r.skills?.length ? ` · skills: ${r.skills.join(", ")}` : ""}${r.source !== "builtin" ? ` (${r.source})` : ""}`,
+              )
+              .join("\n"),
+          ),
+        ),
+    )
+
     server.registerTool(
       "pick_agent",
       {
@@ -225,8 +314,10 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime, signal?: Abort
         guard(async () => {
           const { kind, picks } = await pickForTask(rt, a.task, a.candidates)
           const lines = picks.map((p, i) => `${i + 1}. ${p.adapter}${p.model ? ` (${p.model})` : ""} — ${p.why}`)
+          const role = roleFor(a.task)
+          const roleLine = role && rt.roles().has(role) ? ` · suggested role: ${role}` : ""
           return ok(
-            `task kind: ${kind} · suggested tier: ${picks[0]?.tier ?? "medium"}\n${lines.join("\n")}\nPrefer a different vendor than the author for reviews.`,
+            `task kind: ${kind} · suggested tier: ${picks[0]?.tier ?? "medium"}${roleLine}\n${lines.join("\n")}\nPrefer a different vendor than the author for reviews.`,
           )
         }),
     )

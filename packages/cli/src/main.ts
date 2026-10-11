@@ -18,11 +18,12 @@
  *   baton export <run>     a run as Markdown (--format html for a shareable page, jsonl for raw events)
  *   baton daemon           run the daemon in the foreground (normally started automatically)
  */
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { basename, join, resolve } from "node:path"
 import { runDaemonProcess, socketPathFor, startDaemon } from "@batonsh/daemon"
 import {
+  addNote,
   BatonConfig,
   configDir,
   configJsonSchema,
@@ -30,7 +31,11 @@ import {
   findProjectRoot,
   getPath,
   loadConfig,
+  loadRoles,
+  loadSkills,
+  notesPath,
   projectPaths,
+  readNotes,
   revokeTrust,
   trustEntries,
 } from "@batonsh/kernel"
@@ -407,6 +412,91 @@ function loginCommand(a: { login?: string[]; authHint?: string; path?: string })
  * `baton login [agent]`: run that agent's own interactive sign-in (Claude Code's, Codex's, …).
  * Baton never sees the credentials — each CLI stores its own login, and Baton runs the CLI.
  */
+async function cmdRoles(args: Args) {
+  const root = findProjectRoot(process.cwd())
+  if (args._[0] === "new") {
+    const name = (args._[1] ?? "").toLowerCase()
+    if (!/^[a-z0-9][a-z0-9_.-]{0,63}$/.test(name)) throw new Error("usage: baton role new <name>   (letters, digits, - _ .)")
+    const dir = join(root, ".baton", "roles")
+    const file = join(dir, `${name}.md`)
+    if (existsSync(file)) throw new Error(`${file} already exists`)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      file,
+      `---
+description: What this role is for, in one line (the lead sees it)
+# adapter: codex          # which agent plays it (default: the lead decides)
+# tier: medium            # small | medium | large: model size via [routing]
+# access: write           # read-only: may not edit files
+# acceptance: bun test    # a command that must pass before its work counts
+# skills: [my-skill]      # skills it starts with (.baton/skills/<name>/SKILL.md)
+---
+You are the team's ${name}.
+
+- What you own and what you don't touch.
+- How this project does things (conventions, commands, where things live).
+- What "done" means, and what to report back.
+`,
+    )
+    console.log(`${c.green("✓")} ${file}\n${c.dim(`edit it, then: /spawn ${name} in the app (or the lead picks it)`)}`)
+    return
+  }
+  const loaded = loadConfig({ projectRoot: root })
+  const roles = [...loadRoles(root, loaded.config).values()]
+  for (const r of roles)
+    console.log(
+      `  ${c.bold(r.name.padEnd(13))} ${r.description}${r.access === "read-only" ? c.dim(" · read-only") : ""}${r.tier ? c.dim(` · ${r.tier}`) : ""}${r.adapter ? c.dim(` · ${r.adapter}`) : ""}${r.source !== "builtin" ? c.dim(` · ${r.source}`) : ""}`,
+    )
+  console.log(c.dim("\n  /spawn <role> in the app · baton role new <name> adds one (.baton/roles/<name>.md)"))
+}
+
+async function cmdSkills(args: Args) {
+  const root = findProjectRoot(process.cwd())
+  if (args._[0] === "new") {
+    const name = (args._[1] ?? "").toLowerCase()
+    if (!/^[a-z0-9][a-z0-9_.-]{0,63}$/.test(name)) throw new Error("usage: baton skill new <name>   (letters, digits, - _ .)")
+    const dir = join(root, ".baton", "skills", name)
+    if (existsSync(join(dir, "SKILL.md"))) throw new Error(`${join(dir, "SKILL.md")} already exists`)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      join(dir, "SKILL.md"),
+      `---
+name: ${name}
+description: When to use this skill, in one line (agents decide from this whether to load it)
+---
+# ${name}
+
+Step-by-step instructions an agent follows for this kind of work:
+
+1. …
+2. …
+
+Put examples, templates or scripts next to this file; the agent sees the list and can read them.
+`,
+    )
+    console.log(`${c.green("✓")} ${join(dir, "SKILL.md")}\n${c.dim("workers load it with load_skill; the lead can hand it out with spawn_agent(skills)")}`)
+    return
+  }
+  const loaded = loadConfig({ projectRoot: root })
+  const skills = [...loadSkills(root, loaded.config).values()]
+  if (!skills.length) return console.log(c.dim("no skills yet: baton skill new <name> (or add folders with a SKILL.md to .baton/skills/)"))
+  for (const sk of skills) console.log(`  ${c.bold(sk.name.padEnd(18))} ${sk.description}${c.dim(` · ${sk.source}`)}`)
+}
+
+async function cmdNotes(args: Args) {
+  const root = findProjectRoot(process.cwd())
+  if (args._[0] === "add") {
+    const text = args._.slice(1).join(" ").trim()
+    if (!text) throw new Error('usage: baton notes add "<fact the next agent should know>"')
+    console.log(addNote(root, defaultUser(), text) ? `${c.green("✓")} noted` : c.dim("already noted"))
+    return
+  }
+  const notes = readNotes(root)
+  if (!notes.length) return console.log(c.dim('no team notes yet: baton notes add "…" (agents add them with the note tool)'))
+  for (const n of notes) console.log(`  • ${n.text}${n.author ? c.dim(`  (${n.author}${n.date ? `, ${n.date}` : ""})`) : ""}`)
+  console.log(c.dim(`\n  ${notesPath(root)}`))
+}
+
 async function cmdUpdate(args: Args) {
   const check = !!args.flags.check
   const version = typeof args._[0] === "string" ? args._[0] : undefined
@@ -675,6 +765,7 @@ ${b("Commands")}
   baton a2a [--stop]    serve this team as an A2A agent (other agents send it tasks)
   baton login [agent]   sign in to an agent with its own login (Claude Code, Codex, OpenCode, …)
   baton update [--check]  update Baton to the latest release (verified download)
+  baton roles | skills | notes   what workers can be, know and remember (role new · skill new · notes add)
   baton issue <n>       start with a GitHub issue        baton pr [-y]         PR from what the run merged
   baton replay [run]    watch a past run play back (space pause · , . moments · - + speed)
   baton config get|explain|path|schema|defaults            baton theme list|set <name>
@@ -783,6 +874,14 @@ async function main() {
     case "update":
     case "upgrade":
       return cmdUpdate(sub)
+    case "roles":
+    case "role":
+      return cmdRoles(sub)
+    case "skills":
+    case "skill":
+      return cmdSkills(sub)
+    case "notes":
+      return cmdNotes(sub)
     case "protocol":
       return cmdProtocol()
     case "a2a":

@@ -45,6 +45,19 @@ The exit code is `0` when the run finished cleanly and `1` when it failed or tim
 | `baton agents` | List the agent tools Baton found, with versions and sign-in status. |
 | `baton login [agent]` | Run an agent's own sign-in (`baton login claude`, `baton login codex`, …). Without a name, it shows who needs one. Baton never sees your credentials. |
 
+## Roles, skills and notes
+
+| Command | What it does |
+|---|---|
+| `baton roles` | Every role workers can have (built-in and yours), with access, size and agent. |
+| `baton role new <name>` | Scaffold `.baton/roles/<name>.md` to edit. |
+| `baton skills` | Every skill workers can load, and where it comes from. |
+| `baton skill new <name>` | Scaffold `.baton/skills/<name>/SKILL.md`. |
+| `baton notes` · `baton notes add "<fact>"` | The team's notes about this project, or add one. |
+
+In the app: `/roles`, `/skills`, `/notes [add <text>]`, `/spawn <role> [agent] [count] [label]`,
+`/team <name> [task]`. See [roles, skills and notes](roles.md).
+
 ## Runs and history
 
 | Command | What it does |

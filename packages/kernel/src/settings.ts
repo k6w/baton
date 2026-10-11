@@ -35,6 +35,7 @@ export const SECTIONS: SettingSection[] = [
   { name: "Autonomy & safety", icon: "↯", blurb: "How freely agents act, what they may do without you, and what it may cost." },
   { name: "Orchestrator", icon: "✱", blurb: "The lead agent: who plans and coordinates the work." },
   { name: "Agents", icon: "◆", blurb: "Defaults for the workers the orchestrator (or you) starts." },
+  { name: "Roles & skills", icon: "◎", blurb: "What workers can be (/roles), what they can load (/skills) and what the team remembers (/notes)." },
   { name: "Workspaces", icon: "⎇", blurb: "Worktrees, reviews and merges — how changes land in your project." },
   { name: "Notifications", icon: "⚑", blurb: "How Baton gets your attention when something needs you." },
   { name: "Advanced", icon: "⋯", blurb: "Performance, the message bus, input." },
@@ -315,6 +316,42 @@ export const SETTINGS: SettingDef[] = [
   },
   // ── Agents
   { key: "defaults.worker", section: "Agents", label: "Default worker", help: "Adapter used by /spawn without arguments.", type: { kind: "adapter" } },
+  // ── Roles & skills
+  {
+    key: "notes.enabled",
+    section: "Roles & skills",
+    label: "Team notes",
+    help: "Agents record facts about the project (note) and every new worker starts with them. Stored in .baton/notes.md: edit it like any file.",
+    type: { kind: "bool" },
+  },
+  {
+    key: "notes.max",
+    section: "Roles & skills",
+    label: "Notes per worker",
+    help: "How many of the latest notes a new worker is given (the rest stay searchable with recall).",
+    type: { kind: "number", min: 0, max: 200, step: 5 },
+  },
+  {
+    key: "notes.reviews",
+    section: "Roles & skills",
+    label: "Keep review findings",
+    help: "When a reviewer asks for changes, save the finding as a note so the next worker doesn't repeat it.",
+    type: { kind: "bool" },
+  },
+  {
+    key: "skills.claude",
+    section: "Roles & skills",
+    label: "Project Claude skills",
+    help: "Offer the project's .claude/skills to every agent (not just Claude), alongside .baton/skills.",
+    type: { kind: "bool" },
+  },
+  {
+    key: "skills.claude_user",
+    section: "Roles & skills",
+    label: "Your Claude skills",
+    help: "Also offer your personal ~/.claude/skills to every agent.",
+    type: { kind: "bool" },
+  },
   // ── Workspaces
   {
     key: "workspace.isolation",

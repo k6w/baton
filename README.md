@@ -135,6 +135,21 @@ other's work.
 
 The full tour, in plain words: **[How Baton works](docs/concepts.md)**.
 
+## Roles, skills and team memory
+
+Workers are only as good as their brief, so Baton helps the lead write a good one:
+- **Roles:** tester, reviewer, debugger, refactorer, docs, security, researcher, frontend, or your
+  own in `.baton/roles/*.md`. Each brings instructions, an access level (read-only roles can't
+  edit, even in YOLO), a model size and a "done when" check. `/spawn tester` starts one.
+- **Acceptance checks:** the lead sets a command (`bun test src/auth`), and Baton runs it when the
+  worker finishes. The work counts only when it passes; the worker gets two more tries.
+- **Skills:** `.baton/skills/<name>/SKILL.md` (or your `.claude/skills`). Every agent sees what's
+  available and loads what it needs. Works with Codex, OpenCode and Gemini too, not just Claude.
+- **Team notes:** facts agents learn ("tests need DB_URL") go into `.baton/notes.md`, and every
+  new worker starts with them.
+
+`/roles`, `/skills`, `/notes`, `/team <name>` in the app. All of it: [roles, skills and notes](docs/roles.md).
+
 ## How much freedom agents get
 
 One dial controls **every** agent at once, the lead and the workers, even while they run.
@@ -210,7 +225,7 @@ config: [agents & providers](docs/agents.md).
 
 | Start here | Go deeper | Reference |
 |---|---|---|
-| [Quickstart](docs/quickstart.md) | [Workspaces, reviews & merging](docs/workspaces.md) | [Configuration](docs/configuration.md) |
+| [Quickstart](docs/quickstart.md) | [Roles, skills & notes](docs/roles.md) · [Workspaces & reviews](docs/workspaces.md) | [Configuration](docs/configuration.md) · [Command line](docs/cli.md) |
 | [How Baton works](docs/concepts.md) | [Agents & providers](docs/agents.md) | [Keybindings](docs/keybindings.md) |
 | [Troubleshooting & FAQ](docs/troubleshooting.md) | [Phone & web](docs/remote.md) · [Teams & GitHub](docs/integrations.md) | [Themes & styles](docs/themes.md) |
 | | [The Baton agent](docs/native-agent.md) · [A2A](docs/a2a.md) | [SDK & protocol](docs/sdk.md) · [Changelog](CHANGELOG.md) |

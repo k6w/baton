@@ -41,6 +41,33 @@ export const ProviderConfig = z.object({
 })
 export type ProviderConfig = z.infer<typeof ProviderConfig>
 
+export const Access = z.enum(["read-only", "write"])
+export type Access = z.infer<typeof Access>
+
+export const RoleConfig = z.object({
+  /** Instructions added to the worker's system prompt. */
+  prompt: z.string().optional(),
+  /** One line: what the role is for (shown to the lead and in /roles). */
+  description: z.string().optional(),
+  adapter: z.string().optional(),
+  model: z.string().optional(),
+  tier: z.enum(["small", "medium", "large"]).optional(),
+  /** read-only: may not edit files (enforced by Baton's policy, even in yolo). */
+  access: Access.optional(),
+  /** A command that must pass before the worker's result counts as done. */
+  acceptance: z.string().optional(),
+  /** Skills the role starts with (names). */
+  skills: z.array(z.string()).optional(),
+})
+export type RoleConfig = z.infer<typeof RoleConfig>
+
+export const TeamMember = z.object({
+  role: z.string().optional(),
+  adapter: z.string().optional(),
+  count: z.number().int().min(1).max(10).default(1),
+  label: z.string().optional(),
+})
+
 export const PolicyRule = z.object({
   /** Tool kinds this rule matches ("execute", "edit", …); empty = any. */
   kinds: z.array(z.string()).optional(),
@@ -121,7 +148,34 @@ export const BatonConfig = z.object({
     .default({ approval: "ask", worker: "codex" }),
   agents: z.record(z.string(), AgentConfig).default({}),
   providers: z.record(z.string(), ProviderConfig).default({}),
-  roles: z.record(z.string(), z.object({ prompt: z.string(), adapter: z.string().optional(), model: z.string().optional() })).default({}),
+  /**
+   * Roles for workers ("tester", "security", …): built-in ones, plus .baton/roles/*.md,
+   * ~/.config/baton/roles/*.md and these entries (later wins, field by field).
+   */
+  roles: z.record(z.string(), RoleConfig).default({}),
+  /** Skills: folders with a SKILL.md that workers can load on demand (load_skill). */
+  skills: z
+    .object({
+      /** Extra skill folders (each containing <skill>/SKILL.md). */
+      dirs: z.array(z.string()).default([]),
+      /** Also offer the project's .claude/skills. */
+      claude: z.boolean().default(true),
+      /** Also offer your personal ~/.claude/skills. */
+      claude_user: z.boolean().default(false),
+    })
+    .default({ dirs: [], claude: true, claude_user: false }),
+  /** Team notes: facts agents record (note) and every new worker starts with (.baton/notes.md). */
+  notes: z
+    .object({
+      enabled: z.boolean().default(true),
+      /** Notes given to each new worker (the most recent). */
+      max: z.number().int().nonnegative().default(30),
+      /** Save review findings (changes requested) as notes. */
+      reviews: z.boolean().default(true),
+    })
+    .default({ enabled: true, max: 30, reviews: true }),
+  /** Saved teams for /team <name>: who to start. */
+  teams: z.record(z.string(), z.array(TeamMember)).default({}),
   budget: z
     .object({
       run_usd: z.number().positive().optional(),

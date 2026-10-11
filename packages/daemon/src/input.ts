@@ -1,3 +1,4 @@
+import { addNote, readNotes } from "@batonsh/kernel"
 /**
  * Main-input router. One line from the user can be:
  *   /command args          → daemon command (spawn, kill, mode, …)
@@ -45,7 +46,7 @@ export async function handleInput(rt: Runtime, raw: string, opts: { who?: string
   const text = raw.trim()
   if (!text) return { routedTo: [] }
 
-  if (text.startsWith("/")) return await handleCommand(rt, text)
+  if (text.startsWith("/")) return await handleCommand(rt, text, opts)
 
   if (text.startsWith("!")) {
     const target = text.slice(1).trim() || "all"
@@ -83,7 +84,7 @@ export async function handleInput(rt: Runtime, raw: string, opts: { who?: string
   return { routedTo: [orch.info.name] }
 }
 
-async function handleCommand(rt: Runtime, text: string): Promise<InputResult> {
+async function handleCommand(rt: Runtime, text: string, opts: { who?: string } = {}): Promise<InputResult> {
   const [cmdRaw, ...args] = text.slice(1).split(/\s+/)
   const cmd = (cmdRaw ?? "").toLowerCase()
   const byName = (n: string | undefined) => {
@@ -94,19 +95,86 @@ async function handleCommand(rt: Runtime, text: string): Promise<InputResult> {
   }
   switch (cmd) {
     case "spawn": {
-      // `/spawn` alone (or `/spawn 3 label`) uses the configured default worker
-      const adapter = !args[0] || /^\d+$/.test(args[0]) ? rt.config.defaults.worker : args[0]
-      if (!args[0] || /^\d+$/.test(args[0])) args.unshift(adapter)
+      // /spawn [role] [adapter] [count] [label…] — any part optional: `/spawn tester`, `/spawn codex 3 hunt`,
+      // `/spawn tester codex 2 auth tests`; no adapter → the role's, else the default worker
+      const roles = rt.roles()
+      const known = (x?: string) => !!x && (!!rt.registry.get(x) || !!rt.config.agents[x])
+      let role: string | undefined
+      if (args[0] && roles.has(args[0].toLowerCase()) && !known(args[0])) role = args.shift()?.toLowerCase()
+      const adapter = known(args[0]) ? (args.shift() as string) : ""
       let count = 1
-      let labelParts = args.slice(1)
-      if (args[1] && /^\d+$/.test(args[1])) {
-        count = Math.min(16, Number(args[1]))
-        labelParts = args.slice(2)
-      }
-      const label = labelParts.join(" ") || undefined
+      if (args[0] && /^\d+$/.test(args[0])) count = Math.min(16, Number(args.shift()))
+      const label = args.join(" ") || role || undefined
       const names: string[] = []
-      for (let i = 0; i < count; i++) names.push((await rt.spawn({ adapter, label })).name)
-      return { routedTo: names, command: cmd, output: `spawned ${names.join(", ")}` }
+      for (let i = 0; i < count; i++) names.push((await rt.spawn({ adapter, label, ...(role ? { role } : {}) })).name)
+      return { routedTo: names, command: cmd, output: `spawned ${names.join(", ")}${role ? ` as ${role}` : ""}` }
+    }
+    case "roles": {
+      const lines = [...rt.roles().values()].map(
+        (r) => `${r.name.padEnd(12)} ${r.description}${r.access === "read-only" ? " · read-only" : ""}${r.source !== "builtin" ? ` · ${r.source}` : ""}`,
+      )
+      return { routedTo: [], command: cmd, output: `${lines.join("\n")}\n/spawn <role> starts one · add your own in .baton/roles/<name>.md` }
+    }
+    case "skills": {
+      const list = [...rt.skills().values()]
+      return {
+        routedTo: [],
+        command: cmd,
+        output: list.length
+          ? `${list.map((x) => `${x.name.padEnd(16)} ${x.description}`).join("\n")}\nworkers load them with load_skill · the lead gives them with spawn_agent(skills)`
+          : "no skills yet: add folders with a SKILL.md to .baton/skills/ (baton skill new <name>)",
+      }
+    }
+    case "notes": {
+      if (args[0] === "add" && args.length > 1) {
+        const added = addNote(rt.projectRoot, opts.who ?? "you", args.slice(1).join(" "))
+        return { routedTo: [], command: cmd, output: added ? "noted: every new worker will start with it" : "already noted" }
+      }
+      const notes = readNotes(rt.projectRoot)
+      return {
+        routedTo: [],
+        command: cmd,
+        output: notes.length
+          ? `${notes.map((n) => `• ${n.text}`).join("\n")}\n(.baton/notes.md · /notes add <text>)`
+          : "no team notes yet (/notes add <text>, or agents add them with the note tool)",
+      }
+    }
+    case "team": {
+      const teams = rt.config.teams
+      const team = args[0] ? teams[args[0]] : undefined
+      if (!team) {
+        const names = Object.keys(teams)
+        return {
+          routedTo: [],
+          command: cmd,
+          output: names.length
+            ? `teams: ${names.join(", ")} · /team <name> [task]`
+            : 'no teams yet: [teams] frontend = [{ role = "frontend" }, { role = "tester", adapter = "codex" }] in .baton/config.toml',
+        }
+      }
+      const lead = rt.orchestrator()
+      const names: string[] = []
+      for (const m of team)
+        for (let i = 0; i < (m.count ?? 1); i++)
+          names.push(
+            (
+              await rt.spawn({
+                adapter: m.adapter ?? "",
+                ...(m.role ? { role: m.role } : {}),
+                label: m.label ?? m.role,
+                ...(lead ? { parentId: lead.info.agentId } : {}),
+              })
+            ).name,
+          )
+      const task = args.slice(1).join(" ").trim()
+      // the lead coordinates the team it was given (and gets the task, if there is one)
+      if (lead)
+        await rt.promptAgent(
+          lead.info.agentId,
+          `[baton] Team "${args[0]}" is ready: ${names.join(", ")}. Give them work with send_message (they are idle).${task ? `\n\nTask: ${task}` : ""}`,
+          { from: "user" },
+        )
+      return { routedTo: names, command: cmd, output: `team ${args[0]}: ${names.join(", ")}` }
     }
     case "kill": {
       const targets = args[0] === "all" ? [...rt.agents.values()].filter((a) => !a.info.isOrchestrator && !a.closing) : [byName(args[0])]

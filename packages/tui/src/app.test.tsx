@@ -440,3 +440,31 @@ describe("TUI", () => {
     m2.dispose()
   })
 })
+
+test("agent messages render Markdown (no raw ** or backticks on screen)", async () => {
+  const a = await client.spawn({ adapter: "mock", name: "md", options: { speed: 0 } })
+  await until(() => live.state.agents.get(a.agentId)?.status === "ready")
+  daemon.runtime.emit(
+    {
+      type: "message.completed",
+      data: {
+        messageId: "md1",
+        role: "assistant",
+        text: "## Done\n\nAdded **rate limiting** to `POST /login`.\n\n- [x] tests pass\n- see [docs](https://example.com)\n\n| file | + |\n|---|---|\n| src/auth.ts | 42 |",
+      },
+    },
+    a.agentId,
+  )
+  const m = await mount(120, 36)
+  m.ui.setZoomed(a.agentId)
+  let f = ""
+  for (let i = 0; i < 30 && !f.includes("rate limiting"); i++) f = await m.frame()
+  if (process.env.BATON_PRINT) console.log(f)
+  expect(f).toContain("Added rate limiting to POST /login.")
+  expect(f).toContain("☑ tests pass")
+  expect(f).toContain("src/auth.ts │ 42")
+  expect(f).not.toContain("**")
+  expect(f).not.toContain("`POST")
+  expect(f).not.toContain("## Done")
+  m.dispose()
+})

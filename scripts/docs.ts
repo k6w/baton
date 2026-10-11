@@ -28,6 +28,7 @@ const PAGES: [string, string, string, string][] = [
   ["docs/quickstart.md", "quickstart", "Quickstart", "Start here"],
   ["docs/concepts.md", "concepts", "How Baton works", "Start here"],
   ["docs/troubleshooting.md", "troubleshooting", "Troubleshooting & FAQ", "Start here"],
+  ["docs/roles.md", "roles", "Roles, skills & notes", "Guides"],
   ["docs/workspaces.md", "workspaces", "Workspaces & reviews", "Guides"],
   ["docs/agents.md", "agents", "Agents & providers", "Guides"],
   ["docs/remote.md", "remote", "Phone & web", "Guides"],
@@ -44,6 +45,7 @@ const PAGES: [string, string, string, string][] = [
 const SIDE_ICONS: Record<string, string> = {
   quickstart: "rocket",
   concepts: "book-open",
+  roles: "users",
   troubleshooting: "life-buoy",
   workspaces: "git-branch",
   agents: "bot",
@@ -334,6 +336,16 @@ const landing = `${head("Baton: one terminal for all your coding agents", "Claud
     ${card("messages-square", "Agents that talk", "A message bus between agents: they coordinate files, hand off work, and report results back automatically.")}
     ${card("smartphone", "From your phone", "<code>baton web --lan</code> shows a QR code: follow along, approve and send tasks from your phone. One-tap approvals from notifications.")}
     ${card("chart-column", "Learns who's good at what", "A track record per agent and task kind in your project. The lead uses it to pick agents, and cheaper ones win close calls.")}
+  </div>
+</section>
+
+<section class="band">
+  <h2>Every worker gets a real brief</h2>
+  <p class="sub">A worker only knows what it's told. Roles, checks, skills and team memory make sure it's told the right things.</p>
+  <div class="cards">
+    ${card("users", "Roles", "Tester, reviewer, debugger, security, researcher, frontend, or your own. Each brings instructions, a model size and an access level; read-only roles can't edit, even in YOLO.")}
+    ${card("badge-check", "Acceptance checks", "The lead sets a command like <code>bun test src/auth</code>. Baton runs it when the worker is done: the work counts only when it passes.")}
+    ${card("brain", "Skills and team notes", "Skills in <code>.baton/skills</code> (or your <code>.claude/skills</code>) for every agent, and facts the team learns go into notes every new worker starts with.")}
   </div>
 </section>
 

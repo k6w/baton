@@ -116,6 +116,12 @@ export const AgentInfo = z.object({
   label: z.string().optional(), // short task label shown on the card ("find typo")
   parentId: z.string().optional(), // spawned by (orchestrator or another agent)
   isOrchestrator: z.boolean().optional(),
+  /** Skills the agent was given (names; it loads them with load_skill). */
+  skills: z.array(z.string()).optional(),
+  /** read-only: Baton denies its file edits, whatever the autonomy level. */
+  access: z.enum(["read-only", "write"]).optional(),
+  /** A command Baton runs before the agent's result counts as done. */
+  acceptance: z.string().optional(),
 })
 export type AgentInfo = z.infer<typeof AgentInfo>
 

@@ -22,7 +22,9 @@ export interface PolicyRequest {
 const BUILTIN_RULES: PolicyRule[] = [
   {
     kinds: ["other", "delegate", "think", "fetch"],
-    match: '^(mcp__baton__\\w+|baton[._]\\w+|baton: Allow the baton MCP server to run tool "\\w+"\\??)(\\(|\\s*$|\\n)',
+    // tool titles differ per agent: mcp__baton__x (Claude, older), "baton - x (MCP)" (Claude Code 2.x),
+    // baton.x / baton_x (OpenCode, ACP), and codex's elicitation prompt
+    match: '^(mcp__baton__\\w+|baton[._]\\w+|baton - \\w+ \\(MCP\\)|baton: Allow the baton MCP server to run tool "\\w+"\\??)(\\(|\\s*$|\\n)',
     action: "allow",
   },
 ]
@@ -51,6 +53,8 @@ export class PolicyEngine {
   /** "agentId|toolName-or-kind" → remembered decision from allow_always / reject_always. */
   private remembered = new Map<string, "allow" | "deny">()
   private autonomy: Autonomy = "normal"
+  /** Agents that may not edit files (read-only roles: reviewers, researchers, auditors). */
+  private readOnly = new Set<string>()
 
   constructor(
     private preset: "strict" | "balanced" | "yolo",
@@ -92,7 +96,14 @@ export class PolicyEngine {
     this.autonomy = mode
   }
 
+  setAccess(agentId: string, access: "read-only" | "write") {
+    if (access === "read-only") this.readOnly.add(agentId)
+    else this.readOnly.delete(agentId)
+  }
+
   decide(r: PolicyRequest): Decision {
+    // read-only agents never edit, whatever the autonomy or their remembered answers
+    if (this.readOnly.has(r.agentId) && (r.kind === "edit" || r.kind === "delete" || r.kind === "move")) return "deny"
     // the user's explicit rules win over anything remembered from a past click;
     // in yolo only deny rules still count (nothing asks)
     for (const rule of this.rules) {
@@ -112,6 +123,7 @@ export class PolicyEngine {
   }
 
   forgetAgent(agentId: string) {
+    this.readOnly.delete(agentId)
     for (const k of [...this.remembered.keys()]) if (k.startsWith(`${agentId}|`)) this.remembered.delete(k)
   }
 }

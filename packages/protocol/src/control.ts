@@ -158,6 +158,16 @@ export interface SpawnParams {
   taskId?: string
   /** Difficulty tier → model via [routing] (ignored when model is set). */
   tier?: "small" | "medium" | "large"
+  /** Extra instructions for this agent only (added to its system prompt). */
+  instructions?: string
+  /** Skills it starts with (names from the catalog; it loads them with load_skill). */
+  skills?: string[]
+  /** Files / globs it owns: claimed for it, so others are warned off. */
+  files?: string[]
+  /** A command that must pass before its result counts as done (Baton runs it). */
+  acceptance?: string
+  /** read-only: may not edit files (enforced by Baton's policy, even in yolo). */
+  access?: "read-only" | "write"
 }
 
 export interface ControlMethods {

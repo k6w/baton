@@ -106,6 +106,17 @@ export function spawnable(argv: string[]): { cmd: string[]; opts: { windowsVerba
   return { cmd: [bin, ...argv.slice(1)], opts: {} }
 }
 
+/**
+ * argv to run a shell command line: sh elsewhere; on Windows Git Bash (it ships with Git for
+ * Windows; System32\\bash.exe is WSL's launcher, not a shell for this filesystem) or PowerShell.
+ */
+export function shellCommand(command: string): string[] {
+  if (!IS_WINDOWS) return ["sh", "-c", command]
+  const bash = which("bash")
+  if (bash && !/system32/i.test(bash)) return [bash, "-lc", command]
+  return ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command]
+}
+
 /** Drain a stream into memory; `cancel()` stops waiting (e.g. a grandchild still holds the pipe). */
 function collect(stream: ReadableStream<Uint8Array>): { done: Promise<void>; cancel: () => void; text: () => string } {
   const chunks: Uint8Array[] = []

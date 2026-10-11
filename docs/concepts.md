@@ -85,6 +85,18 @@ agent's changes, where you can read diffs, comment on lines, merge or ask for a 
 
 How strict reviews are is up to you: `workspace.review = "off" | "suggested" | "required"`.
 
+## Roles, skills and what the team remembers
+
+The lead can give a worker:
+- a **role**: tester, reviewer, debugger, security, … or your own, with instructions and an
+  access level (reviewers can't edit files);
+- **skills** to look up when it needs them;
+- the **files** it owns;
+- an **acceptance** command. Baton runs it, and the work counts only when the check passes.
+
+Facts agents learn go into **team notes** that every new worker starts with. Details:
+[roles, skills and notes](roles.md).
+
 ## Agents talking to each other
 
 Each agent gets a few extra tools from Baton:

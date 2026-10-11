@@ -201,7 +201,7 @@ export async function planPr(rt: Runtime, title?: string): Promise<PrPlan> {
         )
   }
   if (rt.config.workspace.verify) lines.push("", `Verified with \`${rt.config.workspace.verify}\` before each merge.`)
-  lines.push("", "_Made with [Baton](https://github.com/batonsh/baton) — a team of coding agents._")
+  lines.push("", "_Made with [Baton](https://github.com/k6w/baton) — a team of coding agents._")
   return { repo, branch: `baton/${slug(prTitle)}-${rt.runId.slice(-6).toLowerCase()}`, base, title: prTitle, body: lines.join("\n"), files, issue }
 }
 

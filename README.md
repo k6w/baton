@@ -25,10 +25,10 @@ each other over a live message bus while you watch every tool call, diff and tok
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/batonsh/baton/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/k6w/baton/main/install.sh | sh
 ```
 
-Other ways: `npm i -g batonsh`, or `brew install batonsh/tap/baton`. You get a single binary for
+Other ways: `npm i -g batonsh`, or `brew install k6w/tap/baton`. You get a single binary for
 macOS or Linux (x64 and arm64), checksum-verified. `baton update` keeps it current. Then:
 
 ```sh

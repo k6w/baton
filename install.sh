@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install Baton: curl -fsSL https://raw.githubusercontent.com/batonsh/baton/main/install.sh | sh
+# Install Baton: curl -fsSL https://raw.githubusercontent.com/k6w/baton/main/install.sh | sh
 #
 #   BATON_VERSION=0.2.0   install that version (default: latest release)
 #   BATON_INSTALL_DIR=…   where the binary goes (default: ~/.local/bin)
@@ -10,7 +10,7 @@
 # release's SHA256SUMS, and puts `baton` on your PATH. Nothing else is touched.
 set -eu
 
-REPO="${BATON_REPO:-batonsh/baton}"
+REPO="${BATON_REPO:-k6w/baton}"
 DIR="${BATON_INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${BATON_VERSION:-}"
 
@@ -44,6 +44,7 @@ target="$os-$arch"
 if [ "$os" = linux ] && { [ -f /etc/alpine-release ] || ldd --version 2>&1 | grep -qi musl; }; then
   [ "$arch" = x64 ] || die "no musl build for $arch yet"
   target="linux-x64-musl"
+  musl_note="Alpine: baton needs  apk add libstdc++ libgcc"
 fi
 
 if [ -z "$VERSION" ]; then
@@ -75,6 +76,7 @@ chmod 755 "$DIR/.baton.new"
 mv -f "$DIR/.baton.new" "$DIR/baton"
 
 say "Installed baton $VERSION → $DIR/baton"
+[ -n "${musl_note:-}" ] && say "$musl_note"
 case ":$PATH:" in
   *":$DIR:"*) ;;
   *)

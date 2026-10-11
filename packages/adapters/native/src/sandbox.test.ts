@@ -35,6 +35,8 @@ describe("sandbox settings", () => {
       cwd,
       env: { HOME: home },
       platform: "darwin",
+      // CI runs this on Linux too
+      which: (bin) => (bin === "sandbox-exec" ? "/usr/bin/sandbox-exec" : null),
     })
     expect(s.kind).toBe("seatbelt")
     expect(s.writable).toContain(realpathSync(cwd))

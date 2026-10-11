@@ -208,7 +208,7 @@ export async function webFetch(
       signal,
       headers: {
         ...(host ? { host } : {}),
-        "user-agent": "BatonAgent/0.1 (+https://github.com/batonsh)",
+        "user-agent": "BatonAgent/0.1 (+https://github.com/k6w/baton)",
         accept: "text/html,application/xhtml+xml,text/plain,application/json;q=0.9,*/*;q=0.5",
       },
     })

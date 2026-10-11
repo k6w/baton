@@ -6,7 +6,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { BATON_VERSION } from "../packages/protocol/src/version.ts"
 
-const REPO = process.argv.includes("--repo") ? process.argv[process.argv.indexOf("--repo") + 1] : (process.env.BATON_REPO ?? "batonsh/baton")
+const REPO = process.argv.includes("--repo") ? process.argv[process.argv.indexOf("--repo") + 1] : (process.env.BATON_REPO ?? "k6w/baton")
 const OUT = "dist/site"
 const GH = `https://github.com/${REPO}`
 

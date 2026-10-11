@@ -16,7 +16,7 @@ const arg = (name: string) => {
   const i = process.argv.indexOf(name)
   return i >= 0 ? process.argv[i + 1] : undefined
 }
-const REPO = arg("--repo") ?? process.env.BATON_REPO ?? "batonsh/baton"
+const REPO = arg("--repo") ?? process.env.BATON_REPO ?? "k6w/baton"
 const V = BATON_VERSION
 const OUT = "dist/release"
 const NPM = "dist/npm"
@@ -64,7 +64,7 @@ for (const [target, t] of Object.entries(TARGETS)) {
   sums.push(`${sha256(join(OUT, archive))}  ${archive}`)
 
   // npm platform package
-  const name = `@batonsh/cli-${target}`
+  const name = `batonsh-${target}`
   const dir = join(NPM, `cli-${target}`)
   mkdirSync(join(dir, "bin"), { recursive: true })
   copyFileSync(bin, join(dir, "bin", `baton${t.exe ?? ""}`))
@@ -109,7 +109,7 @@ writeFileSync(
       bin: { baton: "bin/baton.js" },
       files: ["bin", "README.md", "LICENSE"],
       engines: { node: ">=18" },
-      optionalDependencies: Object.fromEntries(built.map((t) => [`@batonsh/cli-${t}`, V])),
+      optionalDependencies: Object.fromEntries(built.map((t) => [`batonsh-${t}`, V])),
     },
     null,
     2,
@@ -136,7 +136,7 @@ const os = platform === "win32" ? "windows" : platform
 const target = \`\${os}-\${arch}\${musl() ? "-musl" : ""}\`
 let bin
 try {
-  bin = require.resolve(\`@batonsh/cli-\${target}/bin/baton\${platform === "win32" ? ".exe" : ""}\`)
+  bin = require.resolve(\`batonsh-\${target}/bin/baton\${platform === "win32" ? ".exe" : ""}\`)
 } catch {
   console.error(\`baton: no prebuilt binary for \${target}. Supported: ${built.join(", ")}.\\nInstall from source: https://github.com/${REPO}#install\`)
   process.exit(1)

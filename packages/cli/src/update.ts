@@ -7,12 +7,12 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { BATON_VERSION } from "@batonsh/protocol"
 
-export const REPO = process.env.BATON_REPO ?? "batonsh/baton"
+export const REPO = process.env.BATON_REPO ?? "k6w/baton"
 
 export type InstallKind = "binary" | "npm" | "homebrew" | "source"
 
 export function installKind(env: Record<string, string | undefined> = process.env, execPath = process.execPath): InstallKind {
-  if (env.BATON_INSTALL === "npm" || /[/\\]node_modules[/\\]@batonsh[/\\]cli-/.test(execPath)) return "npm"
+  if (env.BATON_INSTALL === "npm" || /[/\\]node_modules[/\\]batonsh-/.test(execPath)) return "npm"
   if (/\/(Cellar|homebrew|linuxbrew)\//i.test(execPath)) return "homebrew"
   // BATON_TARGET is defined at build time (scripts/build.ts): unset means `bun packages/cli/src/main.ts`
   if (!process.env.BATON_TARGET) return "source"

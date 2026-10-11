@@ -5,10 +5,10 @@ Five minutes from nothing to a team of agents working on your code.
 ## 1. Install Baton
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/batonsh/baton/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/k6w/baton/main/install.sh | sh
 ```
 
-Or `npm i -g batonsh`, or `brew install batonsh/tap/baton`. The installer verifies the
+Or `npm i -g batonsh`, or `brew install k6w/tap/baton`. The installer verifies the
 download's checksum and puts a single `baton` binary in `~/.local/bin`. Nothing else is
 installed or changed. `baton update` keeps it current.
 

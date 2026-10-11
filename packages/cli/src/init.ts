@@ -103,7 +103,7 @@ export function configToml(opts: { name: string; orchestrator: string; worker: s
   const verify = Object.entries(opts.toolchain?.commands ?? {})
     .filter(([k, v]) => v && k !== "dev")
     .map(([k, v]) => `#   ${k} = "${v}"`)
-  return `# Baton project config — https://github.com/batonsh/baton
+  return `# Baton project config — https://github.com/k6w/baton
 # Layers: built-in defaults → ~/.config/baton/config.toml → this file → .baton/config.local.toml → env → flags.
 # Installed agents found at setup: ${installed.join(", ") || "none"}
 

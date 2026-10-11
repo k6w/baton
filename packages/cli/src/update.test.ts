@@ -13,7 +13,7 @@ test("version ordering", () => {
 
 test("install kind", () => {
   expect(installKind({ BATON_INSTALL: "npm" }, "/x/baton")).toBe("npm")
-  expect(installKind({}, "/usr/lib/node_modules/@batonsh/cli-linux-x64/bin/baton")).toBe("npm")
+  expect(installKind({}, "/usr/lib/node_modules/batonsh-linux-x64/bin/baton")).toBe("npm")
   expect(installKind({}, "/opt/homebrew/Cellar/baton/0.1.0/bin/baton")).toBe("homebrew")
   // tests run from source (no BATON_TARGET baked in)
   expect(installKind({}, "/Users/me/.bun/bin/bun")).toBe("source")

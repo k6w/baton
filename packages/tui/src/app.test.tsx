@@ -237,7 +237,7 @@ describe("TUI", () => {
     expect(waiting()).toContain(order[2])
     m.t.mockInput.pressEscape()
     m.dispose()
-   }, 30000)
+  }, 30000)
 
   test("theme picker previews live and reverts on escape", async () => {
     const m = await mount(120, 40)

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { AgentEvent, SessionConfig } from "@batonsh/protocol"
 import { contractSuite, LIVE, startHarness, tempWorkspace } from "../../testkit/src/index.ts"
-import { opencodeAdapter } from "./index.ts"
+import { opencodeAdapter, parseModelList } from "./index.ts"
 
 function alive(pid: number): boolean {
   try {
@@ -151,4 +151,11 @@ describe("opencode adapter contract", () => {
     },
     300_000,
   )
+})
+
+test("`opencode models` output → provider/model ids (noise lines dropped)", () => {
+  expect(parseModelList("opencode/big-pickle\nanthropic/claude-sonnet-4-5\n\nWarning: something\n")).toEqual([
+    "opencode/big-pickle",
+    "anthropic/claude-sonnet-4-5",
+  ])
 })

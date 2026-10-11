@@ -10,6 +10,8 @@ export type SettingType =
   | { kind: "theme" }
   | { kind: "style" }
   | { kind: "adapter" }
+  /** A model for the agent named by the setting at `adapterKey`: ←→ picks from its list, enter types one. */
+  | { kind: "model"; adapterKey: string; placeholder?: string }
   | { kind: "list"; options?: readonly string[] }
 
 export interface SettingDef {
@@ -309,8 +311,8 @@ export const SETTINGS: SettingDef[] = [
     key: "orchestrator.model",
     section: "Orchestrator",
     label: "Lead model",
-    help: "Model for the lead (empty = the agent's default).",
-    type: { kind: "string", optional: true, placeholder: "default" },
+    help: "Model for the lead (empty = the agent's default). ←→ picks from the models the agent offers; enter types any name.",
+    type: { kind: "model", adapterKey: "orchestrator.agent", placeholder: "default" },
   },
   {
     key: "orchestrator.mode",
@@ -328,6 +330,13 @@ export const SETTINGS: SettingDef[] = [
   },
   // ── Agents
   { key: "defaults.worker", section: "Agents", label: "Default worker", help: "Adapter used by /spawn without arguments.", type: { kind: "adapter" } },
+  {
+    key: "defaults.model",
+    section: "Agents",
+    label: "Worker model",
+    help: "Model for workers on the default worker agent (empty = the agent's default; the lead can still pick per task). ←→ picks from the models the agent offers; enter types any name.",
+    type: { kind: "model", adapterKey: "defaults.worker", placeholder: "default" },
+  },
   // ── Team features
   {
     key: "features.roles",

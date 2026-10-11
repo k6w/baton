@@ -54,6 +54,22 @@ export class AdapterRegistry {
     return [...this.adapters.values()]
   }
 
+  private modelCache = new Map<string, { models: string[]; at: number }>()
+
+  /** Models an adapter offers (asked from the agent when it can say, cached 10 minutes). */
+  async models(id: string): Promise<string[]> {
+    const a = this.adapters.get(id)
+    if (!a) throw new Error(`unknown adapter "${id}"`)
+    const hit = this.modelCache.get(id)
+    if (hit && Date.now() - hit.at < 10 * 60_000) return hit.models
+    const detected = await this.detect(id)
+    let listed: string[] = []
+    if (a.listModels && detected?.installed) listed = await a.listModels(detected).catch(() => [])
+    const models = [...new Set([...listed, ...a.capabilities(detected).models])]
+    this.modelCache.set(id, { models, at: Date.now() })
+    return models
+  }
+
   async detect(id: string, refresh = false): Promise<DetectResult | undefined> {
     if (!refresh && this.detected.has(id)) return this.detected.get(id)
     const a = this.adapters.get(id)

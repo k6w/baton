@@ -5,6 +5,16 @@ All notable changes to Baton. Versions follow [semver](https://semver.org); the 
 
 ## Unreleased
 
+## 0.3.5 — 2026-10-11
+
+**Pick models from a list**
+- Worker model (`defaults.model`): the model for workers on your default worker agent, in
+  `/settings` → Agents. ←→ cycles through the models that agent offers, enter types any name.
+- Lead model works the same way, and both show what the agent offers.
+- `/model <agent> ` suggests that agent's models as you type.
+- The lists come from the agents themselves: Codex's model cache, `opencode models`, Claude's
+  model names. An agent that can't say still takes any model you type.
+
 ## 0.3.4 — 2026-10-11
 
 **Approvals with several Codex workers**

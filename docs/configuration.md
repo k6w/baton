@@ -83,6 +83,7 @@ plan_approval = false             # true: the orchestrator's plan_tasks waits fo
 
 [defaults]
 worker = "codex"                  # default adapter for /spawn suggestions
+# model = "gpt-5"                 # model for workers on that agent (/settings → Worker model lists what it offers)
 approval = "ask"                  # approval mode for workers without a profile
 
 [agents.reviewer]                 # a *profile*: /spawn reviewer, or spawn_agent(adapter: "reviewer")

@@ -429,6 +429,14 @@ class OpencodeSession implements AgentSession {
   }
 }
 
+/** `opencode models` prints one provider/model per line. */
+export function parseModelList(out: string): string[] {
+  return out
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => /^[\w.@-]+\/\S+$/.test(l))
+}
+
 export const opencodeAdapter: AgentAdapter = defineAdapter({
   id: "opencode",
   displayName: "OpenCode",
@@ -476,6 +484,13 @@ export const opencodeAdapter: AgentAdapter = defineAdapter({
       mcp: true,
       models: [],
     }
+  },
+
+  async listModels(detected?: DetectResult): Promise<string[]> {
+    const path = detected?.path ?? which("opencode")
+    if (!path) return []
+    const r = await runCapture([path, "models"], { timeoutMs: 20_000 })
+    return parseModelList(r.stdout)
   },
 
   async start(cfg: SessionConfig, ctx: AdapterContext): Promise<AgentSession> {

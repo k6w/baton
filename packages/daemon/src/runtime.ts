@@ -305,7 +305,10 @@ export class Runtime {
     const approval = capApproval(effectiveApproval(baseApproval, this.autonomy), access)
     const tier = params.tier ?? role?.tier
     const tierModel = tier ? this.config.routing[adapterId]?.[tier] : undefined
-    const model = params.model ?? role?.model ?? profile?.model ?? tierModel ?? (params.isOrchestrator ? this.config.orchestrator.model : undefined)
+    // defaults.model belongs to the default worker's agent: other agents keep their own default
+    const workerModel = !params.isOrchestrator && adapterRef === this.config.defaults.worker ? this.config.defaults.model : undefined
+    const model =
+      params.model ?? role?.model ?? profile?.model ?? tierModel ?? (params.isOrchestrator ? this.config.orchestrator.model : workerModel || undefined)
     // skills: the role's plus any asked for; unknown names are reported, not fatal
     const catalog = this.skills()
     const wanted = [...new Set([...(role?.skills ?? []), ...(params.skills ?? [])].map((x) => x.toLowerCase()))]

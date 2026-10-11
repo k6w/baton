@@ -48,6 +48,7 @@ export const REQUIRED_PARAMS: Partial<Record<string, string[]>> = {
   "run.resume": ["runId"],
   "events.unsubscribe": ["subscriptionId"],
   "agents.pick": ["task"],
+  "agents.models": ["adapter"],
 }
 
 /** Map an error message to a control error kind (handlers throw plain Errors). */
@@ -195,6 +196,8 @@ export interface ControlMethods {
   "agent.kill": { params: { agentId: string }; result: { ok: true } }
   "agent.rename": { params: { agentId: string; name?: string; label?: string }; result: { ok: true } }
   "agents.detect": { params: { refresh?: boolean } | undefined; result: { adapters: (DetectResult & { id: string; displayName: string })[] } }
+  /** Models an agent offers (an adapter id or a configured profile): for pickers and completion. */
+  "agents.models": { params: { adapter: string }; result: { models: string[] } }
   "bus.send": {
     params: { from?: string; to: string; body: string; kind?: BusKind; delivery?: Delivery }
     result: { messageId: string }

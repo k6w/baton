@@ -147,6 +147,8 @@ export const BatonConfig = z.object({
     .object({
       approval: Approval.default("ask"),
       worker: z.string().default("codex"),
+      /** Model for workers on the default worker agent (empty = the agent's own default). */
+      model: z.string().optional(),
     })
     .default({ approval: "ask", worker: "codex" }),
   agents: z.record(z.string(), AgentConfig).default({}),

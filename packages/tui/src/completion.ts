@@ -1,6 +1,8 @@
 /** Input completion: @mentions, /commands and their arguments. */
 import { type BatonConfig, FEATURES, loadRoles, type RunState } from "@batonsh/kernel"
+import type { BatonClient } from "@batonsh/sdk"
 import { FRAME_STYLES, listThemes, STYLES } from "@batonsh/themes"
+import { modelsFor } from "./models.ts"
 
 export interface Completion {
   /** Full input value after accepting. */
@@ -49,7 +51,7 @@ export const REMOTE_COMMANDS: Record<string, string> = {
   mode: "/mode <orchestrator|…>",
   autonomy: "/autonomy <normal|ask|auto|yolo> — how freely every agent acts (shift+tab)",
   yolo: "/yolo — toggle YOLO: no prompts, no sandbox, every agent",
-  model: "/model <agent> <model>",
+  model: "/model <agent> <model> — the agent's models are suggested",
   label: "/label <agent> <text>",
   rename: "/rename <agent> <new-name>",
   agents: "/agents — installed adapters + auth",
@@ -97,8 +99,19 @@ const KNOWN_ADAPTERS = [
 
 let themeNames: string[] | undefined
 
-export function completions(input: string, run: RunState, config: BatonConfig): Completion[] {
+export function completions(input: string, run: RunState, config: BatonConfig, client?: BatonClient): Completion[] {
   if (!input) return []
+  // /model <agent> <model>: the models that agent's CLI offers (any name can still be typed)
+  const mdl = /^\/model\s+(\S+)\s+(\S*)$/.exec(input)
+  if (mdl) {
+    const [, who = "", q = ""] = mdl
+    const a = [...run.agents.values()].find((x) => x.name.toLowerCase() === who.toLowerCase())
+    const current = a?.model
+    return modelsFor(client, a?.adapter)
+      .filter((m) => m.toLowerCase().includes(q.toLowerCase()) && m !== q)
+      .slice(0, 12)
+      .map((m) => ({ replace: `/model ${who} ${m}`, label: m, detail: m === current ? "current" : (a?.adapter ?? "") }))
+  }
   // /command
   const cmd = /^\/(\w*)$/.exec(input)
   if (cmd) {

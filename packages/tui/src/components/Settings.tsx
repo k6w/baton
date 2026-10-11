@@ -27,6 +27,7 @@ import { agentLook } from "../agent-style.ts"
 import { useUi } from "../context.ts"
 import { keyString } from "../keymap.ts"
 import { clip, type Line, type Seg, width as sw, wrap } from "../lines.ts"
+import { modelsFor } from "../models.ts"
 import { PREF_KEYS, type Prefs } from "../state.ts"
 import { toStyled } from "../ui/styled.ts"
 import { Txt } from "../ui/Txt.tsx"
@@ -192,6 +193,14 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
         return write(s, step(STYLES.map((x) => x.name)))
       case "adapter":
         return write(s, step(ADAPTERS))
+      case "model": {
+        // "" = the agent's default; a typed name that isn't in the list still cycles from the start
+        const opts = ["", ...modelsFor(ui.client, String(getPath(loaded().config, t.adapterKey) ?? ""))]
+        const i = opts.indexOf((v as string | undefined) ?? "")
+        const next = opts[(i + dir + opts.length) % opts.length]
+        if (opts.length === 1) return ui.toast("this agent doesn't list its models: enter to type one", "info")
+        return write(s, next || undefined)
+      }
       case "number": {
         const n = typeof v === "number" ? v : (t.min ?? 0)
         const next = Math.max(t.min ?? Number.NEGATIVE_INFINITY, Math.min(t.max ?? Number.POSITIVE_INFINITY, Math.round((n + dir * (t.step ?? 1)) * 100) / 100))
@@ -221,6 +230,7 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
       return write(s, items)
     }
     if (text === "" && (t.kind !== "string" || t.optional)) return write(s, undefined)
+    if (t.kind === "model" && text === "") return write(s, undefined)
     write(s, text)
   }
 
@@ -231,7 +241,7 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
     } else if (s.type.kind === "style") {
       props.onClose()
       ui.setOverlay("style")
-    } else if (s.type.kind === "string" || s.type.kind === "number" || s.type.kind === "list") setTimeout(() => setEditing(s), 0)
+    } else if (s.type.kind === "string" || s.type.kind === "number" || s.type.kind === "list" || s.type.kind === "model") setTimeout(() => setEditing(s), 0)
     else cycle(s, 1)
   }
 
@@ -279,7 +289,12 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
     else if (
       (k.name === "left" || ks === "h") &&
       s &&
-      (s.type.kind === "number" || s.type.kind === "enum" || s.type.kind === "theme" || s.type.kind === "adapter" || s.type.kind === "style")
+      (s.type.kind === "number" ||
+        s.type.kind === "enum" ||
+        s.type.kind === "theme" ||
+        s.type.kind === "adapter" ||
+        s.type.kind === "style" ||
+        s.type.kind === "model")
     )
       cycle(s, -1)
     else if (k.name === "left" || ks === "h") setPane("sections")
@@ -442,10 +457,24 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
         ],
       },
       ...wrap(s.help, W() - 4)
-        .slice(0, 3)
+        .slice(0, s.type.kind === "model" ? 2 : 3)
         .map((l) => ({ segs: [{ text: l, fg: t.textMuted }] })),
+      ...(s.type.kind === "model" ? [modelLine(s.type.adapterKey)] : []),
     ]
   })
+
+  /** "codex offers: gpt-5, gpt-5-mini, …" under a model setting. */
+  const modelLine = (adapterKey: string): Line => {
+    const t = ui.theme()
+    const adapter = String(getPath(loaded().config, adapterKey) ?? "")
+    const list = modelsFor(ui.client, adapter)
+    return {
+      segs: [
+        { text: `${adapter} offers: `, fg: t.textSubtle },
+        { text: clip(list.length ? list.join(", ") : "no list (type any model name)", Math.max(0, W() - 8 - adapter.length - 9)), fg: t.info },
+      ],
+    }
+  }
 
   const hint = () => {
     const s = current()
@@ -457,8 +486,8 @@ export function SettingsOverlay(props: { onClose: () => void; applyTheme: (name:
         ? "space toggle"
         : kind === "theme" || kind === "style"
           ? "←→ change · enter gallery"
-          : kind === "number"
-            ? "←→ adjust · enter type"
+          : kind === "number" || kind === "model"
+            ? `←→ ${kind === "model" ? "pick" : "adjust"} · enter type`
             : kind === "string" || kind === "list"
               ? "enter edit"
               : "←→ change"

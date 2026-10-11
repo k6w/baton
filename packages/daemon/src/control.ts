@@ -125,6 +125,7 @@ export function startControlServer(
       return { ok: true }
     },
     "agents.detect": async (p) => ({ adapters: await rt.registry.detectAll(p?.refresh) }),
+    "agents.models": async (p) => ({ models: await rt.registry.models(rt.config.agents[p.adapter]?.adapter ?? p.adapter) }),
     "bus.send": (p) => ({ messageId: rt.send({ from: p.from ?? "user", to: p.to, body: p.body, kind: p.kind, delivery: p.delivery }) }),
     "permission.respond": async (p, conn) => {
       await rt.resolvePermission(p.agentId, p.requestId, p.optionId, "user", conn.user)

@@ -96,7 +96,7 @@ export function Orchestrator(props: OrchestratorProps) {
   const suggestions = createMemo<Completion[]>(() => {
     ui.version()
     if (!props.focused) return []
-    return completions(ui.input(), ui.run, ui.config)
+    return completions(ui.input(), ui.run, ui.config, ui.client)
   })
 
   const infoLines = (): Line[] => {

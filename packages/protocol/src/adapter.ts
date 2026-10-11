@@ -115,6 +115,8 @@ export interface AgentAdapter {
   binaries: string[]
   detect(opts?: { command?: string }): Promise<DetectResult>
   capabilities(detected?: DetectResult): AdapterCapabilities
+  /** Models the agent can use, asked from the agent itself (e.g. `opencode models`). Falls back to capabilities().models. */
+  listModels?(detected?: DetectResult): Promise<string[]>
   start(cfg: SessionConfig, ctx: AdapterContext): Promise<AgentSession>
 }
 

@@ -651,7 +651,7 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
     else contexts.push("grid")
     contexts.push("global")
     // while completions are open, tab/up/down belong to the input
-    if (typing && ["tab", "up", "down"].includes(key.name) && completions(ui.input(), ui.run, ui.config).length > 0) return
+    if (typing && ["tab", "up", "down"].includes(key.name) && completions(ui.input(), ui.run, ui.config, ui.client).length > 0) return
     const id = ui.keymap.resolve(key, contexts)
     if (!id) return
     // while typing, only fire global commands bound to modifier / special keys

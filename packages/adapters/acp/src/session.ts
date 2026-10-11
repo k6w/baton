@@ -23,7 +23,7 @@ import type {
   ToolKind,
   ToolStatus,
 } from "@batonsh/protocol"
-import { augmentedPath, deferred, newId, readLines } from "@batonsh/protocol"
+import { augmentedPath, deferred, IS_WINDOWS, newId, readLines, spawnable } from "@batonsh/protocol"
 import { blockText, contentKey, diffContent, diffKey, mapKind, mapToolContent, rawSummary, toolName, toolTitle } from "./map.ts"
 import type { AcpPreset } from "./presets.ts"
 import { runAuthCheck } from "./presets.ts"
@@ -130,14 +130,16 @@ export class AcpSession implements AgentSession {
   async start(): Promise<void> {
     const { preset, bin, args } = this.opts
     this.emit("agent.status", { status: "starting", detail: `${bin} ${args.join(" ")}`.trim() })
-    this.proc = Bun.spawn([bin, ...args], {
+    const run = spawnable([bin, ...args])
+    this.proc = Bun.spawn(run.cmd, {
+      ...run.opts,
       cwd: this.cfg.cwd,
       env: { ...process.env, PATH: augmentedPath(), ...preset.env, ...this.cfg.env },
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
       // own process group, so shutdown reaches the agent's helpers (MCP servers, tool shells …)
-      detached: true,
+      detached: !IS_WINDOWS,
     })
     void this.pumpStderr()
     void this.proc.exited.then((code) => this.onExit(code))

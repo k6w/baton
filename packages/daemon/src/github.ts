@@ -29,7 +29,8 @@ export interface Issue {
 
 /** git@github.com:o/r.git · https://github.com/o/r(.git) · ssh://git@host/o/r → {owner, repo} */
 export function parseRemote(url: string): RepoRef | undefined {
-  const m = /[:/]([^/:]+)\/([^/]+?)(?:\.git)?\/?$/.exec(url.trim())
+  // "/" and, for local paths on Windows, "\\"
+  const m = /[:/\\]([^/:\\]+)[/\\]([^/\\]+?)(?:\.git)?[/\\]?$/.exec(url.trim())
   return m ? { owner: m[1] as string, repo: m[2] as string } : undefined
 }
 

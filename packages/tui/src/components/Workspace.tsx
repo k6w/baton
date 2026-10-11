@@ -83,14 +83,14 @@ export function ChangesOverlay(props: { onClose: () => void }) {
     if (cur.w.files.length > 8) out.push({ segs: [{ text: `  … ${cur.w.files.length - 8} more`, fg: t.textMuted }] })
     for (const c of cur.w.conflicts)
       out.push({
-        segs: [{ text: `⚠ ${c.kind === "lease" ? "claimed by" : "conflicts with"} ${whoFn(ui)(c.with).name}: ${c.files.join(", ")}`, fg: t.warning }],
+        segs: [{ text: `▲ ${c.kind === "lease" ? "claimed by" : "conflicts with"} ${whoFn(ui)(c.with).name}: ${c.files.join(", ")}`, fg: t.warning }],
       })
     if (cur.w.review?.notes) out.push({ segs: [{ text: `review: ${cur.w.review.notes.split("\n")[0]}`, fg: t.textMuted }] })
     if (cur.w.merge?.detail && cur.w.merge.status !== "merged") out.push({ segs: [{ text: cur.w.merge.detail.split("\n")[0] ?? "", fg: t.error }] })
     return out
   })
   const status = (w: WorkspaceView): string => {
-    if (w.conflicts.length) return "⚠ conflict"
+    if (w.conflicts.length) return "▲ conflict"
     if (w.merge?.status === "verifying" || w.merge?.status === "queued") return "◐ merging"
     if (w.merge?.status === "failed" || w.merge?.status === "conflict") return "✗ merge failed"
     if (w.review?.status === "approve") return "✓ approved"
@@ -315,7 +315,7 @@ const STATE_ICON: Record<string, string> = {
   submitted: "○",
   working: "◐",
   input_required: "?",
-  auth_required: "🔒",
+  auth_required: "⊘",
   completed: "✓",
   failed: "✗",
   canceled: "⊘",

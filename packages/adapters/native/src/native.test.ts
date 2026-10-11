@@ -208,7 +208,8 @@ describe("agent loop", () => {
     }
   })
 
-  test("interrupt during a long command kills its process group and ends the turn", async () => {
+  // skipped on Windows: POSIX process groups
+  test.skipIf(process.platform === "win32")("interrupt during a long command kills its process group and ends the turn", async () => {
     const fake = llm([{ toolCalls: [{ name: "run_command", args: { command: "sleep 30 & echo $! > child.pid; wait" } }] }, { text: "after" }])
     const cwd = tempWorkspace()
     const h = await start(fake, { cwd, approval: "yolo" })

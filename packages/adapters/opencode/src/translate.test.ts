@@ -314,7 +314,8 @@ describe("translator: synthetic edge cases", () => {
     expect(b?.data).toMatchObject({ status: "failed", summary: "exit 1" })
   })
 
-  test("apply_patch with metadata.files before/after", () => {
+  // skipped on Windows: POSIX path fixture
+  test.skipIf(process.platform === "win32")("apply_patch with metadata.files before/after", () => {
     const t = mk()
     const patchText = "*** Begin Patch\n*** Update File: src/x.ts\n@@\n-a\n+b\n*** End Patch"
     const out = t.handle(

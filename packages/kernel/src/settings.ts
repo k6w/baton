@@ -32,7 +32,7 @@ export interface SettingSection {
 export const SECTIONS: SettingSection[] = [
   { name: "Looks", icon: "◐", blurb: "Style (shapes) and theme (colors). Everything previews live." },
   { name: "Layout", icon: "▦", blurb: "How panes are arranged and what they show." },
-  { name: "Autonomy & safety", icon: "⚡", blurb: "How freely agents act, what they may do without you, and what it may cost." },
+  { name: "Autonomy & safety", icon: "↯", blurb: "How freely agents act, what they may do without you, and what it may cost." },
   { name: "Orchestrator", icon: "✱", blurb: "The lead agent: who plans and coordinates the work." },
   { name: "Agents", icon: "◆", blurb: "Defaults for the workers the orchestrator (or you) starts." },
   { name: "Workspaces", icon: "⎇", blurb: "Worktrees, reviews and merges — how changes land in your project." },

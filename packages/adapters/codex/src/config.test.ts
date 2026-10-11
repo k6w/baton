@@ -134,8 +134,8 @@ describe("git snapshots (shell edits)", () => {
     const params = diffMsg?.msg.params as { diff: string }
     const files = splitGitPatch(params.diff, "/workspace")
     expect(files.map((f) => [f.path, f.added, f.removed, f.created])).toEqual([
-      ["/workspace/hello.txt", 1, 0, true],
-      ["/workspace/notes.txt", 1, 1, false],
+      [join("/workspace", "hello.txt"), 1, 0, true],
+      [join("/workspace", "notes.txt"), 1, 1, false],
     ])
   })
 })

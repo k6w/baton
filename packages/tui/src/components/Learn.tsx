@@ -123,9 +123,9 @@ export function WelcomeOverlay(props: WelcomeProps) {
       [
         c("  │ "),
         { text: "you", fg: t.accent, bold: true },
-        c(" │ ──▶ │ "),
+        c(" │ ──► │ "),
         { text: "orchestrator", fg: t.primary, bold: true },
-        c(" │ ──▶  "),
+        c(" │ ──►  "),
         ...agent("codex"),
         c("─┼─ "),
         { text: "⇄ ", fg: t.accent, bold: true },
@@ -133,7 +133,7 @@ export function WelcomeOverlay(props: WelcomeProps) {
       ],
       [c("  ╰─────╯     ╰──────────────╯      "), ...agent("gemini"), c("─╯")],
       [c(`     ▲${" ".repeat(34)}│ `), { text: "each in its own git worktree", fg: t.textMuted }],
-      [c("     ╰──────"), { text: " you review & merge ", fg: t.success, bold: true }, c("◀───────╯")],
+      [c("     ╰──────"), { text: " you review & merge ", fg: t.success, bold: true }, c("◄───────╯")],
     ]
     const dw = Math.max(...diagram.map((r) => r.reduce((n, s) => n + sw(s.text), 0)))
     const pad = " ".repeat(Math.max(0, Math.floor((w - dw) / 2)))
@@ -363,9 +363,9 @@ export const LESSONS: Lesson[] = [
 Baton runs a small background daemon per project. It starts coding agents — Claude Code, Codex, OpenCode, Gemini, Cursor, any ACP agent — records everything they do and streams it here.
 
 \`\`\`
- you ──▶ orchestrator ──▶ claude-1 ┐
-                       ├─▶ codex-1  ├─ ⇄ bus
-                       └─▶ gemini-1 ┘
+ you ──► orchestrator ──► claude-1 ┐
+                       ├─► codex-1  ├─ ⇄ bus
+                       └─► gemini-1 ┘
 \`\`\`
 - Type a task **without @** and it goes to the **orchestrator**, an agent too. It decides how many agents to use, gives each a clear task, waits for results, reviews and merges.
 - Agents talk over the **bus**: they message each other, report progress and claim files.
@@ -389,15 +389,15 @@ Baton runs a small background daemon per project. It starts coding agents — Cl
   },
   {
     id: "autonomy",
-    icon: "⚡",
+    icon: "↯",
     title: "Autonomy & YOLO",
     try: { label: "cycle the autonomy level", action: "autonomy.cycle" },
     body: `## One dial for every agent
 Press \`shift+tab\` in the input to cycle:
 
 - **◆ normal**: each agent uses its own setting. Edits in worktrees are fine, risky commands ask you.
-- **⚡ auto**: agents act on their own; destructive commands (rm -rf, git push…) still ask.
-- **⚠ YOLO**: no prompts and no sandbox, for **every** agent: the lead, all workers, even ones already running.
+- **↯ auto**: agents act on their own; destructive commands (rm -rf, git push…) still ask.
+- **▲ YOLO**: no prompts and no sandbox, for **every** agent: the lead, all workers, even ones already running.
 - **◇ ask**: everyone asks before any edit or command.
 
 The level shows in the status bar and on the lead's frame (red in YOLO).
@@ -425,7 +425,7 @@ Every worker edits its own **git worktree** — a private copy of your project i
 
 \`\`\`
  project ─┬─ worktree: claude-1 ─┐
-          ├─ worktree: codex-1  ─┼─▶ review ─▶ merge ─▶ project
+          ├─ worktree: codex-1  ─┼─► review ─► merge ─► project
           └─ worktree: gemini-1 ─┘
 \`\`\`
 \`ctrl+d\` shows every worker's changes: \`enter\` diff, \`m\` merge, \`s\` sync, \`r\` review. Merges are three-way against your project as it is now and land in your working tree only — you commit.
@@ -472,7 +472,7 @@ A **style** sets the shapes: frames (boxes, tabs, title bars, rules, accent stri
   },
   {
     id: "yours",
-    icon: "⚙",
+    icon: "◍",
     title: "Make it yours",
     try: { label: "open settings", action: "settings.open" },
     body: `## Settings
@@ -615,7 +615,7 @@ const RECIPE_ICONS: Record<string, string> = {
   "plan-execute": "▤",
   "research-implement": "⌕",
   "implement-review": "⟲",
-  "debug-hypotheses": "⚗",
+  "debug-hypotheses": "∴",
   "test-first": "✓",
   shard: "⋔",
 }

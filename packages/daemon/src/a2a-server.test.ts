@@ -619,7 +619,8 @@ describe("A2A server: REST binding, signed card, push, persistence, attribution"
       ).task
       expect((await waitState(running.id, "TASK_STATE_WORKING", p1)).status.state).toBe("TASK_STATE_WORKING")
       p1.stop()
-      expect(statSync(file).mode & 0o777).toBe(0o600)
+      // POSIX permissions (Windows protects the profile folder with ACLs instead)
+      if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(0o600)
       const p2 = startA2AServer(d.runtime, { idleMs: 300, persist: file })
       try {
         const again = (await rpc("GetTask", { id: done.id }, { version: "1.0", server: p2, token: null })).result as any

@@ -179,7 +179,7 @@ export function StatusBar(props: { width: number }) {
             tone: t[AUTONOMY_INFO[level].token],
           }
         : anyYoloAgent(ui)
-          ? { text: "⚠ YOLO agent", fg: t.error, bold: true, tone: t.error }
+          ? { text: "▲ YOLO agent", fg: t.error, bold: true, tone: t.error }
           : undefined
     const vars: Record<string, StatusVar | undefined> = {
       dot: { text: "●", fg: running ? t.success : t.textSubtle },
@@ -195,7 +195,7 @@ export function StatusBar(props: { width: number }) {
       repo: { text: run.projectName, fg: t.statusText },
       branch: run.branch ? { text: run.branch, fg: t.statusText } : undefined,
       mode: { text: run.mode, fg: t.statusText },
-      approvals: run.approvals.size ? { text: `⚠ ${run.approvals.size}`, fg: t.warning, tone: t.warning } : undefined,
+      approvals: run.approvals.size ? { text: `▲ ${run.approvals.size}`, fg: t.warning, tone: t.warning } : undefined,
       trust: autonomy,
       autonomy,
       attention: (() => {
@@ -225,7 +225,7 @@ export function StatusBar(props: { width: number }) {
           files += w.files.length
           conflicts += w.conflicts.length ? 1 : 0
         }
-        if (conflicts) return { text: `⚠ ${conflicts} conflict${conflicts > 1 ? "s" : ""}`, fg: t.warning, tone: t.warning }
+        if (conflicts) return { text: `▲ ${conflicts} conflict${conflicts > 1 ? "s" : ""}`, fg: t.warning, tone: t.warning }
         return files ? { text: `⎇ ${files} unmerged`, fg: t.accent } : undefined
       })(),
     }

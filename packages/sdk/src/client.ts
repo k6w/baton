@@ -7,10 +7,10 @@
  *   await baton.submit("@codex-2 verify codex-1's fix")
  */
 import { existsSync, readFileSync } from "node:fs"
+import net from "node:net"
 import { join } from "node:path"
 import { findProjectRoot, projectPaths, RunState } from "@batonsh/kernel"
-import { type BatonEvent, CONTROL_PROTOCOL_VERSION, type ControlMethod, type ControlParams, type ControlResult, JsonRpcPeer } from "@batonsh/protocol"
-import type { Socket } from "bun"
+import { type BatonEvent, CONTROL_PROTOCOL_VERSION, type ControlMethod, type ControlParams, type ControlResult, ipcPath, JsonRpcPeer } from "@batonsh/protocol"
 
 export interface ConnectOptions {
   /** Directory inside the project (default: process.cwd()). */
@@ -40,8 +40,9 @@ export function discoverSocket(projectRoot: string): string {
 
 export class BatonClient {
   private peer: JsonRpcPeer
-  private socket?: Socket<undefined>
+  private socket?: { write(b: Uint8Array): number; end(): void; terminate(): void }
   private buf = ""
+  private retry?: ReturnType<typeof setTimeout>
   private decoder = new TextDecoder()
   private eventHandlers = new Map<string, (e: BatonEvent) => void>()
   private closeHandlers = new Set<(reason: string) => void>()
@@ -79,6 +80,12 @@ export class BatonClient {
       if (n >= chunk.byteLength) this.outbox.shift()
       else {
         this.outbox[0] = chunk.subarray(Math.max(0, n))
+        // drain may not come on Windows named pipes: retry on a timer too
+        if (!this.retry)
+          this.retry = setTimeout(() => {
+            this.retry = undefined
+            if (!this.closed) this.flush()
+          }, 10)
         return
       }
     }
@@ -94,28 +101,48 @@ export class BatonClient {
 
   static async open(socketPath: string, clientName = "sdk", user?: string): Promise<BatonClient> {
     const c = new BatonClient()
-    c.socket = await Bun.connect<undefined>({
-      unix: socketPath,
-      socket: {
-        data: (_s, chunk) => {
-          c.buf += c.decoder.decode(chunk, { stream: true })
-          let nl = c.buf.indexOf("\n")
-          while (nl >= 0) {
-            const line = c.buf.slice(0, nl)
-            c.buf = c.buf.slice(nl + 1)
-            if (line.trim()) {
-              try {
-                void c.peer.handle(JSON.parse(line))
-              } catch {}
-            }
-            nl = c.buf.indexOf("\n")
-          }
+    const onData = (chunk: Uint8Array) => {
+      c.buf += c.decoder.decode(chunk, { stream: true })
+      let nl = c.buf.indexOf("\n")
+      while (nl >= 0) {
+        const line = c.buf.slice(0, nl)
+        c.buf = c.buf.slice(nl + 1)
+        if (line.trim()) {
+          try {
+            void c.peer.handle(JSON.parse(line))
+          } catch {}
+        }
+        nl = c.buf.indexOf("\n")
+      }
+    }
+    if (process.platform === "win32") {
+      // node:net on the daemon's named pipe: it queues writes itself (Bun's sockets stall on busy pipes)
+      const s = await new Promise<net.Socket>((resolve, reject) => {
+        const sock = net.connect(ipcPath(socketPath))
+        sock.once("connect", () => resolve(sock))
+        sock.once("error", reject)
+      })
+      s.on("data", (b: Buffer) => onData(b))
+      s.on("close", () => c.handleClose("socket closed"))
+      s.on("error", () => c.handleClose("socket error"))
+      c.socket = {
+        write: (b) => {
+          s.write(b)
+          return b.byteLength
         },
-        drain: () => c.flush(),
-        close: () => c.handleClose("socket closed"),
-        error: () => c.handleClose("socket error"),
-      },
-    })
+        end: () => s.end(),
+        terminate: () => s.destroy(),
+      }
+    } else
+      c.socket = await Bun.connect<undefined>({
+        unix: socketPath,
+        socket: {
+          data: (_s, chunk) => onData(chunk),
+          drain: () => c.flush(),
+          close: () => c.handleClose("socket closed"),
+          error: () => c.handleClose("socket error"),
+        },
+      })
     c.flush()
     try {
       const hello = await c.call("hello", { client: clientName, version: CONTROL_PROTOCOL_VERSION, ...(user ? { user } : {}) }, 10_000)
@@ -263,8 +290,26 @@ export class LiveRun {
   }
 }
 
+/**
+ * Is there something to connect to? A socket file (POSIX), or on Windows — where the daemon
+ * listens on a named pipe that isn't a file — its pid file with a live process behind it.
+ */
+export function daemonListening(socketPath: string, projectRoot?: string): boolean {
+  if (process.platform !== "win32") return existsSync(socketPath)
+  if (!projectRoot) return true
+  try {
+    const pid = Number(readFileSync(projectPaths(projectRoot).pidFile, "utf8").trim())
+    if (!pid) return false
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function tryOpen(socketPath: string, name: string, user?: string): Promise<BatonClient | undefined> {
-  if (!existsSync(socketPath)) return undefined
+  // POSIX: no socket file, nothing to try; Windows: just try the pipe
+  if (process.platform !== "win32" && !existsSync(socketPath)) return undefined
   try {
     return await BatonClient.open(socketPath, name, user)
   } catch {

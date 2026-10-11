@@ -8,6 +8,12 @@ Five minutes from nothing to a team of agents working on your code.
 curl -fsSL https://raw.githubusercontent.com/k6w/baton/main/install.sh | sh
 ```
 
+On Windows, in PowerShell:
+
+```powershell
+irm https://k6w.github.io/baton/install.ps1 | iex
+```
+
 Or `npm i -g batonsh`, or `brew install k6w/tap/baton`. The installer verifies the
 download's checksum and puts a single `baton` binary in `~/.local/bin`. Nothing else is
 installed or changed. `baton update` keeps it current.

@@ -43,24 +43,30 @@ function ctxFor(events: AgentEvent[]) {
 }
 
 describe("opencode server process lifecycle", () => {
-  test("server dies with a SIGKILLed host (stdin-EOF watchdog kills the process group)", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "baton-oc-"))
-    const { bin, pidFile } = stubbornServer(dir)
-    const host = join(dir, "host.ts")
-    writeFileSync(
-      host,
-      `import { spawnWatched } from ${JSON.stringify(join(import.meta.dir, "index.ts"))}\nspawnWatched([${JSON.stringify(bin)}], {})\nconsole.log("spawned")\nawait Bun.sleep(60_000)\n`,
-    )
-    const hostProc = Bun.spawn(["bun", host], { stdout: "pipe", stderr: "inherit" })
-    const pid = await readPid(pidFile)
-    expect(alive(pid)).toBe(true)
-    hostProc.kill("SIGKILL")
-    await hostProc.exited
-    // TERM is ignored by the fake, so this also covers the KILL escalation
-    expect(await waitFor(() => !alive(pid), 8_000)).toBe(true)
-  }, 20_000)
+  // skipped on Windows: the /bin/sh watchdog and signals are POSIX-only
+  test.skipIf(process.platform === "win32")(
+    "server dies with a SIGKILLed host (stdin-EOF watchdog kills the process group)",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "baton-oc-"))
+      const { bin, pidFile } = stubbornServer(dir)
+      const host = join(dir, "host.ts")
+      writeFileSync(
+        host,
+        `import { spawnWatched } from ${JSON.stringify(join(import.meta.dir, "index.ts"))}\nspawnWatched([${JSON.stringify(bin)}], {})\nconsole.log("spawned")\nawait Bun.sleep(60_000)\n`,
+      )
+      const hostProc = Bun.spawn(["bun", host], { stdout: "pipe", stderr: "inherit" })
+      const pid = await readPid(pidFile)
+      expect(alive(pid)).toBe(true)
+      hostProc.kill("SIGKILL")
+      await hostProc.exited
+      // TERM is ignored by the fake, so this also covers the KILL escalation
+      expect(await waitFor(() => !alive(pid), 8_000)).toBe(true)
+    },
+    20_000,
+  )
 
-  test("server that exits during start: start() rejects without agent.exited", async () => {
+  // skipped on Windows: the /bin/sh watchdog and signals are POSIX-only
+  test.skipIf(process.platform === "win32")("server that exits during start: start() rejects without agent.exited", async () => {
     const dir = mkdtempSync(join(tmpdir(), "baton-oc-"))
     const bin = join(dir, "fake-opencode")
     writeFileSync(bin, "#!/bin/sh\necho boom >&2\nexit 3\n")
@@ -72,27 +78,32 @@ describe("opencode server process lifecycle", () => {
     expect(events.map((e) => e.type)).not.toContain("agent.exited")
   })
 
-  test("ready-wait timeout SIGKILLs a server that ignores SIGTERM", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "baton-oc-"))
-    const { bin, pidFile } = stubbornServer(dir)
-    const events: AgentEvent[] = []
-    const cfg = {
-      agentId: "a",
-      name: "t",
-      cwd: dir,
-      mcpServers: [],
-      approval: "ask",
-      command: bin,
-      options: { readyTimeoutMs: 500 },
-    } as unknown as SessionConfig
-    const t0 = Date.now()
-    await expect(opencodeAdapter.start(cfg, ctxFor(events))).rejects.toThrow(/not ready/)
-    const pid = await readPid(pidFile)
-    expect(await waitFor(() => !alive(pid), 1_000)).toBe(true)
-    expect(Date.now() - t0).toBeLessThan(3_000)
-    await Bun.sleep(100)
-    expect(events.map((e) => e.type)).not.toContain("agent.exited")
-  }, 10_000)
+  // skipped on Windows: the /bin/sh watchdog and signals are POSIX-only
+  test.skipIf(process.platform === "win32")(
+    "ready-wait timeout SIGKILLs a server that ignores SIGTERM",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "baton-oc-"))
+      const { bin, pidFile } = stubbornServer(dir)
+      const events: AgentEvent[] = []
+      const cfg = {
+        agentId: "a",
+        name: "t",
+        cwd: dir,
+        mcpServers: [],
+        approval: "ask",
+        command: bin,
+        options: { readyTimeoutMs: 500 },
+      } as unknown as SessionConfig
+      const t0 = Date.now()
+      await expect(opencodeAdapter.start(cfg, ctxFor(events))).rejects.toThrow(/not ready/)
+      const pid = await readPid(pidFile)
+      expect(await waitFor(() => !alive(pid), 1_000)).toBe(true)
+      expect(Date.now() - t0).toBeLessThan(3_000)
+      await Bun.sleep(100)
+      expect(events.map((e) => e.type)).not.toContain("agent.exited")
+    },
+    10_000,
+  )
 })
 
 /** Cheap model that reports cost; override with BATON_OPENCODE_MODEL. */

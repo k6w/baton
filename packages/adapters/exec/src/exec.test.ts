@@ -10,7 +10,8 @@ describe("exec adapter", () => {
     expect(cleanTerminal("\x1b[32mhello\x1b[0m\r\nworking 10%\rworking 100%\nab\bc")).toBe("hello\nworking 100%\nac")
   })
 
-  test("runs a turn in a PTY: streamed text, diffs from git, turn lifecycle", async () => {
+  // skipped on Windows: Bun's pseudo-terminal is POSIX-only (Windows uses pipes)
+  test.skipIf(process.platform === "win32")("runs a turn in a PTY: streamed text, diffs from git, turn lifecycle", async () => {
     const cwd = tempWorkspace({ "notes.txt": "teh quick fox\n" })
     Bun.spawnSync(["git", "-c", "user.email=a@b", "-c", "user.name=t", "commit", "-qam", "init", "--allow-empty"], { cwd })
     Bun.spawnSync(["git", "add", "-A"], { cwd })

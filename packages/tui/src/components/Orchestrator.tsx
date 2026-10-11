@@ -46,6 +46,16 @@ export function Orchestrator(props: OrchestratorProps) {
     return a && a.status !== "exited" ? { ...a } : undefined
   })
 
+  // approvals and plan status change on workers' events too: track them (not just the lead's version)
+  const pending = createMemo(
+    () => {
+      ui.version()
+      return { approvals: ui.run.approvals.size, plan: ui.run.plan?.status, tasks: ui.run.tasks.size }
+    },
+    undefined,
+    { equals: (a, b) => !!a && !!b && a.approvals === b.approvals && a.plan === b.plan && a.tasks === b.tasks },
+  )
+
   const workers = createMemo(
     () => {
       ui.version()
@@ -185,20 +195,21 @@ export function Orchestrator(props: OrchestratorProps) {
     const t = ui.theme()
     const frames = ui.spinnerFrames()
     const out: Line[] = []
-    if (ui.run.plan?.status === "proposed") {
+    const p = pending()
+    if (p.plan === "proposed") {
       out.push({
         segs: [
           { text: "◆ ", fg: t.warning, bold: true },
-          { text: `plan proposed: ${ui.run.tasks.size} tasks`, fg: t.warning, bold: true },
+          { text: `plan proposed: ${p.tasks} tasks`, fg: t.warning, bold: true },
           { text: " — ctrl+g to review · /plan approve · /plan reject <why>", fg: t.textMuted },
         ],
       })
     }
-    if (ui.run.approvals.size) {
+    if (p.approvals) {
       out.push({
         segs: [
-          { text: "⚠ ", fg: t.warning, bold: true },
-          { text: `${ui.run.approvals.size} approval${ui.run.approvals.size > 1 ? "s" : ""} pending`, fg: t.warning, bold: true },
+          { text: "▲ ", fg: t.warning, bold: true },
+          { text: `${p.approvals} approval${p.approvals > 1 ? "s" : ""} pending`, fg: t.warning, bold: true },
           { text: " — ctrl+a to review, ctrl+y to allow the oldest", fg: t.textMuted },
         ],
       })

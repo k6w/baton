@@ -80,8 +80,14 @@ notifications through.
 `baton watch` is a linear, screen-reader-friendly view with typed input.
 
 **Windows**
-Use WSL. A native Windows build exists (`baton-windows-x64.zip`), but agents and worktrees are
-tested on macOS and Linux.
+Baton runs natively on Windows 10 and 11 (x64; Windows on Arm runs it through emulation). Install
+with `irm https://k6w.github.io/baton/install.ps1 | iex` in PowerShell, and use Windows Terminal.
+- It needs [Git for Windows](https://git-scm.com/download/win) for worktrees. Its bash is also
+  what the Baton agent runs commands with (PowerShell otherwise).
+- Agent CLIs installed with npm (`codex.cmd`, `claude.cmd`, …) are found and started like any
+  other program. `baton doctor` shows what Baton found.
+- There are no OS sandboxes on Windows: for confinement, use `sandbox = "container"` with Docker
+  Desktop, or run Baton in WSL with the Linux installer.
 
 ## FAQ
 

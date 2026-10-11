@@ -115,7 +115,15 @@ writeFileSync(
     2,
   )}\n`,
 )
-copyFileSync("README.md", join(main, "README.md"))
+// npmjs.com can't resolve the README's relative links and images: point them at GitHub
+writeFileSync(
+  join(main, "README.md"),
+  readFileSync("README.md", "utf8")
+    .replace(/(src|href)="(?!https?:|#)([^"]+)"/g, (_m, attr: string, path: string) =>
+      attr === "src" ? `src="https://raw.githubusercontent.com/${REPO}/main/${path}"` : `href="https://github.com/${REPO}/blob/main/${path}"`,
+    )
+    .replace(/\]\((?!https?:|#)([^)]+)\)/g, (_m, path: string) => `](https://github.com/${REPO}/blob/main/${path})`),
+)
 copyFileSync("LICENSE", join(main, "LICENSE"))
 writeFileSync(
   join(main, "bin", "baton.js"),

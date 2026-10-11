@@ -4,6 +4,7 @@
  */
 import { existsSync, lstatSync, readlinkSync, realpathSync } from "node:fs"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { toSlash } from "@batonsh/protocol"
 
 export class PathEscapeError extends Error {
   constructor(p: string) {
@@ -36,7 +37,7 @@ export class Workspace {
 
   /** Workspace-relative display path ("." for the root). */
   rel(abs: string): string {
-    return relative(this.root, abs) || "."
+    return toSlash(relative(this.root, abs)) || "."
   }
 }
 

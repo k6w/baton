@@ -46,7 +46,7 @@ export const DEFAULT_COMMANDS: CommandDef[] = [
   { id: "web.open", title: "Phone & web: follow and approve from a browser (QR code)", context: "global", keys: [] },
   { id: "style.pick", title: "Choose style (shapes: frames, status bar, background)…", context: "global", keys: [] },
   { id: "toggle.background", title: "Toggle background: theme / terminal", context: "global", keys: [] },
-  { id: "focus.input", title: "Focus input", context: "grid", keys: ["i", "/", "@"] },
+  { id: "focus.input", title: "Focus input", context: "grid", keys: ["escape", "i", "/", "@"] },
   { id: "grid.left", title: "Move left", context: "grid", keys: ["left", "h"], hidden: true },
   { id: "grid.right", title: "Move right", context: "grid", keys: ["right", "l"], hidden: true },
   { id: "grid.up", title: "Move up", context: "grid", keys: ["up", "k"], hidden: true },

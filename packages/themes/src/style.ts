@@ -2,7 +2,7 @@
 
 export const SPINNERS: Record<string, { frames: string[]; interval: number }> = {
   // Claude-Code-like twinkling star (the screenshots' ✸/✻ glyphs)
-  star: { frames: ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"], interval: 110 },
+  star: { frames: ["·", "✢", "✱", "✶", "✻", "✽", "✻", "✶", "✱", "✢"], interval: 110 },
   dots: { frames: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], interval: 80 },
   circle: { frames: ["◐", "◓", "◑", "◒"], interval: 120 },
   moon: { frames: ["◒", "◐", "◓", "◑"], interval: 140 },

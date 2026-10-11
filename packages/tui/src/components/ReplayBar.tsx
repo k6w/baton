@@ -53,7 +53,7 @@ export function ReplayBar(props: { replay: Replay; width: number; onExit: () => 
     const pos = r.nowTs - r.startTs
     const head: Seg[] = [
       { text: " ", bg: t.backgroundElement === "transparent" ? undefined : t.backgroundElement },
-      { text: r.playing ? "▶ " : "⏸ ", fg: r.playing ? t.success : t.warning, bold: true },
+      { text: r.playing ? "► " : "‖ ", fg: r.playing ? t.success : t.warning, bold: true },
       { text: `REPLAY ${r.speed}× `, fg: t.text, bold: true },
     ]
     const time = ` ${formatDuration(pos)} / ${formatDuration(total)} `

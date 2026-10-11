@@ -29,7 +29,8 @@ export function HintBar(props: { width: number }) {
         [key("pane.diff", "d"), "diff"],
         [key("pane.interrupt", "x"), "stop"],
         ["hjkl", "move"],
-        [key("focus.next", "tab"), "input"],
+        [key("focus.next", "tab"), "next"],
+        [key("focus.input", "esc").replace("escape", "esc"), "input"],
         [key("app.help", "?"), "keys"],
       )
     else

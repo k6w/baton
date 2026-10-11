@@ -5,6 +5,29 @@ All notable changes to Baton. Versions follow [semver](https://semver.org); the 
 
 ## Unreleased
 
+## 0.2.0 — 2026-10-11
+
+**Windows**
+- Baton runs natively on Windows 10 and 11: `irm https://k6w.github.io/baton/install.ps1 | iex`,
+  or `npm i -g batonsh`. CI tests it on Windows alongside macOS and Linux.
+- The daemon listens on a named pipe. Processes are cleaned up with taskkill. npm-installed agent
+  CLIs (`codex.cmd`, …) are found and started. The Baton agent runs commands with Git Bash, or
+  PowerShell without it.
+- Worktrees are byte-exact copies even with `core.autocrlf` (no more CRLF churn on merges).
+- `baton update` replaces a running `baton.exe` safely. `baton doctor` checks Git for Windows.
+
+**Fixes**
+- The lead's pane no longer shows "approval pending" after you've approved.
+- In the agent grid, Tab moves to the next agent and Esc goes back to the input (the hint said so;
+  the keys didn't).
+- Plain text symbols instead of emoji everywhere in the app (↯ auto, ▲ YOLO, ‖ paused, …).
+- Inbox entries read "codex-1: Bash(…)".
+- Relative paths are shown with "/" on every platform.
+
+**Docs**
+- A new README and website with full docs, a plain-words guide to how Baton works, a command-line
+  reference, and a re-recorded demo.
+
 ## 0.1.0 — first release
 
 The first public version: one terminal for a team of coding agents.

@@ -5,6 +5,7 @@
  */
 import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, writeFileSync } from "node:fs"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { toSlash } from "@batonsh/protocol"
 
 export class WorkspaceFs {
   readonly root: string
@@ -31,7 +32,7 @@ export class WorkspaceFs {
   display(p: string): string {
     const abs = isAbsolute(p) ? resolve(p) : resolve(this.root, p)
     for (const r of [this.root, this.realRoot]) {
-      if (inside(r, abs)) return relative(r, abs) || "."
+      if (inside(r, abs)) return toSlash(relative(r, abs)) || "."
     }
     return p
   }

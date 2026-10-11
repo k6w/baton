@@ -634,7 +634,7 @@ export function workspaceLine(ws: WorkspaceLike | undefined, ctx: { theme: Resol
   if (ws.conflicts.length) {
     const c = ws.conflicts[0]!
     segs.push(
-      { text: "⚠ ", fg: t.warning },
+      { text: "▲ ", fg: t.warning },
       { text: `${c.kind === "lease" ? "claimed by" : "conflicts with"} ${ctx.who(c.with).name}`, fg: t.warning },
       { text: ` ${c.files.join(", ")}`, fg: t.textMuted },
     )

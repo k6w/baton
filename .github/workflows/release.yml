@@ -5,11 +5,20 @@ name: release
 #   MACOS_CERT_P12, MACOS_CERT_PASSWORD, MACOS_SIGN_IDENTITY   Developer ID signing (else ad-hoc)
 #   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD                notarization
 #   NPM_TOKEN                                                  npm: batonsh + batonsh-<platform>
+#     (or no token: add this repo + release.yml as a "trusted publisher" on each package on
+#      npmjs.com, then set the repository variable NPM_PUBLISH=oidc)
 #   HOMEBREW_TAP_TOKEN                                         push Formula/baton.rb to <owner>/homebrew-tap
 #   PyPI uses trusted publishing (environment "pypi"): no secret needed once configured on pypi.org.
 on:
   push:
     tags: ["v*"]
+  # re-run one publishing step for the current version (e.g. after setting up PyPI)
+  workflow_dispatch:
+    inputs:
+      only:
+        description: Publish only this
+        type: choice
+        options: [pypi]
 
 permissions:
   contents: write
@@ -35,6 +44,7 @@ jobs:
         timeout-minutes: 8
 
   build-macos:
+    if: github.event_name == 'push'
     needs: check
     runs-on: macos-latest
     timeout-minutes: 30
@@ -83,6 +93,7 @@ jobs:
           if-no-files-found: error
 
   build-other:
+    if: github.event_name == 'push'
     needs: check
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -103,6 +114,7 @@ jobs:
           if-no-files-found: error
 
   smoke-arm64:
+    if: github.event_name == 'push'
     needs: build-other
     runs-on: ubuntu-24.04-arm
     steps:
@@ -113,11 +125,13 @@ jobs:
       - run: chmod +x dist/baton-linux-arm64 && ./dist/baton-linux-arm64 --version
 
   publish:
+    if: github.event_name == 'push'
     needs: [build-macos, build-other, smoke-arm64]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      NPM_PUBLISH: ${{ vars.NPM_PUBLISH }}
       HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
     steps:
       - uses: actions/checkout@v4
@@ -138,15 +152,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" dist/release/* --title "Baton ${GITHUB_REF_NAME#v}" --notes-file dist/notes.md --verify-tag
       - uses: actions/setup-node@v4
-        if: env.NPM_TOKEN != ''
+        if: env.NPM_TOKEN != '' || env.NPM_PUBLISH == 'oidc'
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
       - name: npm
-        if: env.NPM_TOKEN != ''
+        if: env.NPM_TOKEN != '' || env.NPM_PUBLISH == 'oidc'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          # trusted publishing (OIDC, no token) needs npm >= 11.5
+          npm install -g npm@latest
           # platform packages first: batonsh depends on them
           for d in dist/npm/cli-*; do npm publish "$d" --access public --provenance; done
           npm publish dist/npm/batonsh --access public --provenance

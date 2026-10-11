@@ -18,6 +18,7 @@ import {
   augmentedPath,
   type DetectResult,
   diffStat,
+  IS_WINDOWS,
   killProcessTree,
   newId,
   type PromptInput,
@@ -25,6 +26,7 @@ import {
   parseVersion,
   runCapture,
   type SessionConfig,
+  spawnable,
   which,
 } from "@batonsh/protocol"
 
@@ -206,18 +208,27 @@ class ExecSession implements AgentSession {
     try {
       // inside the try: a failing snapshot (e.g. cwd vanished) must still end the turn
       before = snapshot(this.cfg.cwd)
-      this.proc = Bun.spawn([this.bin, ...args], {
-        cwd: this.cfg.cwd,
-        env: { ...process.env, PATH: augmentedPath(), NO_COLOR: "1", TERM: "dumb", ...this.preset.env, ...this.cfg.env },
-        terminal: {
-          cols: 160,
-          rows: 50,
-          data: (_t: unknown, d: Uint8Array) => {
-            buf += new TextDecoder().decode(d)
-            flush()
-          },
-        },
-      } as never)
+      const env = { ...process.env, PATH: augmentedPath(), NO_COLOR: "1", TERM: "dumb", ...this.preset.env, ...this.cfg.env }
+      const onData = (d: Uint8Array) => {
+        buf += new TextDecoder().decode(d)
+        flush()
+      }
+      if (IS_WINDOWS) {
+        // Bun's pseudo-terminal is POSIX-only: plain pipes (most CLIs print the same either way)
+        const run = spawnable([this.bin, ...args])
+        const p = Bun.spawn(run.cmd, { ...run.opts, cwd: this.cfg.cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" })
+        this.proc = p
+        const pump = async (st: ReadableStream<Uint8Array>) => {
+          for await (const chunk of st as unknown as AsyncIterable<Uint8Array>) onData(chunk)
+        }
+        void pump(p.stdout)
+        void pump(p.stderr)
+      } else
+        this.proc = Bun.spawn([this.bin, ...args], {
+          cwd: this.cfg.cwd,
+          env,
+          terminal: { cols: 160, rows: 50, data: (_t: unknown, d: Uint8Array) => onData(d) },
+        } as never)
       const code = await this.proc.exited
       flush()
       const final = cleanTerminal(buf).trim()
@@ -266,7 +277,8 @@ class ExecSession implements AgentSession {
     this.interrupted = true
     this.queue = []
     try {
-      ;(this.proc as unknown as { terminal?: { write(s: string): void } }).terminal?.write("\x03")
+      if (IS_WINDOWS) killProcessTree(this.proc?.pid, "SIGINT", this.proc ?? undefined)
+      else (this.proc as unknown as { terminal?: { write(s: string): void } }).terminal?.write("\x03")
     } catch {}
     this.escalate(1500, 6000)
   }
@@ -292,7 +304,8 @@ class ExecSession implements AgentSession {
     if (this.proc) {
       this.interrupted = true
       try {
-        ;(this.proc as unknown as { terminal?: { write(s: string): void } }).terminal?.write("\x03")
+        if (IS_WINDOWS) killProcessTree(this.proc?.pid, "SIGINT", this.proc ?? undefined)
+        else (this.proc as unknown as { terminal?: { write(s: string): void } }).terminal?.write("\x03")
       } catch {}
       this.escalate(300, 2000)
     }

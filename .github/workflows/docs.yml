@@ -26,12 +26,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.10
-      # the animated demo on the overview page (simulated agents, no tokens); the site builds without it too
-      - run: bun install --frozen-lockfile && bun scripts/build.ts && echo "$PWD/dist" >> "$GITHUB_PATH"
-      - uses: charmbracelet/vhs-action@v2
-        continue-on-error: true
-        with:
-          path: docs/demo.tape
+      # bunfig.toml preloads the Solid plugin, so even scripts need the dependencies
+      - run: bun install --frozen-lockfile
       - run: bun scripts/docs.ts --repo "$GITHUB_REPOSITORY"
       - uses: actions/upload-pages-artifact@v3
         with:

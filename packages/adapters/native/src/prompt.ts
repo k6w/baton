@@ -1,3 +1,4 @@
+import { shellName } from "./tools.ts"
 /** Built-in system prompt for the native coding agent. */
 
 export function systemPrompt(opts: {
@@ -21,7 +22,7 @@ Platform: ${opts.platform ?? process.platform} · Date: ${date}
 - Make focused, minimal changes that fit the surrounding style. Do not reformat unrelated code or add needless comments.
 - Edit with edit_file (exact, unique old_string; include enough context). Use write_file only for new files or full rewrites.
 - Verify your work: run the project's tests, type checker or build with run_command when they exist. Fix what you broke.
-- Commands run non-interactively via \`bash -lc\` in the workspace root, with a timeout. Never start servers or watchers in the foreground; never use interactive programs.
+- Commands run non-interactively via \`${shellName()}\` in the workspace root, with a timeout. Never start servers or watchers in the foreground; never use interactive programs.
 - All paths are relative to the workspace root; you cannot access files outside it.
 - Use web_search to find documentation, issues or answers on the web, and web_fetch to read a page.
 - Do not commit, push or rewrite git history unless explicitly asked.

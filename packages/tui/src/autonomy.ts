@@ -9,8 +9,8 @@ export const AUTONOMY_CYCLE: Autonomy[] = ["normal", "auto", "yolo", "ask"]
 export const AUTONOMY_INFO: Record<Autonomy, { label: string; glyph: string; token: "textMuted" | "info" | "warning" | "error"; blurb: string }> = {
   normal: { label: "normal", glyph: "◆", token: "textMuted", blurb: "each agent uses its own setting; edits are fine, risky commands ask" },
   ask: { label: "ask first", glyph: "◇", token: "info", blurb: "every agent asks before editing or running anything" },
-  auto: { label: "auto", glyph: "⚡", token: "warning", blurb: "agents act on their own; destructive commands still ask" },
-  yolo: { label: "YOLO", glyph: "⚠", token: "error", blurb: "no prompts, no sandbox, for every agent — your deny rules still apply" },
+  auto: { label: "auto", glyph: "↯", token: "warning", blurb: "agents act on their own; destructive commands still ask" },
+  yolo: { label: "YOLO", glyph: "▲", token: "error", blurb: "no prompts, no sandbox, for every agent — your deny rules still apply" },
 }
 
 /** Effective level for display: an explicit run level, or YOLO implied by config / an agent. */

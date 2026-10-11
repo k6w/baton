@@ -6,7 +6,7 @@ import { loadConfig, revokeTrust, trustEntries } from "@batonsh/kernel"
 import { startDaemon } from "./daemon.ts"
 
 const PLUGIN = `
-import { mockAdapter } from "${join(import.meta.dir, "../../adapters/mock/src/index.ts")}"
+import { mockAdapter } from ${JSON.stringify(join(import.meta.dir, "../../adapters/mock/src/index.ts"))}
 export default { name: "echo", adapters: [{ ...mockAdapter, id: "echo", displayName: "Echo Agent" }] }
 `
 
@@ -28,7 +28,12 @@ describe("plugins", () => {
     expect(held.map((e) => e.path)).toEqual(["plugins[0]"])
     trustEntries(root, held)
     d = await startDaemon({ projectRoot: root, ephemeral: true, socketPath: join(root, "b.sock") })
-    expect(d.runtime.registry.get("echo")?.displayName).toBe("Echo Agent")
+    // on failure, say why the plugin didn't load
+    const why = d.runtime.store
+      .query({})
+      .filter((e) => e.type === "log" && /plugin/.test(String((e.data as { message?: string }).message)))
+      .map((e) => (e.data as { message?: string }).message)
+    expect({ name: d.runtime.registry.get("echo")?.displayName, why }).toEqual({ name: "Echo Agent", why: [] })
     const info = await d.runtime.spawn({ adapter: "echo", options: { speed: 0 } })
     expect(info.adapter).toBe("echo")
     await d.stop()

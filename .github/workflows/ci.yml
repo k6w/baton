@@ -3,15 +3,19 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   test:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -24,9 +28,56 @@ jobs:
       - run: bun test
         # a full run takes ~1 minute; anything longer is a hang, not a slow test
         timeout-minutes: 8
+      - run: bun packages/daemon/scripts/check-inproc.ts
+        timeout-minutes: 2
       - run: bun scripts/build.ts
       - run: ./dist/baton --version
       - run: sh -n install.sh
+
+  # the real thing on Windows: the built .exe, a headless run through the daemon (named pipe,
+  # process spawning, SQLite, git worktrees) and the PowerShell installer
+  windows-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+      - run: bun install --frozen-lockfile
+      - run: bun scripts/build.ts
+      - name: version and doctor
+        shell: pwsh
+        run: |
+          ./dist/baton.exe --version
+          ./dist/baton.exe doctor
+      - name: headless run with the mock agent
+        shell: pwsh
+        run: |
+          $p = Join-Path $env:RUNNER_TEMP "proj"
+          New-Item -ItemType Directory $p | Out-Null
+          Set-Location $p
+          git init -q
+          git -c user.name=ci -c user.email=ci@ci commit -q --allow-empty -m init
+          New-Item -ItemType Directory .baton | Out-Null
+          Set-Content .baton/config.toml "[orchestrator]`nagent = `"mock`"`n"
+          & "$env:GITHUB_WORKSPACE/dist/baton.exe" run "say hello" --approve all --timeout 120
+          if ($LASTEXITCODE -ne 0) { Get-Content .baton/run/batond.log -ErrorAction SilentlyContinue; exit 1 }
+          & "$env:GITHUB_WORKSPACE/dist/baton.exe" ps
+          & "$env:GITHUB_WORKSPACE/dist/baton.exe" stop
+      - name: detects a real agent CLI installed by npm (.cmd shim)
+        shell: pwsh
+        run: |
+          npm install -g @openai/codex --silent
+          $out = & ./dist/baton.exe agents | Out-String
+          Write-Host $out
+          if ($out -notmatch "codex\s+Codex\s+v\d") { Write-Error "codex was not detected"; exit 1 }
+      - name: PowerShell installer
+        shell: pwsh
+        run: |
+          $env:BATON_INSTALL_DIR = Join-Path $env:RUNNER_TEMP "bin"
+          ./install.ps1
+          & (Join-Path $env:BATON_INSTALL_DIR "baton.exe") --version
 
   python:
     runs-on: ubuntu-latest

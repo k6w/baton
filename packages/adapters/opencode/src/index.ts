@@ -4,7 +4,7 @@
  * SSE `/event` stream into BEP.
  */
 import type { AdapterCapabilities, AdapterContext, AgentAdapter, AgentEvent, AgentSession, DetectResult, PromptInput, SessionConfig } from "@batonsh/protocol"
-import { augmentedPath, deferred, defineAdapter, killProcessTree, parseVersion, readLines, runCapture, which } from "@batonsh/protocol"
+import { augmentedPath, deferred, defineAdapter, IS_WINDOWS, killProcessTree, parseVersion, readLines, runCapture, spawnable, which } from "@batonsh/protocol"
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2"
 import { buildConfig, splitModel } from "./config.ts"
 import { type OcEvent, OpencodeTranslator, replyFor } from "./translate.ts"
@@ -41,6 +41,11 @@ export type ServeProcess = Bun.Subprocess<"pipe", "pipe", "pipe">
 
 /** Spawn `cmd` in its own process group behind the stdin-EOF watchdog (see WATCHDOG). */
 export function spawnWatched(cmd: string[], opts: { cwd?: string; env?: Record<string, string | undefined> }): ServeProcess {
+  if (IS_WINDOWS) {
+    // no sh, no process groups: start it directly; close() ends the whole tree with taskkill
+    const run = spawnable(cmd)
+    return Bun.spawn(run.cmd, { ...run.opts, cwd: opts.cwd, env: opts.env, stdin: "pipe", stdout: "pipe", stderr: "pipe" })
+  }
   return Bun.spawn(["/bin/sh", "-c", WATCHDOG, "baton-opencode", ...cmd], {
     cwd: opts.cwd,
     env: opts.env,
@@ -53,7 +58,7 @@ export function spawnWatched(cmd: string[], opts: { cwd?: string; env?: Record<s
 
 function groupAlive(pgid: number): boolean {
   try {
-    process.kill(-pgid, 0)
+    process.kill(IS_WINDOWS ? pgid : -pgid, 0)
     return true
   } catch (e) {
     return (e as { code?: string }).code === "EPERM"

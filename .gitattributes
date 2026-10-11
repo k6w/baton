@@ -1,0 +1,5 @@
+# LF everywhere (Windows checkouts too): tests, fixtures and the linter expect it
+* text=auto eol=lf
+*.png binary
+*.gif binary
+*.ico binary

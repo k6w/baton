@@ -4,7 +4,7 @@
  * `outputByteLimit` (as the spec requires, at a character boundary).
  */
 import { isAbsolute, resolve } from "node:path"
-import { augmentedPath, killProcessTree, newId, which } from "@batonsh/protocol"
+import { augmentedPath, IS_WINDOWS, killProcessTree, newId, which } from "@batonsh/protocol"
 
 export interface TerminalExit {
   exitCode: number | null
@@ -66,7 +66,7 @@ export class TerminalManager {
     const cmd = o.args && o.args.length > 0 ? [o.command, ...o.args] : [this.shell, "-c", o.command]
     const display = o.args && o.args.length > 0 ? [o.command, ...o.args].join(" ") : o.command
     // Own process group, so kill/release reach the whole tree (`cmd1; cmd2`, pipelines, `&` jobs).
-    const proc = Bun.spawn(cmd, { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true })
+    const proc = Bun.spawn(cmd, { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: !IS_WINDOWS })
     const limit = o.outputByteLimit != null && o.outputByteLimit >= 0 ? o.outputByteLimit : DEFAULT_LIMIT
     const t: Term = {
       id,

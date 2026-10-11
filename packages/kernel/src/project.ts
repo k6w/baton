@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
 import { basename, dirname, join, resolve } from "node:path"
 
@@ -50,7 +51,11 @@ export function projectPaths(root: string) {
     localConfig: join(dir, "config.local.toml"),
     state: join(dir, "state.db"),
     run: join(dir, "run"),
-    socket: join(dir, "run", "baton.sock"),
+    // Windows has no socket files: a named pipe, unique per project
+    socket:
+      process.platform === "win32"
+        ? `\\\\.\\pipe\\baton-${createHash("sha1").update(resolve(root).toLowerCase()).digest("hex").slice(0, 12)}`
+        : join(dir, "run", "baton.sock"),
     pidFile: join(dir, "run", "batond.pid"),
     log: join(dir, "run", "batond.log"),
     playbooks: join(dir, "playbooks"),

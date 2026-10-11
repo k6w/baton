@@ -29,7 +29,7 @@ arch=$(uname -m)
 case "$os" in
   Darwin) os=darwin ;;
   Linux) os=linux ;;
-  MINGW* | MSYS* | CYGWIN*) die "on Windows, download baton-windows-x64.zip from https://github.com/$REPO/releases (or use WSL)" ;;
+  MINGW* | MSYS* | CYGWIN*) die "on Windows, run this in PowerShell instead:  irm https://k6w.github.io/baton/install.ps1 | iex" ;;
   *) die "unsupported OS: $os" ;;
 esac
 case "$arch" in
@@ -48,7 +48,13 @@ if [ "$os" = linux ] && { [ -f /etc/alpine-release ] || ldd --version 2>&1 | gre
 fi
 
 if [ -z "$VERSION" ]; then
-  VERSION=$(fetch "https://api.github.com/repos/$REPO/releases/latest" | sed -n 's/.*"tag_name": *"v\{0,1\}\([^"]*\)".*/\1/p' | head -n1)
+  # releases/latest redirects to .../tag/vX.Y.Z: no API call, so no API rate limit
+  if have curl; then
+    VERSION=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" 2>/dev/null | sed -n 's#.*/tag/v\{0,1\}##p')
+  fi
+  if [ -z "$VERSION" ]; then
+    VERSION=$(fetch "https://api.github.com/repos/$REPO/releases/latest" | sed -n 's/.*"tag_name": *"v\{0,1\}\([^"]*\)".*/\1/p' | head -n1)
+  fi
   [ -n "$VERSION" ] || die "could not find the latest release of $REPO"
 fi
 VERSION=${VERSION#v}

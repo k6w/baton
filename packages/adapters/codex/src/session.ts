@@ -7,7 +7,7 @@
  */
 import { appendFileSync } from "node:fs"
 import type { AdapterContext, AgentSession, ApprovalMode, PromptInput, SessionConfig } from "@batonsh/protocol"
-import { augmentedPath, deferred, type JsonRpcMessage, JsonRpcPeer, killProcessTree, readLines } from "@batonsh/protocol"
+import { augmentedPath, deferred, IS_WINDOWS, type JsonRpcMessage, JsonRpcPeer, killProcessTree, readLines, spawnable } from "@batonsh/protocol"
 import { type ApprovalSettings, approvalSettings, appServerArgs, promptText, sandboxPolicyFor } from "./config.ts"
 import type { InitializeParams } from "./generated/InitializeParams.ts"
 import type { ThreadForkParams } from "./generated/v2/ThreadForkParams.ts"
@@ -84,14 +84,16 @@ export class CodexSession implements AgentSession {
     const { args, env, modelProvider } = appServerArgs(this.cfg)
     this.ctx.emit({ type: "agent.status", data: { status: "starting" } })
     this.ctx.log("info", `spawning ${this.opts.bin} ${args.join(" ")}`)
-    this.proc = Bun.spawn([this.opts.bin, ...args], {
+    const run = spawnable([this.opts.bin, ...args])
+    this.proc = Bun.spawn(run.cmd, {
+      ...run.opts,
       cwd: this.cfg.cwd,
       env: { ...process.env, PATH: augmentedPath(), ...env, ...this.cfg.env },
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
       // Own process group so close() can take down anything codex spawned (shell tools, MCP servers).
-      detached: true,
+      detached: !IS_WINDOWS,
     })
     this.peer = new JsonRpcPeer((msg) => this.write(msg), { includeVersion: false })
     this.stdoutDone = this.readStdout()

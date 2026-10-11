@@ -35,7 +35,7 @@ import {
   trustEntries,
 } from "@batonsh/kernel"
 import { BATON_VERSION, CONTROL_PROTOCOL_VERSION, ControlErrorCode, REQUIRED_PARAMS } from "@batonsh/protocol"
-import { BatonClient, connect, discoverSocket } from "@batonsh/sdk"
+import { BatonClient, connect, daemonListening, discoverSocket } from "@batonsh/sdk"
 import { listThemes, loadTheme } from "@batonsh/themes"
 import { runHeadless } from "./headless.ts"
 import { detectAgents, initProject, isInitialized } from "./init.ts"
@@ -94,7 +94,9 @@ function parseArgs(argv: string[]): Args {
 /** How to re-launch ourselves as a detached daemon (works from source and compiled). */
 function selfCommand(): string[] {
   const main = Bun.main
-  const compiled = main.startsWith("/$bunfs/") || main.startsWith("B:\\~BUN")
+  // compiled: scripts/build.ts stamps BATON_TARGET; the embedded entry lives in Bun's virtual
+  // filesystem (/$bunfs/… on POSIX, B:\~BUN\… or B:/~BUN/… on Windows)
+  const compiled = !!process.env.BATON_TARGET || /\$bunfs|~BUN/.test(main)
   return compiled ? [process.execPath] : [process.execPath, main]
 }
 
@@ -191,11 +193,12 @@ async function cmdDemo(args: Args) {
     ephemeral: true,
     socketPath,
     demo: { workers: Number(args.flags.workers) || 5, speed: Number(args.flags.speed) || 1 },
-    overrides: { project: { name: "portfolio" }, ...overridesFrom(args.flags) },
+    overrides: { project: { name: "portfolio" }, orchestrator: { model: "simulated" }, ...overridesFrom(args.flags) },
   })
   const client = await BatonClient.open(socketPath, "tui", defaultUser())
-  const task = args._.join(" ").trim() || "fix the typo in the README"
-  setTimeout(() => void client.submit(task).catch(() => {}), 600)
+  // --no-task: wait for you to type one
+  const task = args.flags["no-task"] ? "" : args._.join(" ").trim() || "fix the typo in the README"
+  if (task) setTimeout(() => void client.submit(task).catch(() => {}), 600)
   await startTui(client, root, args.flags)
   await daemon.stop()
   process.exit(0)
@@ -336,7 +339,11 @@ async function cmdDoctor() {
   if (process.env.COLORTERM === "truecolor" || process.env.COLORTERM === "24bit") ok("truecolor")
   else warn("COLORTERM is not truecolor — colors may be approximated (export COLORTERM=truecolor)")
   if (process.env.TMUX) for (const [good, msg] of tmuxChecks()) (good ? ok : warn)(msg)
-  if (process.env.WT_SESSION) ok("Windows Terminal — run Baton inside WSL for agents and worktrees")
+  if (process.env.WT_SESSION) ok("Windows Terminal (truecolor, good key support)")
+  if (process.platform === "win32" && !Bun.which("git"))
+    bad("git is not on PATH — install Git for Windows (https://git-scm.com/download/win); Baton needs it for worktrees")
+  else if (process.platform === "win32" && !Bun.which("bash"))
+    warn("no bash found — the Baton agent's commands will run in PowerShell (Git for Windows adds bash)")
   if (process.env.TERM_PROGRAM === "Apple_Terminal") warn("Terminal.app has no truecolor or inline images — iTerm2, Ghostty, WezTerm or Kitty look much better")
   if (/kitty|ghostty|wezterm|iterm|konsole|warp/i.test(term)) ok("likely supports inline images (logos)")
   else warn("terminal may not support Kitty/Sixel images — logos fall back to glyphs (ui.icons)")
@@ -366,7 +373,7 @@ async function cmdDoctor() {
     warn(`${loaded.untrusted.length} project setting(s) held back until trusted: ${loaded.untrusted.map((e) => e.path).join(", ")} — run \`baton trust\``)
   console.log(c.bold("\nDaemon"))
   const sock = discoverSocket(root)
-  if (existsSync(sock)) {
+  if (daemonListening(sock, root)) {
     try {
       const cl = await BatonClient.open(sock, "doctor")
       const snap = await cl.call("state.snapshot", {})
@@ -447,7 +454,7 @@ async function cmdLogin(args: Args) {
 async function cmdPs() {
   const root = findProjectRoot(process.cwd())
   const sock = discoverSocket(root)
-  if (!existsSync(sock)) return console.log(c.dim("no daemon running for this project"))
+  if (!daemonListening(sock, root)) return console.log(c.dim("no daemon running for this project"))
   const cl = await BatonClient.open(sock, "cli")
   const snap = await cl.call("state.snapshot", {})
   console.log(`${c.bold("batond")} pid ${cl.daemonPid} · run ${snap.runId} · mode ${snap.mode}`)
@@ -462,7 +469,7 @@ async function cmdPs() {
 async function cmdStop() {
   const root = findProjectRoot(process.cwd())
   const sock = discoverSocket(root)
-  if (!existsSync(sock)) return console.log(c.dim("no daemon running"))
+  if (!daemonListening(sock, root)) return console.log(c.dim("no daemon running"))
   const cl = await BatonClient.open(sock, "cli")
   await cl.shutdown()
   cl.close()
@@ -497,7 +504,7 @@ async function cmdConfig(args: Args) {
     }
   } else if (sub === "reload") {
     const sock = discoverSocket(root)
-    if (!existsSync(sock)) return console.log(c.dim("no daemon running — the config applies when it starts"))
+    if (!daemonListening(sock, root)) return console.log(c.dim("no daemon running — the config applies when it starts"))
     const cl = await BatonClient.open(sock, "cli")
     const { errors } = await cl.call("config.reload", {})
     cl.close()

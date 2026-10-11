@@ -5,7 +5,7 @@
 import { mkdirSync, readdirSync, statSync } from "node:fs"
 import { readdir, readFile, stat, writeFile } from "node:fs/promises"
 import { dirname, extname, join, relative } from "node:path"
-import { augmentedPath, diffLines, diffStat, killProcessTree, runCapture, type ToolContent, type ToolKind, which } from "@batonsh/protocol"
+import { augmentedPath, diffLines, diffStat, IS_WINDOWS, killProcessTree, runCapture, type ToolContent, type ToolKind, toSlash, which } from "@batonsh/protocol"
 import { z } from "zod"
 import type { Sandbox } from "./sandbox.ts"
 import { FETCH_MAX_CHARS, FetchRefused, webFetch } from "./webfetch.ts"
@@ -308,7 +308,7 @@ async function jsGrep(
   else files.push(target)
   for (const f of files) {
     if (signal.aborted || out.length >= max) break
-    const rel = relative(ws.root, f)
+    const rel = toSlash(relative(ws.root, f))
     if (!matchesGlob(rel)) continue
     let buf: Buffer
     try {
@@ -405,8 +405,7 @@ const editFileTool: BuiltinTool<{ path: string; old_string: string; new_string: 
 
 const runCommandTool: BuiltinTool<{ command: string; timeout_ms?: number; description?: string }> = {
   name: "run_command",
-  description:
-    "Run a shell command with `bash -lc` in the workspace root. Returns combined stdout/stderr and the exit code. Non-interactive only (no prompts, no editors, no pagers); long output is truncated. Do not start long-running servers in the foreground.",
+  description: `Run a shell command with \`${shellName()}\` in the workspace root. Returns combined stdout/stderr and the exit code. Non-interactive only (no prompts, no editors, no pagers); long output is truncated. Do not start long-running servers in the foreground.`,
   schema: z.object({
     command: z.string().describe("The shell command"),
     timeout_ms: z.number().int().min(1000).max(1_800_000).optional().describe("Timeout in ms (default 120000)"),
@@ -421,8 +420,25 @@ const runCommandTool: BuiltinTool<{ command: string; timeout_ms?: number; descri
   },
 }
 
+/**
+ * The shell run_command uses: bash everywhere it exists (on Windows: Git Bash, which comes with
+ * Git for Windows), otherwise PowerShell on Windows.
+ */
+export function shellArgv(command: string): string[] {
+  if (!IS_WINDOWS) return ["bash", "-lc", command]
+  const bash = which("bash")
+  // C:\Windows\System32\bash.exe is WSL's launcher, not a shell for this filesystem
+  if (bash && !/system32/i.test(bash)) return [bash, "-lc", command]
+  return ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command]
+}
+
+export function shellName(): string {
+  const a = shellArgv("")
+  return a[0]?.toLowerCase().includes("powershell") ? "powershell -Command" : "bash -lc"
+}
+
 async function runCommand(command: string, timeoutMs: number, ctx: ToolRunContext): Promise<ToolOutcome> {
-  const argv = ["bash", "-lc", command]
+  const argv = shellArgv(command)
   const proc = Bun.spawn(ctx.sandbox ? ctx.sandbox.wrap(argv) : argv, {
     cwd: ctx.ws.root,
     env: { ...process.env, PATH: augmentedPath(), ...ctx.env, PAGER: "cat", GIT_PAGER: "cat", GIT_TERMINAL_PROMPT: "0", CI: ctx.env.CI ?? "1" },
@@ -430,7 +446,7 @@ async function runCommand(command: string, timeoutMs: number, ctx: ToolRunContex
     stdout: "pipe",
     stderr: "pipe",
     // own process group: timeout / interrupt kill everything the command started
-    detached: true,
+    detached: !IS_WINDOWS,
   })
   const cap = ctx.maxOutputChars
   let head = ""

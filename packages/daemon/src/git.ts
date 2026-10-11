@@ -22,7 +22,9 @@ export interface GitResult {
 }
 
 export async function git(cwd: string, args: string[], opts: { env?: Record<string, string>; input?: string; allowFail?: boolean } = {}): Promise<GitResult> {
-  const proc = Bun.spawn(["git", ...args], {
+  // byte-exact copies: no CRLF conversion (core.autocrlf=true is common on Windows) when Baton
+  // snapshots the project, fills a worktree or merges back
+  const proc = Bun.spawn(["git", "-c", "core.autocrlf=false", "-c", "core.safecrlf=false", ...args], {
     cwd,
     env: { ...process.env, ...IDENTITY, GIT_TERMINAL_PROMPT: "0", ...opts.env },
     stdin: opts.input !== undefined ? new TextEncoder().encode(opts.input) : "ignore",

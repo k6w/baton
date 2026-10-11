@@ -27,6 +27,11 @@ export function attachDemoDirector(rt: Runtime, opts: { workers?: number; speed?
     }, ms * speed)
     timers.add(t)
   }
+  const nextName = (vendor: string) => {
+    let k = 1
+    while (rt.findAgent(`${vendor}-${k}`)) k++
+    return `${vendor}-${k}`
+  }
   const unsubscribe = rt.store.subscribe((e) => {
     if (e.type !== "turn.started" || !e.agentId) return
     const orch = rt.orchestrator()
@@ -35,16 +40,20 @@ export function attachDemoDirector(rt: Runtime, opts: { workers?: number; speed?
     if (prompt.startsWith("[baton]")) return // results coming back, not a new request
     const m = /(\d+)\s*(?:agents?|workers?|x|×)/i.exec(prompt)
     const n = Math.min(10, Math.max(1, m ? Number(m[1]) : (opts.workers ?? 5)))
-    const adapterPersona = /claude/i.test(prompt) ? "claude" : /mixed|both/i.test(prompt) ? "mixed" : "codex"
+    // a mixed team by default (what Baton is for); "claude" / "codex" in the prompt pins one vendor
+    const adapterPersona = /\bclaude\b/i.test(prompt) ? "claude" : /\bcodex\b/i.test(prompt) ? "codex" : "mixed"
+    const TEAM = ["claude", "codex", "gemini", "opencode"] as const
     rt.emit({ type: "orch.note", data: { text: `Dispatching to ${n} agents in parallel.` } }, orch.info.agentId)
     void (async () => {
       const spawned: string[] = []
       for (let i = 0; i < n; i++) {
-        const persona = adapterPersona === "mixed" ? (i % 2 ? "codex" : "claude") : adapterPersona
+        const vendor: string = adapterPersona === "mixed" ? (TEAM[i % TEAM.length] ?? "claude") : adapterPersona
+        // the mock speaks claude or codex dialect; others use the generic one
+        const persona = vendor === "claude" || vendor === "codex" ? vendor : "generic"
         try {
           const info = await rt.spawn({
             adapter: "mock",
-            name: `${persona}-${i + 1}`,
+            name: nextName(vendor),
             label: LABELS[i % LABELS.length],
             parentId: orch.info.agentId,
             approval: i === 1 ? "ask" : "auto",

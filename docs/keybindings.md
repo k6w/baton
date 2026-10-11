@@ -44,7 +44,7 @@ The `?` overlay lists your current bindings and flags any conflicts.
 | `pane.diff` | `d` | grid |
 | `layout.cycle` | `ctrl+l` | global |
 | `focus.next` / `focus.prev` | `tab` / `shift+tab` | global |
-| `focus.input` | `i`, `/`, `@` | grid |
+| `focus.input` | `esc`, `i`, `/`, `@` | grid |
 | `grid.left/right/up/down` | arrows, `hjkl` | grid |
 | `grid.pageDown` / `grid.pageUp` | `pagedown` / `pageup` | global |
 | `pane.peek` (peek & reply / answer its approval) | `space` | grid |

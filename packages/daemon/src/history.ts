@@ -109,7 +109,7 @@ export function exportRun(rt: Runtime, runId: string, format: "md" | "jsonl" | "
         out.push(`- **review** of ${name(e.data.author)} by ${name(e.data.reviewer)}: ${e.data.verdict} — ${e.data.notes.split("\n")[0]}`)
         break
       case "error":
-        out.push(`- ⚠ ${name(e.agentId)}: ${e.data.message}`)
+        out.push(`- ▲ ${name(e.agentId)}: ${e.data.message}`)
         break
     }
   }

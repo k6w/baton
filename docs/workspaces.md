@@ -21,7 +21,7 @@ your project (working tree, your index untouched)
    - Worktrees live outside the repository, so test runners and file watchers in your project never see them.
 2. **Work.** After each edit or command, Baton recomputes the worker's changes and shows them on its card (`⎇ 3 files +12 −4`).
    - If two workers' changes overlap, Baton checks them with `git merge-tree`.
-   - When they truly conflict, both cards show `⚠ conflicts with …` and the orchestrator is told **before** anyone tries to merge.
+   - When they truly conflict, both cards show `▲ conflicts with …` and the orchestrator is told **before** anyone tries to merge.
 3. **Review** (optional or required). `request_review` (the orchestrator tool), `/review <agent>` or `r` in the Changes overlay starts the review.
    - Baton spawns a reviewer from a **different vendor** (Codex reviews Claude's work, Claude reviews Codex's, …) inside the author's worktree, with the full diff in its prompt.
    - The reviewer answers with `submit_review(approve | changes_requested, notes)`.
@@ -40,8 +40,8 @@ your project (working tree, your index untouched)
 
 | | |
 |---|---|
-| card badge | `⎇ 2 files +9 −1 · review ✓`, `⚠ conflicts with codex-2 a.ts`, `◐ verifying…`, `✓ merged`, `⚑ src/auth/**` (file claims) |
-| status bar | `⎇ 7 unmerged` or `⚠ 1 conflict` |
+| card badge | `⎇ 2 files +9 −1 · review ✓`, `▲ conflicts with codex-2 a.ts`, `◐ verifying…`, `✓ merged`, `⚑ src/auth/**` (file claims) |
+| status bar | `⎇ 7 unmerged` or `▲ 1 conflict` |
 | `ctrl+d` Changes | every worker branch with its files, `+/−`, review and merge state · `enter` diff · `m` merge · `s` sync · `r` review |
 | `d` on a focused card | that agent's diff (`m` merges from there) |
 | `ctrl+g` Task plan | the orchestrator's plan with states, owners and dependencies · `a` approve / `x` reject when a plan is proposed |

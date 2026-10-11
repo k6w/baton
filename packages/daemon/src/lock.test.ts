@@ -19,7 +19,8 @@ test("two daemons for one project: the second refuses instead of stealing the so
   expect(ok.length).toBe(1)
   expect(String((failed[0] as PromiseRejectedResult).reason)).toContain("already")
   const d = (ok[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof startDaemon>>>).value
-  expect(existsSync(socketPath)).toBe(true)
+  // a socket file on POSIX (Windows uses a named pipe)
+  if (process.platform !== "win32") expect(existsSync(socketPath)).toBe(true)
   await d.stop()
   // the lock is released: a new daemon starts fine
   const again = await startDaemon({ projectRoot: root, socketPath, overrides })

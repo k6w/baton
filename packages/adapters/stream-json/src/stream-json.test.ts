@@ -110,7 +110,8 @@ describe("stream-json: claude dialect (fake CLI)", () => {
     // the token travels in a private file, never on the command line
     expect(argv.join(" ")).not.toContain("Bearer")
     const mcpFile = argv[argv.indexOf("--mcp-config") + 1] ?? ""
-    expect(statSync(mcpFile).mode & 0o777).toBe(0o600)
+    // POSIX permissions (Windows protects the profile folder with ACLs instead)
+    if (process.platform !== "win32") expect(statSync(mcpFile).mode & 0o777).toBe(0o600)
     const mcp = JSON.parse(readFileSync(mcpFile, "utf8"))
     expect(mcp).toEqual({ mcpServers: { baton: { type: "http", url: "http://127.0.0.1:9/mcp", headers: { authorization: "Bearer x" } } } })
     const stdin = r.stdin()
@@ -304,7 +305,8 @@ describe("stream-json: amp dialect (fake CLI)", () => {
     expect(r.h.ofType("turn.completed")).toHaveLength(2)
   })
 
-  test("interrupt = SIGINT; exited CLI is resumed with `threads continue`", async () => {
+  // skipped on Windows: POSIX signals
+  test.skipIf(process.platform === "win32")("interrupt = SIGINT; exited CLI is resumed with `threads continue`", async () => {
     const r = await run(ampPreset, "amp")
     await r.h.session.prompt({ text: "slow fix" })
     await r.h.waitFor("tool.update", (e) => e.data.status === "completed", 10_000)

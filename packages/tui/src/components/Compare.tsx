@@ -79,7 +79,7 @@ export function CompareOverlay(props: { onClose: () => void; onDiff: (agentId: s
       row("status", (i) => ({ text: list[i]!.status, fg: list[i]!.status === "busy" ? t.stateBusy : t.textMuted })),
       row("changes", (i) => ({ text: ws(i)?.files.length ? `${ws(i)!.files.length} files +${ws(i)!.added} −${ws(i)!.removed}` : "—", fg: t.accent })),
       row("conflicts", (i) => ({
-        text: ws(i)?.conflicts.length ? `⚠ ${ws(i)!.conflicts.length}` : "none",
+        text: ws(i)?.conflicts.length ? `▲ ${ws(i)!.conflicts.length}` : "none",
         fg: ws(i)?.conflicts.length ? t.warning : t.textSubtle,
       })),
       row("review", (i) => {

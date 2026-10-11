@@ -365,16 +365,21 @@ describe("acp adapter — mock agent mapping", () => {
     expect(ofType(events, "agent.exited").length).toBe(1)
   }, 20_000)
 
-  test("close() kills the agent's process group", async () => {
-    const secs = String(4000 + Math.floor(Math.random() * 900) + 0.5)
-    const a = createAcpAdapter(mockPreset({ env: { MOCK_CHILD: secs } }))
-    const h = await startHarness(a, { cwd: tempWorkspace() })
-    const alive = async () => (await Bun.$`pgrep -f ${`sleep ${secs}`}`.nothrow().text()).trim()
-    expect(await alive()).not.toBe("")
-    await h.close()
-    await Bun.sleep(200)
-    expect(await alive()).toBe("")
-  }, 20_000)
+  // skipped on Windows: POSIX process groups and signals
+  test.skipIf(process.platform === "win32")(
+    "close() kills the agent's process group",
+    async () => {
+      const secs = String(4000 + Math.floor(Math.random() * 900) + 0.5)
+      const a = createAcpAdapter(mockPreset({ env: { MOCK_CHILD: secs } }))
+      const h = await startHarness(a, { cwd: tempWorkspace() })
+      const alive = async () => (await Bun.$`pgrep -f ${`sleep ${secs}`}`.nothrow().text()).trim()
+      expect(await alive()).not.toBe("")
+      await h.close()
+      await Bun.sleep(200)
+      expect(await alive()).toBe("")
+    },
+    20_000,
+  )
 
   test("close() emits agent.exited(closed)", async () => {
     const h = await startHarness(adapter, { cwd: tempWorkspace() })
@@ -470,7 +475,8 @@ describe("acp client-side services", () => {
     expect((await Bun.$`pgrep -f ${"sleep 4321.5"}`.nothrow().text()).trim()).toBe("")
   })
 
-  test("terminal kill reaches grandchildren", async () => {
+  // skipped on Windows: POSIX process groups and signals
+  test.skipIf(process.platform === "win32")("terminal kill reaches grandchildren", async () => {
     const tm = new TerminalManager({ cwd: tempWorkspace(), env: {} })
     const id = tm.create({ command: "sleep 4322.5; echo after" })
     await Bun.sleep(200)
@@ -482,7 +488,8 @@ describe("acp client-side services", () => {
     await tm.disposeAll()
   })
 
-  test("terminal kill reports a signal", async () => {
+  // skipped on Windows: POSIX process groups and signals
+  test.skipIf(process.platform === "win32")("terminal kill reports a signal", async () => {
     const tm = new TerminalManager({ cwd: tempWorkspace(), env: {} })
     const id = tm.create({ command: "sleep", args: ["30"] })
     tm.kill(id)

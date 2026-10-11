@@ -121,9 +121,9 @@ pre { font: 12.5px/1.4 var(--mono); white-space: pre-wrap; word-break: break-wor
     return fetch(path, { method: body ? "POST" : "GET", headers: { Authorization: "Bearer " + token, "content-type": "application/json", "X-Baton-User": me }, body: body ? JSON.stringify(body) : undefined })
       .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.status); return j; }); });
   }
-  function act(path, body, msg) { return api(path, body).then(function (r) { if (msg) toast(msg); return r; }, function (e) { toast("⚠ " + e.message); }); }
+  function act(path, body, msg) { return api(path, body).then(function (r) { if (msg) toast(msg); return r; }, function (e) { toast("▲ " + e.message); }); }
 
-  var LEVELS = [["normal", "◆ normal"], ["auto", "⚡ auto"], ["yolo", "⚠ YOLO"], ["ask", "◇ ask"]];
+  var LEVELS = [["normal", "◆ normal"], ["auto", "↯ auto"], ["yolo", "▲ YOLO"], ["ask", "◇ ask"]];
   function renderAuto() {
     $("auto").innerHTML = LEVELS.map(function (l) {
       var sel = view && view.autonomy === l[0];

@@ -7,6 +7,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, unlin
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { type BatonConfig, loadConfig, projectPaths, type TrustEntry } from "@batonsh/kernel"
+import { ipcPath } from "@batonsh/protocol"
 import { ensureA2A, stopA2A } from "./a2a-server.ts"
 import { type ControlServer, startControlServer } from "./control.ts"
 import { attachDemoDirector } from "./demo.ts"
@@ -42,16 +43,23 @@ export interface Daemon {
 /** Unix socket paths are limited to ~104 bytes on macOS; fall back to tmp for deep projects. */
 export function socketPathFor(projectRoot: string): string {
   const p = projectPaths(projectRoot).socket
-  if (Buffer.byteLength(p) < 100) return p
+  if (process.platform === "win32" || Buffer.byteLength(p) < 100) return p
   const h = createHash("sha1").update(projectRoot).digest("hex").slice(0, 12)
   return join(tmpdir(), `baton-${h}.sock`)
 }
 
 /** Is something answering on this socket? (a live daemon — never steal its socket) */
 async function socketAlive(path: string): Promise<boolean> {
-  if (!existsSync(path)) return false
+  // on Windows the daemon listens on a named pipe (which existsSync can see), not a socket file
+  const target = ipcPath(path)
+  if (!existsSync(target)) return false
   try {
-    const s = await Bun.connect({ unix: path, socket: { data() {}, error() {} } })
+    const s = await Promise.race([
+      Bun.connect({ unix: target, socket: { data() {}, error() {} } }),
+      Bun.sleep(1000).then(() => {
+        throw new Error("timeout")
+      }),
+    ])
     s.end()
     return true
   } catch {

@@ -2,9 +2,37 @@ import { existsSync, readdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { delimiter, join } from "node:path"
 
+export const IS_WINDOWS = process.platform === "win32"
+
+/**
+ * The address to listen on / connect to for a control socket path. Windows has named pipes
+ * instead of socket files: any other path maps to a pipe derived from it, the same on both ends.
+ */
+export function ipcPath(socketPath: string): string {
+  if (!IS_WINDOWS || socketPath.startsWith("\\\\.\\pipe\\")) return socketPath
+  const h = new Bun.CryptoHasher("sha1").update(socketPath.toLowerCase()).digest("hex").slice(0, 16)
+  return `\\\\.\\pipe\\baton-${h}`
+}
+
 /** Extra locations agent CLIs commonly install to, beyond PATH. */
 export function extraBinDirs(): string[] {
   const h = homedir()
+  if (IS_WINDOWS) {
+    const appData = process.env.APPDATA ?? join(h, "AppData", "Roaming")
+    const local = process.env.LOCALAPPDATA ?? join(h, "AppData", "Local")
+    return [
+      join(appData, "npm"),
+      join(h, ".bun", "bin"),
+      join(h, ".local", "bin"),
+      join(h, ".cargo", "bin"),
+      join(h, "go", "bin"),
+      join(h, "scoop", "shims"),
+      join(local, "Programs"),
+      join(local, "Microsoft", "WinGet", "Links"),
+      join(h, ".opencode", "bin"),
+      join(h, ".claude", "local"),
+    ]
+  }
   const dirs = [
     join(h, ".local/bin"),
     join(h, ".bun/bin"),
@@ -25,7 +53,7 @@ export function extraBinDirs(): string[] {
 
 /** Find an executable on PATH or in common install dirs. Never resolves shell aliases. */
 export function which(bin: string): string | undefined {
-  if (bin.includes("/")) return existsSync(bin) ? bin : undefined
+  if (bin.includes("/") || (IS_WINDOWS && bin.includes("\\"))) return existsSync(bin) ? bin : undefined
   const found = Bun.which(bin)
   if (found) return found
   const path = [...(process.env.PATH ?? "").split(delimiter), ...extraBinDirs()].join(delimiter)
@@ -49,6 +77,14 @@ export function killProcessTree(
   proc?: { exitCode: number | null; signalCode?: string | null },
 ): void {
   if (!pid) return
+  if (IS_WINDOWS) {
+    // no process groups or signals: taskkill ends the process and everything it started
+    if (proc && (proc.exitCode !== null || (proc.signalCode ?? null) !== null)) return
+    try {
+      Bun.spawnSync(["taskkill", "/pid", String(pid), "/T", "/F"], { stdout: "ignore", stderr: "ignore" })
+    } catch {}
+    return
+  }
   try {
     process.kill(-pid, signal)
     return
@@ -57,6 +93,17 @@ export function killProcessTree(
   try {
     process.kill(pid, signal)
   } catch {}
+}
+
+/**
+ * argv (and spawn options) to start a command. On Windows the command is resolved on PATH first
+ * (PATHEXT: codex → codex.cmd); Bun runs .cmd / .bat shims itself, with correct quoting.
+ * Elsewhere argv is returned unchanged.
+ */
+export function spawnable(argv: string[]): { cmd: string[]; opts: { windowsVerbatimArguments?: boolean } } {
+  if (!IS_WINDOWS || !argv[0]) return { cmd: argv, opts: {} }
+  const bin = /[\\/]/.test(argv[0]) ? argv[0] : (which(argv[0]) ?? argv[0])
+  return { cmd: [bin, ...argv.slice(1)], opts: {} }
 }
 
 /** Drain a stream into memory; `cancel()` stops waiting (e.g. a grandchild still holds the pipe). */
@@ -90,13 +137,15 @@ export async function runCapture(
   cmd: string[],
   opts: { timeoutMs?: number; cwd?: string; env?: Record<string, string | undefined>; pipeGraceMs?: number } = {},
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  const proc = Bun.spawn(cmd, {
+  const run = spawnable(cmd)
+  const proc = Bun.spawn(run.cmd, {
+    ...run.opts,
     cwd: opts.cwd,
     env: { ...process.env, PATH: augmentedPath(), ...opts.env },
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
-    detached: true,
+    detached: !IS_WINDOWS,
   })
   const out = collect(proc.stdout)
   const err = collect(proc.stderr)

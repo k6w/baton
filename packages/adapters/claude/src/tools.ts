@@ -4,7 +4,7 @@
  */
 import { isAbsolute, relative } from "node:path"
 import type { DiffHunkLine, ToolContent, ToolKind } from "@batonsh/protocol"
-import { diffLines, diffStat } from "@batonsh/protocol"
+import { diffLines, diffStat, toSlash } from "@batonsh/protocol"
 
 type Input = Record<string, unknown>
 
@@ -52,7 +52,7 @@ export function displayPath(p: string | undefined, cwd: string): string {
   if (!p) return ""
   if (!isAbsolute(p)) return p
   const rel = relative(cwd, p)
-  return rel && !rel.startsWith("..") && !isAbsolute(rel) ? rel : p
+  return rel && !rel.startsWith("..") && !isAbsolute(rel) ? toSlash(rel) : p
 }
 
 function oneLine(s: string, max = 80): string {

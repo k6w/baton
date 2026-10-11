@@ -35,6 +35,12 @@ export function newer(a: string, b: string): boolean {
 }
 
 export async function latestVersion(timeoutMs = 10_000): Promise<string> {
+  // releases/latest redirects to .../tag/vX.Y.Z: no API call, so no API rate limit
+  try {
+    const r = await fetch(`https://github.com/${REPO}/releases/latest`, { redirect: "manual", signal: AbortSignal.timeout(timeoutMs) })
+    const tag = /\/tag\/v?([^/?#]+)$/.exec(r.headers.get("location") ?? "")?.[1]
+    if (tag) return tag
+  } catch {}
   const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
     headers: { accept: "application/vnd.github+json", "user-agent": "baton-update" },
     signal: AbortSignal.timeout(timeoutMs),
@@ -94,7 +100,8 @@ export async function update(opts: UpdateOptions = {}): Promise<{ from: string; 
   const tmp = mkdtempSync(join(tmpdir(), "baton-update-"))
   try {
     writeFileSync(join(tmp, archive), data)
-    const unpack = archive.endsWith(".zip") ? ["unzip", "-q", archive] : ["tar", "-xzf", archive]
+    // Windows 10+ ships bsdtar, which also reads zip files
+    const unpack = archive.endsWith(".zip") ? (process.platform === "win32" ? ["tar", "-xf", archive] : ["unzip", "-q", archive]) : ["tar", "-xzf", archive]
     const p = Bun.spawnSync(unpack, { cwd: tmp, stderr: "pipe" })
     if (p.exitCode !== 0) throw new Error(`could not unpack ${archive}: ${p.stderr.toString()}`)
     const exe = process.platform === "win32" ? "baton.exe" : "baton"
@@ -106,8 +113,16 @@ export async function update(opts: UpdateOptions = {}): Promise<{ from: string; 
     const staged = join(dirname(dest), `.baton-${target}.new`)
     writeFileSync(staged, readFileSync(fresh))
     chmodSync(staged, 0o755)
-    // atomic on POSIX: running processes (the daemon) keep the old inode until they restart
-    renameSync(staged, dest)
+    if (process.platform === "win32") {
+      // a running .exe can't be replaced, but it can be renamed: move it aside, then swap in the new one
+      const old = `${dest}.old`
+      rmSync(old, { force: true })
+      renameSync(dest, old)
+      renameSync(staged, dest)
+    } else {
+      // atomic on POSIX: running processes (the daemon) keep the old inode until they restart
+      renameSync(staged, dest)
+    }
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "EACCES")
       throw new Error(`no permission to replace ${process.execPath} — rerun with sudo, or reinstall to a folder you own (install.sh)`)

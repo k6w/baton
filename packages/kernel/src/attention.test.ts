@@ -19,7 +19,7 @@ test("attention queue: ordering and sources", () => {
   s.append(run, { type: "permission.requested", data: { requestId: "r1", title: "Bash(rm -rf dist)", options: [] } }, { agentId: "a" })
   const items = attentionItems(st)
   expect(items.map((i) => i.kind)).toEqual(["approval", "stalled", "ready"])
-  expect(items[0]!.title).toBe("codex-1 wants to Bash(rm -rf dist)")
+  expect(items[0]!.title).toBe("codex-1: Bash(rm -rf dist)")
   expect(urgentCount(items)).toBe(2)
   // activity clears the stall flag
   s.append(run, { type: "tool.call", data: { toolCallId: "t", kind: "read", name: "Read", title: "Read(x)" } }, { agentId: "c" })

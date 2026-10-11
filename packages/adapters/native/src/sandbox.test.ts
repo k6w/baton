@@ -26,7 +26,8 @@ describe("sandbox settings", () => {
     expect(seatbeltProfile([], false)).toContain("(deny network*)")
   })
 
-  test("defaults: cwd, temp dirs, ~/.cache and extra writable paths; off under yolo or sandbox=off", () => {
+  // skipped on Windows: macOS/Linux sandboxes and paths
+  test.skipIf(process.platform === "win32")("defaults: cwd, temp dirs, ~/.cache and extra writable paths; off under yolo or sandbox=off", () => {
     const cwd = tempWorkspace()
     const home = mkdtempSync(join(tmpdir(), "baton-home-"))
     const s = resolveSandbox({
@@ -125,7 +126,8 @@ describe("sandbox settings", () => {
     )
   })
 
-  test("git worktrees: the main repository's git dir is writable too", () => {
+  // skipped on Windows: macOS/Linux sandboxes and paths
+  test.skipIf(process.platform === "win32")("git worktrees: the main repository's git dir is writable too", () => {
     const main = tempWorkspace({ "a.txt": "a\n" })
     Bun.spawnSync(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "init", "--allow-empty"], { cwd: main })
     Bun.spawnSync(["git", "add", "."], { cwd: main })

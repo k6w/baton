@@ -5,6 +5,7 @@
  */
 import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { isAbsolute, resolve } from "node:path"
+import { IS_WINDOWS, spawnable } from "@batonsh/protocol"
 import type { AdapterContext, AgentEvent, AgentSession, PermissionOptionKind, PromptInput, SessionConfig } from "../../../protocol/src/index.ts"
 import { augmentedPath, DEFAULT_PERMISSION_OPTIONS, deferred, killProcessTree, newId, readLines } from "../../../protocol/src/index.ts"
 import { ClaudeTranslator } from "../../claude/src/translator.ts"
@@ -323,7 +324,8 @@ export async function startSession(
     const argv = launchArgv(preset, cfg, binary, resumeId)
     ctx.log("debug", `${preset.id}: spawn ${argv.map((a) => (a.length > 80 ? `${a.slice(0, 77)}...` : a)).join(" ")}`)
     // Own process group, so close() can take down the CLI's whole tree (shells, MCP servers…).
-    return Bun.spawn(argv, { cwd: cfg.cwd, env, stdin: "pipe", stdout: "pipe", stderr: "pipe", detached: true })
+    const run = spawnable(argv)
+    return Bun.spawn(run.cmd, { ...run.opts, cwd: cfg.cwd, env, stdin: "pipe", stdout: "pipe", stderr: "pipe", detached: !IS_WINDOWS })
   }
 
   /** Signal the CLI's process group (falls back to the pid alone). */

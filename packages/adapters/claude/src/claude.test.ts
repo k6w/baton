@@ -48,28 +48,33 @@ function fakeClaude(): string {
 }
 
 describe("claude adapter lifecycle (fake CLI)", () => {
-  test("CLI crash mid-turn fails the turn before agent.exited; later prompts reject", async () => {
-    const h = await startHarness(claudeAdapter, { cwd: tempWorkspace(), approval: "ask", command: fakeClaude(), env: { FAKE_DIALECT: "claude" } })
-    try {
-      await h.session.prompt({ text: "crash now" })
-      await h.waitFor("agent.exited", undefined, 10_000)
-      const types = h.events.map((e) => e.type)
-      expect(h.ofType("turn.completed")[0]?.data.stopReason).toBe("error")
-      expect(h.ofType("turn.interrupted")).toHaveLength(0)
-      expect(types.indexOf("turn.completed")).toBeLessThan(types.indexOf("agent.exited"))
-      expect(h.ofType("agent.exited")).toHaveLength(1)
-      const started = h.ofType("turn.started").length
-      await expect(h.session.prompt({ text: "again" })).rejects.toThrow("not running")
-      await expect(h.session.steer?.({ text: "again" })).rejects.toThrow("not running")
-      expect(h.ofType("turn.started")).toHaveLength(started)
-      expect(h.ofType("agent.status").at(-1)?.data.status).toBe("exited")
-      const t = Date.now()
-      await h.session.close()
-      expect(Date.now() - t).toBeLessThan(1_000)
-    } finally {
-      await h.close()
-    }
-  }, 20_000)
+  // skipped on Windows: the fake CLI is a shell script
+  test.skipIf(process.platform === "win32")(
+    "CLI crash mid-turn fails the turn before agent.exited; later prompts reject",
+    async () => {
+      const h = await startHarness(claudeAdapter, { cwd: tempWorkspace(), approval: "ask", command: fakeClaude(), env: { FAKE_DIALECT: "claude" } })
+      try {
+        await h.session.prompt({ text: "crash now" })
+        await h.waitFor("agent.exited", undefined, 10_000)
+        const types = h.events.map((e) => e.type)
+        expect(h.ofType("turn.completed")[0]?.data.stopReason).toBe("error")
+        expect(h.ofType("turn.interrupted")).toHaveLength(0)
+        expect(types.indexOf("turn.completed")).toBeLessThan(types.indexOf("agent.exited"))
+        expect(h.ofType("agent.exited")).toHaveLength(1)
+        const started = h.ofType("turn.started").length
+        await expect(h.session.prompt({ text: "again" })).rejects.toThrow("not running")
+        await expect(h.session.steer?.({ text: "again" })).rejects.toThrow("not running")
+        expect(h.ofType("turn.started")).toHaveLength(started)
+        expect(h.ofType("agent.status").at(-1)?.data.status).toBe("exited")
+        const t = Date.now()
+        await h.session.close()
+        expect(Date.now() - t).toBeLessThan(1_000)
+      } finally {
+        await h.close()
+      }
+    },
+    20_000,
+  )
 
   test("CLI dying during initialize fails start() without ready/exit events", async () => {
     const events: AgentEvent[] = []
@@ -92,14 +97,19 @@ describe("claude adapter lifecycle (fake CLI)", () => {
     expect(events.filter((e) => e.type === "agent.exited")).toHaveLength(0)
   }, 20_000)
 
-  test("a normal turn still completes and reports ready", async () => {
-    const h = await startHarness(claudeAdapter, { cwd: tempWorkspace(), approval: "ask", command: fakeClaude(), env: { FAKE_DIALECT: "claude" } })
-    try {
-      await h.session.prompt({ text: "ping" })
-      await h.waitTurn(10_000)
-      expect(h.ofType("turn.completed")[0]?.data.stopReason).toBe("end_turn")
-    } finally {
-      await h.close()
-    }
-  }, 20_000)
+  // skipped on Windows: the fake CLI is a shell script
+  test.skipIf(process.platform === "win32")(
+    "a normal turn still completes and reports ready",
+    async () => {
+      const h = await startHarness(claudeAdapter, { cwd: tempWorkspace(), approval: "ask", command: fakeClaude(), env: { FAKE_DIALECT: "claude" } })
+      try {
+        await h.session.prompt({ text: "ping" })
+        await h.waitTurn(10_000)
+        expect(h.ofType("turn.completed")[0]?.data.stopReason).toBe("end_turn")
+      } finally {
+        await h.close()
+      }
+    },
+    20_000,
+  )
 })

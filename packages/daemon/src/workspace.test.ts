@@ -245,7 +245,8 @@ describe("WorkspaceManager", () => {
   test("paths with spaces, unicode and quotes are reported verbatim", async () => {
     const wm = new WorkspaceManager(root, cfg(), "run_x")
     const ws = await wm.create("a1", "codex-1", "worktree")
-    const names = ["with space.ts", "ünïcødé.ts", 'q"uote.ts', "tab\there.ts"]
+    // Windows forbids " and tabs in file names
+    const names = ["with space.ts", "ünïcødé.ts", ...(process.platform === "win32" ? [] : ['q"uote.ts', "tab\there.ts"])]
     for (const n of names) writeFileSync(join(ws.path, n), "x\n")
     const r = await wm.refresh("a1")
     expect(r?.files.map((f) => f.path).sort()).toEqual([...names].sort())

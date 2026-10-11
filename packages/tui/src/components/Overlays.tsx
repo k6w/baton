@@ -152,12 +152,12 @@ const KIND_STYLE: Record<AttentionKind, { glyph: string; token: "warning" | "err
   approval: { glyph: "?", token: "warning" },
   plan: { glyph: "◆", token: "warning" },
   failed: { glyph: "✗", token: "error" },
-  conflict: { glyph: "⚠", token: "warning" },
+  conflict: { glyph: "▲", token: "warning" },
   merge: { glyph: "✗", token: "error" },
   budget: { glyph: "$", token: "error" },
-  stalled: { glyph: "⏸", token: "warning" },
+  stalled: { glyph: "‖", token: "warning" },
   looping: { glyph: "↻", token: "warning" },
-  scope: { glyph: "⤴", token: "warning" },
+  scope: { glyph: "↗", token: "warning" },
   ready: { glyph: "✓", token: "success" },
 }
 

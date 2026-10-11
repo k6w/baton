@@ -2,7 +2,7 @@
  * Adapter testkit: drive an adapter session headlessly, collect events, and run the
  * shared contract suite. Live runs (real CLIs, real tokens) are gated behind BATON_LIVE=1.
  */
-import { mkdtempSync, writeFileSync } from "node:fs"
+import { mkdtempSync, realpathSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { AgentAdapter, AgentEvent, AgentSession, EventType, SessionConfig } from "@batonsh/protocol"
@@ -22,7 +22,8 @@ export interface Harness {
 }
 
 export function tempWorkspace(files: Record<string, string> = {}): string {
-  const dir = mkdtempSync(join(tmpdir(), "baton-test-"))
+  // the long form of the path: Windows' temp dir may be an 8.3 short name (RUNNER~1) that git won't echo back
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "baton-test-")))
   for (const [p, c] of Object.entries(files)) writeFileSync(join(dir, p), c)
   Bun.spawnSync(["git", "init", "-q"], { cwd: dir })
   return dir

@@ -22,7 +22,7 @@ export function attentionItems(run: RunState): AttentionItem[] {
   const out: AttentionItem[] = []
   const name = (id?: string) => (id ? (run.agents.get(id)?.name ?? "agent") : "baton")
   for (const p of run.approvals.values())
-    out.push({ kind: "approval", agentId: p.agentId, requestId: p.requestId, title: `${name(p.agentId)} wants to ${p.title}`, detail: p.detail, ts: p.ts })
+    out.push({ kind: "approval", agentId: p.agentId, requestId: p.requestId, title: `${name(p.agentId)}: ${p.title}`, detail: p.detail, ts: p.ts })
   if (run.plan?.status === "proposed")
     out.push({ kind: "plan", title: `Plan proposed: ${run.tasks.size} tasks`, detail: "approve or reject it (ctrl+g)", ts: Date.now() })
   for (const a of run.agents.values()) {

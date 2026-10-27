@@ -5,51 +5,10 @@
 import { chmodSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
+import { installKind, latestVersion, newer, REPO } from "@batonsh/kernel"
 import { BATON_VERSION } from "@batonsh/protocol"
 
-export const REPO = process.env.BATON_REPO ?? "k6w/baton"
-
-export type InstallKind = "binary" | "npm" | "homebrew" | "source"
-
-export function installKind(env: Record<string, string | undefined> = process.env, execPath = process.execPath): InstallKind {
-  if (env.BATON_INSTALL === "npm" || /[/\\]node_modules[/\\]batonsh-/.test(execPath)) return "npm"
-  if (/\/(Cellar|homebrew|linuxbrew)\//i.test(execPath)) return "homebrew"
-  // BATON_TARGET is defined at build time (scripts/build.ts): unset means `bun packages/cli/src/main.ts`
-  if (!process.env.BATON_TARGET) return "source"
-  return "binary"
-}
-
-/** 1.2.10 > 1.2.9; a prerelease sorts before its release. */
-export function newer(a: string, b: string): boolean {
-  const parse = (v: string) => {
-    const [core = "", pre] = v.replace(/^v/, "").split("-", 2)
-    return { nums: core.split(".").map((n) => Number(n) || 0), pre }
-  }
-  const x = parse(a)
-  const y = parse(b)
-  for (let i = 0; i < 3; i++) if ((x.nums[i] ?? 0) !== (y.nums[i] ?? 0)) return (x.nums[i] ?? 0) > (y.nums[i] ?? 0)
-  if (x.pre === y.pre) return false
-  if (!x.pre) return true
-  if (!y.pre) return false
-  return x.pre > y.pre
-}
-
-export async function latestVersion(timeoutMs = 10_000): Promise<string> {
-  // releases/latest redirects to .../tag/vX.Y.Z: no API call, so no API rate limit
-  try {
-    const r = await fetch(`https://github.com/${REPO}/releases/latest`, { redirect: "manual", signal: AbortSignal.timeout(timeoutMs) })
-    const tag = /\/tag\/v?([^/?#]+)$/.exec(r.headers.get("location") ?? "")?.[1]
-    if (tag) return tag
-  } catch {}
-  const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
-    headers: { accept: "application/vnd.github+json", "user-agent": "baton-update" },
-    signal: AbortSignal.timeout(timeoutMs),
-  })
-  if (!res.ok) throw new Error(`GitHub: ${res.status} looking up the latest release of ${REPO}`)
-  const j = (await res.json()) as { tag_name?: string }
-  if (!j.tag_name) throw new Error("GitHub: the latest release has no tag")
-  return j.tag_name.replace(/^v/, "")
-}
+export { type InstallKind, installKind, latestVersion, newer, REPO } from "@batonsh/kernel"
 
 /** Archive name of this build's platform. */
 function archiveName(): string {

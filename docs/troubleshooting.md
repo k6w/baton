@@ -53,7 +53,9 @@ Look at `.baton/run/batond.log` in the project: startup errors are written there
 then `baton` gives you a fresh daemon. `baton ps` shows what's running.
 
 **After `baton update` something behaves like the old version**
-Running daemons keep the version they started with. Run `baton stop` in each project.
+Running daemons keep the version they started with. Start `baton` in the project again: it
+notices the older daemon and offers to restart it (the agents that were running come back).
+`baton stop` then `baton --continue` does the same by hand.
 
 **Where is everything stored?**
 - `.baton/config.toml`: project settings (commit it).

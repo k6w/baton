@@ -34,6 +34,7 @@ import {
   findProjectRoot,
   getPath,
   isFeature,
+  knownUpdate,
   loadConfig,
   loadRoles,
   loadSkills,
@@ -43,6 +44,7 @@ import {
   revokeTrust,
   setFeature,
   trustEntries,
+  updateCommand,
 } from "@batonsh/kernel"
 import { BATON_VERSION, CONTROL_PROTOCOL_VERSION, ControlErrorCode, REQUIRED_PARAMS } from "@batonsh/protocol"
 import { BatonClient, connect, daemonListening, discoverSocket } from "@batonsh/sdk"
@@ -204,6 +206,9 @@ async function cmdStart(args: Args) {
   if (task) client.submit(task).catch((e) => (runError = e))
   await startTui(client, root, args.flags, { overlay: resume === true ? "history" : undefined })
   if (runError) console.error(c.red(`baton: ${runError instanceof Error ? runError.message : runError}`))
+  // what the daemon's daily check found (no network here)
+  const fresh = knownUpdate()
+  if (fresh) console.log(`${c.yellow("↑")} Baton ${c.bold(fresh)} is available (you have ${VERSION}) — ${c.bold(updateCommand())}`)
   process.exit(runError ? 1 : 0)
 }
 
@@ -621,7 +626,11 @@ async function cmdUpdate(args: Args) {
   const r = await update({ check, version, log: (s) => console.log(c.dim(s)) })
   if (r.updated) {
     console.log(`${c.green("✓")} baton ${r.from} → ${c.bold(r.to)}`)
-    console.log(c.dim("running daemons keep the old version until they restart: baton stop (in each project)"))
+    console.log(
+      c.dim(
+        "Baton windows already open keep running the old version. Start `baton` in a project again and it offers to switch that project's daemon over (its agents come back).",
+      ),
+    )
   } else if (r.to === r.from) console.log(`${c.green("✓")} baton ${r.from} is the latest`)
   else if (r.how) console.log(`baton ${c.bold(r.to)} is available (you have ${r.from}). Update with:\n  ${r.how}`)
   else console.log(`baton ${c.bold(r.to)} is available (you have ${r.from}) — run ${c.bold("baton update")}`)

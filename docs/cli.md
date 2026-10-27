@@ -108,5 +108,6 @@ In the app: `/features [name on|off]`, `/roles`, `/skills`, `/notes [add <text>]
 | `BATON_NO_IMAGES=1` | Never draw agent logos as images (glyphs instead). |
 | `BATON_CONFIG_DIR` | Use a different global config folder (default `~/.config/baton`). |
 | `BATON_REPO`, `BATON_DOWNLOAD_BASE` | Where `install.sh` and `baton update` download from (forks, mirrors). |
+| `BATON_NO_UPDATE_CHECK=1` | Don't look for new releases (the daemon checks once a day and says so in the orchestrator's feed). `BATON_OFFLINE=1` turns it off too. |
 
 Every other setting has an entry in [configuration](configuration.md).

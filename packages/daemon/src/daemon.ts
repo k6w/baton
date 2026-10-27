@@ -6,8 +6,8 @@ import { createHash } from "node:crypto"
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { type BatonConfig, loadConfig, projectPaths, type TrustEntry } from "@batonsh/kernel"
-import { ipcPath } from "@batonsh/protocol"
+import { type BatonConfig, checkForUpdate, loadConfig, projectPaths, type TrustEntry, updateCommand } from "@batonsh/kernel"
+import { BATON_VERSION, ipcPath } from "@batonsh/protocol"
 import { ensureA2A, stopA2A } from "./a2a-server.ts"
 import { type ControlServer, startControlServer } from "./control.ts"
 import { attachDemoDirector } from "./demo.ts"
@@ -145,6 +145,19 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   warnUntrusted(loaded.untrusted)
   await loadPlugins(runtime, loaded.layers, loaded.untrusted)
   attachRemoteNotify(runtime)
+  // a newer Baton? asked once a day, after startup has settled (agents are detected first)
+  if (!opts.ephemeral) {
+    const updateTimer = setTimeout(() => {
+      void checkForUpdate().then((v) => {
+        if (v && !stopping)
+          runtime.emit({
+            type: "orch.note",
+            data: { level: "info", text: `Baton ${v} is available (this is ${BATON_VERSION}) — update with \`${updateCommand()}\`` },
+          })
+      })
+    }, UPDATE_CHECK_DELAY_MS)
+    updateTimer.unref?.()
+  }
   const telemetry = config.telemetry.otlp_endpoint ? new TelemetryExporter(runtime, config.telemetry.otlp_endpoint) : undefined
 
   const mcp = startMcpServer(runtime, config.daemon.mcp_port)
@@ -235,3 +248,6 @@ export async function runDaemonProcess(projectRoot: string, opts: Omit<DaemonOpt
   process.on("SIGTERM", stop)
   process.on("SIGHUP", stop)
 }
+
+/** How long after starting the daemon looks for a newer Baton. */
+const UPDATE_CHECK_DELAY_MS = 30_000

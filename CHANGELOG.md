@@ -18,6 +18,11 @@ All notable changes to Baton. Versions follow [semver](https://semver.org); the 
   restart it (`--yes` to just do it): the log gets compacted and the agents that were running
   come back.
 
+**Knows when there's a new version**
+- Once a day the daemon looks for a newer Baton release and says so in the orchestrator's feed,
+  with the command that updates your install (`baton update`, npm or Homebrew). Leaving the
+  app repeats it. Starting Baton never waits on this. `BATON_NO_UPDATE_CHECK=1` turns it off.
+
 **Resume brings back what was running, quickly**
 - Resuming a run starts only the agents that were still running when it ended. Agents you
   killed, or that failed or finished earlier, stay gone, and an agent restarted under the

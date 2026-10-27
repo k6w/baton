@@ -58,3 +58,22 @@ test("a table cell or a code language can't inject markup either", () => {
   expect(h).not.toContain("<img")
   expect(h).not.toContain("<script")
 })
+
+test("paths and URLs keep their underscores and stars", () => {
+  expect(mdToHtml("edit src/__init__.py and my_snake_case")).toBe("<p>edit src/__init__.py and my_snake_case</p>")
+  expect(mdToHtml("see https://x.dev/_next/static_/a.js")).toContain('href="https://x.dev/_next/static_/a.js"')
+  expect(mdToHtml("[see https://a.com](https://b.com)")).toBe('<p><a href="https://b.com" target="_blank" rel="noopener noreferrer">see https://a.com</a></p>')
+  expect(mdToHtml("[`x`](https://b.com) and __bold__ and _it_")).toBe(
+    '<p><a href="https://b.com" target="_blank" rel="noopener noreferrer"><code>x</code></a> and <strong>bold</strong> and <em>it</em></p>',
+  )
+  expect(mdToHtml("## Title ##")).toBe("<h4>Title</h4>")
+  expect(mdToHtml("# C#")).toBe("<h3>C#</h3>")
+})
+
+test("no input makes it slow", () => {
+  const t = Date.now()
+  mdToHtml(`# a${" ".repeat(20000)}x`)
+  mdToHtml(`- a${"\n".repeat(20000)}- b`)
+  mdToHtml(`${"\n".repeat(20000)}x`)
+  expect(Date.now() - t).toBeLessThan(500)
+})

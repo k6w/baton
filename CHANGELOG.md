@@ -5,6 +5,8 @@ All notable changes to Baton. Versions follow [semver](https://semver.org); the 
 
 ## Unreleased
 
+## 0.3.8 — 2026-10-27
+
 **A new web view** (`baton web`, `/web`)
 - Redesigned from scratch: black, quiet, with a faint touch of depth (controls that look pressable, status
   lights, recessed code). A sidebar with the run, the autonomy switch and every agent on a desktop; tabs on

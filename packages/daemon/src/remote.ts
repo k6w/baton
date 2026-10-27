@@ -12,13 +12,14 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { hostname, networkInterfaces } from "node:os"
 import { join } from "node:path"
-import { attentionItems, type FeedItem, stateDir } from "@batonsh/kernel"
+import { stateDir } from "@batonsh/kernel"
 import qrcode from "qrcode-generator"
 import { hostAllowed, hostOf, misdirected } from "./host-guard.ts"
 import { handleInput } from "./input.ts"
 import { pickOption } from "./policy.ts"
 import { REMOTE_PAGE } from "./remote-page.ts"
 import type { Runtime } from "./runtime.ts"
+import { buildView, type WebView } from "./web-view.ts"
 
 export interface RemoteServer {
   url: string
@@ -98,109 +99,9 @@ export function qrLines(text: string): string[] {
 
 // ───────────────────────────── view model ─────────────────────────────
 
-type Item =
-  | { k: "text"; role: "assistant" | "thought"; text: string; ts: number }
-  | { k: "user"; text: string; from?: string; ts: number }
-  | {
-      k: "tool"
-      title: string
-      status: string
-      summary?: string
-      output?: string
-      diffs: { path: string; added: number; removed: number; lines: string[] }[]
-      ts: number
-    }
-  | { k: "bus"; from: string; to: string; body: string; ts: number }
-  | { k: "note" | "error" | "ask"; text: string; ts: number }
-
-function item(it: FeedItem, name: (id: string) => string): Item | undefined {
-  switch (it.kind) {
-    case "message":
-      return it.text.trim() ? { k: "text", role: it.role, text: it.text.slice(-4000), ts: it.ts } : undefined
-    case "user":
-      // messages Baton relays between agents already show as bus lines
-      if (it.text.startsWith("[baton]")) return undefined
-      return { k: "user", text: it.text.slice(0, 2000), from: it.from ? name(it.from) : undefined, ts: it.ts }
-    case "tool":
-      return {
-        k: "tool",
-        title: it.title,
-        status: it.status,
-        summary: it.summary,
-        output: it.output?.slice(-1500),
-        diffs: it.diffs.slice(0, 4).map((d) => ({
-          path: d.path,
-          added: d.added,
-          removed: d.removed,
-          lines: d.lines
-            .filter((l) => l.kind !== "ctx")
-            .slice(0, 24)
-            .map((l) => `${l.kind === "add" ? "+" : "-"} ${l.text}`),
-        })),
-        ts: it.ts,
-      }
-    case "bus":
-      return { k: "bus", from: name(it.from), to: name(it.to), body: it.body.slice(0, 1500), ts: it.ts }
-    case "permission":
-      return { k: "ask", text: `${it.title}${it.resolved ? ` — ${it.resolved}` : ""}`, ts: it.ts }
-    case "error":
-      return { k: "error", text: it.text, ts: it.ts }
-    case "note":
-      return { k: "note", text: it.text, ts: it.ts }
-  }
-}
-
-export function remoteView(rt: Runtime) {
-  const s = rt.state
-  const name = (id: string) => (id === "user" ? "you" : id === s.orchestratorId ? "lead" : (s.agents.get(id)?.name ?? s.findAgent(id)?.name ?? id))
-  const feedOf = (id: string, n: number) =>
-    s
-      .feed(id)
-      .items.slice(-n)
-      .map((it) => item(it, name))
-      .filter((x): x is Item => !!x)
-  const lead = s.orchestratorId
-  const thread: Item[] = lead ? feedOf(lead, 60) : []
-  for (const m of s.bus.slice(-120)) {
-    if (m.kind === "heartbeat" || m.kind === "progress" || m.from === lead || m.to === lead) continue
-    thread.push({ k: "bus", from: name(m.from), to: name(m.to), body: m.body.slice(0, 1500), ts: m.ts })
-  }
-  thread.sort((a, b) => a.ts - b.ts)
-  return {
-    project: s.projectName,
-    branch: s.branch,
-    autonomy: s.autonomy,
-    mode: s.mode,
-    viewers: [...new Set(s.viewers.map((v) => v.name))],
-    totals: s.totals,
-    attention: attentionItems(s).map((a) => {
-      const p = a.requestId ? s.approvals.get(a.requestId) : undefined
-      return { ...a, agent: a.agentId ? name(a.agentId) : undefined, options: p?.options, detail: a.detail ?? p?.detail }
-    }),
-    lead: lead ? { id: lead, status: s.agents.get(lead)?.status, adapter: s.agents.get(lead)?.adapter } : undefined,
-    thread: thread.slice(-80),
-    agents: [...s.agents.values()]
-      .filter((a) => a.status !== "exited" && !a.isOrchestrator)
-      .map((a) => {
-        const ws = s.workspaces.get(a.agentId)
-        return {
-          id: a.agentId,
-          name: a.name,
-          adapter: a.adapter,
-          model: a.model,
-          label: a.label,
-          status: a.status,
-          detail: a.statusDetail,
-          approval: a.approval,
-          cost: a.usage.costUsd,
-          progress: a.progress,
-          workspace: ws
-            ? { mode: ws.mode, files: ws.files.length, added: ws.added, removed: ws.removed, merge: ws.merge?.status, conflicts: ws.conflicts.length }
-            : undefined,
-          feed: feedOf(a.agentId, 30),
-        }
-      }),
-  }
+/** The whole view (every feed): GET /api/view. The stream sends feeds only when they change. */
+export function remoteView(rt: Runtime, sent?: Map<string, number>): WebView {
+  return buildView(rt.state, { projectRoot: rt.projectRoot, sent })
 }
 
 // ───────────────────────────── server ─────────────────────────────
@@ -387,6 +288,8 @@ function stream(rt: Runtime, signal: AbortSignal, who?: string): Response {
   if (who) rt.joinViewer(viewerId, who, "web")
   signal.addEventListener("abort", () => rt.leaveViewer(viewerId), { once: true })
   const enc = new TextEncoder()
+  // feeds this connection already has, by version: each push carries only the ones that changed
+  const sent = new Map<string, number>()
   let timer: ReturnType<typeof setTimeout> | undefined
   let off: (() => void) | undefined
   let ping: ReturnType<typeof setInterval> | undefined
@@ -395,7 +298,7 @@ function stream(rt: Runtime, signal: AbortSignal, who?: string): Response {
       const send = () => {
         timer = undefined
         try {
-          ctrl.enqueue(enc.encode(`${JSON.stringify(remoteView(rt))}\n`))
+          ctrl.enqueue(enc.encode(`${JSON.stringify(remoteView(rt, sent))}\n`))
         } catch {}
       }
       send()

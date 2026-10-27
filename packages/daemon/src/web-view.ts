@@ -14,7 +14,6 @@ import type { ToolKind } from "@batonsh/protocol"
 
 // ───────────────────────────── text ─────────────────────────────
 
-// biome-ignore lint/suspicious/noControlCharactersInRegex: matching terminal escape codes is the point
 const ANSI = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007]*(\u0007|\u001b\\)|\u001b[@-Z\\-_]/g
 
 export function stripAnsi(s: string): string {
@@ -393,7 +392,7 @@ function agentOf(s: RunState, id: string) {
     startedAt: a.startedAt,
     turnStartedAt: a.turnStartedAt,
     lastEventAt: a.lastEventAt,
-    activity: a.lastActivity ? shortenPaths(a.lastActivity, s.projectRoot) : undefined,
+    activity: activityOf(s, id),
     attention: a.attention?.reason,
     workspace: ws
       ? {
@@ -408,6 +407,26 @@ function agentOf(s: RunState, id: string) {
         }
       : undefined,
   }
+}
+
+/** An agent's latest action in the same words as its feed (its last tool call, input and all). */
+function activityOf(s: RunState, id: string): string | undefined {
+  const title = s.agents.get(id)?.lastActivity
+  if (!title) return undefined
+  if (title === "writing") return "Writing"
+  const items = s.feed(id).items
+  let tool: Extract<FeedItem, { kind: "tool" }> | undefined
+  for (let i = items.length - 1; i >= 0 && i >= items.length - 40; i--) {
+    const it = items[i]
+    if (it?.kind === "tool") {
+      tool = it
+      break
+    }
+  }
+  const look = tool
+    ? describeTool({ name: tool.name, title: tool.title, toolKind: tool.toolKind, input: tool.input }, s.projectRoot)
+    : describeTool({ name: title, title }, s.projectRoot)
+  return clip(look.target ? `${look.verb} ${look.target}` : look.verb, 160)
 }
 
 export type WebView = ReturnType<typeof buildView>

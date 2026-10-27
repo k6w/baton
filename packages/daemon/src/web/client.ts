@@ -939,7 +939,7 @@ export function webClient(mdToHtml) {
       row("Task", a.label && a.label !== a.name && a.label !== "orchestrator" ? a.label : "") +
       row("Approval", a.approval) +
       row("Access", a.access) +
-      (a.startedAt ? `<dt>Running for</dt><dd>${since(a.startedAt)}</dd>` : "") +
+      (a.startedAt && a.status !== "exited" ? `<dt>Running for</dt><dd>${since(a.startedAt)}</dd>` : "") +
       row("Tool calls", count(a.toolCalls)) +
       row("Tokens", a.tokens ? count(a.tokens) : "") +
       row("Cost", a.cost ? money(a.cost) : "") +
@@ -949,7 +949,7 @@ export function webClient(mdToHtml) {
       (a.status === "busy" || a.status === "awaiting_approval"
         ? `<button class="btn sm" data-int="${esc(a.id)}">${icon("stop", "xs")} Interrupt</button>`
         : "") +
-      (a.lead ? "" : `<button class="btn sm bad" data-kill="${esc(a.id)}">Stop agent</button>`) +
+      (a.lead || a.status === "exited" ? "" : `<button class="btn sm bad" data-kill="${esc(a.id)}">Stop agent</button>`) +
       "</div></div>" +
       (a.workspace && (a.workspace.files.length || a.workspace.mode === "worktree")
         ? `<div class="insp-s"><h4>${icon("changes", "xs")} Changes</h4>${workspaceBlock(a, false)}</div>`

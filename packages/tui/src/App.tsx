@@ -659,15 +659,16 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
         debugKeys,
         `${Date.now()} key=${key.name} seq=${JSON.stringify(key.sequence)} overlay=${ui.overlay()} focus=${ui.focus().kind} zoom=${ui.zoomed()}\n`,
       )
-    // ctrl+c twice, from anywhere: quit and stop everything (the first one only closes, clears or warns)
+    // ctrl+c again right after "press ctrl+c again to quit": quit and stop everything. Only after that
+    // warning: a ctrl+c that closed an overlay, cleared the input or left a text box doesn't arm it.
     if (key.ctrl && key.name === "c" && !key.meta && !key.shift) {
-      const now = Date.now()
-      if (now - lastCtrlC <= 1500) {
+      const armed = Date.now() - lastCtrlC <= 1500
+      lastCtrlC = 0
+      if (armed) {
         key.preventDefault?.()
         props.onExit({ shutdown: true })
         return
       }
-      lastCtrlC = now
     }
     if (ui.capturing()) {
       // an in-pane text box owns the keyboard (it handles its own escape); ctrl+c still gets you out
@@ -694,6 +695,7 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       if (!special) return
     }
     if (id === "app.quit" && !ui.input()) {
+      lastCtrlC = Date.now()
       ui.toast("press ctrl+c again to quit and stop all agents · /quit leaves them running")
       return
     }

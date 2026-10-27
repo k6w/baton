@@ -36,6 +36,8 @@ interface ConnSocket {
   /** Bytes accepted (fewer than given = wait for drain / retry). */
   write(b: Uint8Array): number
   end(): void
+  /** Bytes the socket itself still holds (node:net queues writes rather than refusing them). */
+  queued?(): number
 }
 
 interface Conn {
@@ -223,6 +225,9 @@ export function startControlServer(
 
   const encoder = new TextEncoder()
   const MAX_PENDING_BYTES = 256 * 1024 * 1024
+  /** Behind by this much: live output is skipped for the client. */
+  const LAGGING_BYTES = 1024 * 1024
+  const backlog = (conn: Conn) => conn.pendingBytes + (conn.socket.queued?.() ?? 0)
   const TRACE = process.env.BATON_TRACE_IPC === "1"
   // socket.write returns *bytes* written; keep the queue as bytes so partial writes of
   // multi-byte UTF-8 never corrupt the stream.
@@ -265,7 +270,7 @@ export function startControlServer(
         conn.pending.push(bytes)
         conn.pendingBytes += bytes.byteLength
         // a client that stopped reading would hold everything since in memory: drop it (it reconnects and resyncs)
-        if (conn.pendingBytes > MAX_PENDING_BYTES) {
+        if (backlog(conn) > MAX_PENDING_BYTES) {
           conn.pending = []
           conn.pendingBytes = 0
           conn.socket.end()
@@ -301,7 +306,7 @@ export function startControlServer(
     }
     conn.unsubscribe = rt.store.subscribe((event) => {
       // live output is superseded by the next chunk: a client that's behind doesn't need it
-      if (event.live && conn.pending.length > 32) return
+      if (event.live && backlog(conn) > LAGGING_BYTES) return
       for (const [subscriptionId, f] of conn.subs) {
         if (f.agentId && event.agentId !== f.agentId) continue
         if (!matchesType(event.type, f.types)) continue
@@ -348,6 +353,7 @@ export function startControlServer(
           return b.byteLength
         },
         end: () => s.end(),
+        queued: () => s.writableLength,
       })
       s.on("data", (b: Buffer) => onData(conn, b))
       s.on("close", () => onClose(conn))

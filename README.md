@@ -207,7 +207,7 @@ config: [agents & providers](docs/agents.md).
   to your team. `baton a2a` serves it to other agents.
 - **GitHub:** `baton issue 42` starts from an issue, and `/pr` opens a draft pull request from
   what was merged.
-- **History:** every run is saved. `ctrl+r` resumes one, `baton replay` plays it back, and
+- **History:** every run is saved. `baton --continue` (or `ctrl+r` in the app) resumes one, `baton replay` plays it back, and
   `baton export` writes Markdown or HTML.
 - **Track record:** Baton learns which agent is good at what in *your* project (`/scores`),
   and the orchestrator uses that to pick who does what.

@@ -15,6 +15,9 @@ test("history: runs persist across daemon restarts, export to markdown, resume r
   const w = await d.runtime.spawn({ adapter: "mock", name: "historian", label: "remember", options: { speed: 0 } })
   await d.runtime.promptAgent(w.agentId, "pong")
   for (let i = 0; i < 100 && !d.runtime.state.feed(w.agentId).items.some((x) => x.kind === "message" && x.text === "PONG"); i++) await Bun.sleep(10)
+  // killed before the run ended: a resume leaves it out
+  const gone = await d.runtime.spawn({ adapter: "mock", name: "quitter", options: { speed: 0 } })
+  await d.runtime.kill(gone.agentId)
   await d.stop()
   // run 2
   d = await startDaemon(opts)
@@ -24,7 +27,7 @@ test("history: runs persist across daemon restarts, export to markdown, resume r
   const past = runs.find((r) => r.runId === firstRun)!
   expect(past.current).toBe(false)
   expect(past.title).toBe("pong")
-  expect(past.agents).toBe(1)
+  expect(past.agents).toBe(2)
   expect(runs.find((r) => r.current)?.runId).toBe(d.runtime.runId)
   const md = (await c.call("run.export", { runId: firstRun, format: "md" })).text
   expect(md).toContain("# pong")

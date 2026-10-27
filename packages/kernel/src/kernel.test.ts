@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { diffLines, parseUnifiedDiff } from "@batonsh/protocol"
+import { type BatonEvent, diffLines, parseUnifiedDiff } from "@batonsh/protocol"
 import { classifyTask, EventStore, envLayer, formatCount, loadConfig, pickAgents, RunState, runRecords, scorecards, template, trustEntries } from "./index.ts"
 
 describe("EventStore", () => {
@@ -40,6 +40,84 @@ describe("EventStore", () => {
     s.subscribe((e) => seen.push(e.type))
     s.append(run, { type: "log", data: { level: "info", message: "hi" } })
     expect(seen).toEqual(["log"])
+  })
+})
+
+/** The output of an update's first (terminal) content. */
+const outputOf = (content?: unknown[]) => (content?.[0] as { output?: string } | undefined)?.output ?? ""
+
+describe("EventStore size", () => {
+  const out = (n: number) => ({ type: "terminal" as const, terminalId: "c", command: "make", output: "x".repeat(n) })
+
+  test("live events reach listeners but aren't stored, and don't move a projection's seq", () => {
+    const s = new EventStore()
+    const run = s.createRun("/tmp")
+    const st = new RunState()
+    s.subscribe((e) => st.apply(e))
+    s.append(run, { type: "agent.spawned", data: { agentId: "a", name: "w", adapter: "mock", cwd: "/tmp" } }, { agentId: "a" })
+    const call = s.append(run, { type: "tool.call", data: { toolCallId: "c", kind: "execute", name: "sh", title: "make" } }, { agentId: "a" })
+    const live = s.append(run, { type: "tool.update", data: { toolCallId: "c", content: [out(10)] } }, { agentId: "a", live: true })
+    expect(live.live).toBe(true)
+    expect(live.seq).toBe(call.seq)
+    expect(st.lastSeq).toBe(call.seq)
+    expect(st.feed("a").index.get("c")).toMatchObject({ output: "x".repeat(10) })
+    expect(s.query({ runId: run }).length).toBe(2)
+    // the next stored event is next in line
+    expect(s.append(run, { type: "log", data: { level: "info", message: "x" } }).seq).toBe(call.seq + 1)
+  })
+
+  test("a big rawOutput isn't stored (content has it)", () => {
+    const s = new EventStore()
+    const run = s.createRun("/tmp")
+    s.append(run, { type: "tool.update", data: { toolCallId: "c", status: "completed", content: [out(10)], rawOutput: { file: "y".repeat(20_000) } } })
+    s.append(run, { type: "tool.update", data: { toolCallId: "d", status: "completed", rawOutput: { exitCode: 0 } } })
+    const [big, small] = s.query({ runId: run })
+    expect(big!.data).not.toHaveProperty("rawOutput")
+    expect(small!.data).toMatchObject({ rawOutput: { exitCode: 0 } })
+  })
+
+  test("query `last` returns the newest events, oldest first", () => {
+    const s = new EventStore()
+    const run = s.createRun("/tmp")
+    for (let i = 0; i < 5; i++) s.append(run, { type: "log", data: { level: "info", message: String(i) } })
+    expect(s.query({ runId: run, last: 2 }).map((e) => (e.data as { message: string }).message)).toEqual(["3", "4"])
+  })
+
+  test("compact drops superseded output snapshots from an old log, keeps the rest, and continues its seqs", () => {
+    const dir = mkdtempSync(join(tmpdir(), "baton-compact-"))
+    const path = join(dir, "state.db")
+    let s = new EventStore(path)
+    const run = s.createRun(dir)
+    const add = (ev: Parameters<EventStore["append"]>[1]) => s.append(run, ev, { agentId: "a" })
+    add({ type: "agent.spawned", data: { agentId: "a", name: "w", adapter: "codex", cwd: dir } })
+    // what versions before 0.3.7 stored: every chunk with all the output so far
+    for (const id of ["done", "open"]) {
+      add({ type: "tool.call", data: { toolCallId: id, kind: "execute", name: "sh", title: id } })
+      for (let i = 1; i <= 20; i++) add({ type: "tool.update", data: { toolCallId: id, status: "in_progress", content: [out(i * 100)] } })
+    }
+    add({ type: "tool.update", data: { toolCallId: "done", status: "completed", content: [out(2000)], rawOutput: "z".repeat(20_000) } })
+    add({ type: "tool.update", data: { toolCallId: "edit", content: [{ type: "diff", path: "a.ts", lines: [{ kind: "add", text: "x" }] }] } })
+    const last = s.lastSeq()
+    // as an old log: no compaction mark
+    ;(s as unknown as { db: { exec(sql: string): void } }).db.exec("DELETE FROM kv WHERE k = 'compact_version'")
+    s.close()
+    s = new EventStore(path)
+    expect(s.needsCompact()).toBe(true)
+    const r = s.compact()
+    expect(r.removed).toBe(39) // all 20 snapshots of "done" (its result has the output) + 19 of "open" (its last stays)
+    expect(s.needsCompact()).toBe(false)
+    const updates = s.query({ runId: run, types: ["tool.update"] }) as BatonEvent<"tool.update">[]
+    expect(updates.map((e) => `${e.data.toolCallId}:${e.data.status ?? "-"}`)).toEqual(["open:in_progress", "done:completed", "edit:-"])
+    expect(outputOf(updates[0]!.data.content).length).toBe(2000)
+    expect(updates[1]!.data).not.toHaveProperty("rawOutput")
+    expect(s.diffTotals(run)).toEqual({ added: 1, removed: 0 })
+    expect(s.append(run, { type: "log", data: { level: "info", message: "after" } }).seq).toBe(last + 1)
+    s.close()
+    // reopens fine, with its index
+    s = new EventStore(path)
+    expect(s.needsCompact()).toBe(false)
+    expect(s.query({ runId: run, types: ["agent.spawned"] }).length).toBe(1)
+    s.close()
   })
 })
 

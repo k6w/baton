@@ -130,7 +130,11 @@ export type AgentInfo = z.infer<typeof AgentInfo>
 export const EventSchemas = {
   // run lifecycle
   "run.started": z.object({ title: z.string().optional(), cwd: z.string(), mode: z.string() }),
-  "run.ended": z.object({ reason: z.string().optional() }),
+  "run.ended": z.object({
+    reason: z.string().optional(),
+    /** Agents still running when the run ended (by id): what resuming the run brings back. */
+    agents: z.array(z.string()).optional(),
+  }),
 
   // agent lifecycle
   "agent.spawned": AgentInfo,
@@ -341,6 +345,11 @@ export type BatonEvent<T extends EventType = EventType> = {
     type: K
     data: EventData<K>
     raw?: unknown
+    /**
+     * Shown live but never stored (streaming command output): `seq` is the last stored event's,
+     * so it is neither replayed nor counted as progress. A later stored event supersedes it.
+     */
+    live?: true
   }
 }[T]
 

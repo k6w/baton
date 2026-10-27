@@ -45,6 +45,8 @@ interface Conn {
   subs: Map<string, { types?: string[]; agentId?: string }>
   unsubscribe: () => void
   pending: Uint8Array[]
+  /** Bytes waiting in `pending`. */
+  pendingBytes: number
   socket: ConnSocket
   /** Retry timer for a short write (see flush). */
   retry?: ReturnType<typeof setTimeout>
@@ -220,6 +222,7 @@ export function startControlServer(
   }
 
   const encoder = new TextEncoder()
+  const MAX_PENDING_BYTES = 256 * 1024 * 1024
   const TRACE = process.env.BATON_TRACE_IPC === "1"
   // socket.write returns *bytes* written; keep the queue as bytes so partial writes of
   // multi-byte UTF-8 never corrupt the stream.
@@ -229,6 +232,7 @@ export function startControlServer(
     while (conn.pending.length) {
       const chunk = conn.pending[0] as Uint8Array
       const written = conn.socket.write(chunk)
+      conn.pendingBytes -= Math.max(0, Math.min(written, chunk.byteLength))
       if (written >= chunk.byteLength) conn.pending.shift()
       else {
         conn.pending[0] = chunk.subarray(Math.max(0, written))
@@ -250,12 +254,23 @@ export function startControlServer(
       decoder: new TextDecoder(),
       subs: new Map(),
       pending: [],
+      pendingBytes: 0,
       socket,
       unsubscribe: () => {},
       peer: new JsonRpcPeer((msg) => {
         if (TRACE && !(msg as { method?: string }).method?.startsWith("event"))
           console.error(`[ipc ${Date.now() % 100000}] -> ${JSON.stringify(msg).slice(0, 160)}`)
-        conn.pending.push(encoder.encode(`${JSON.stringify(msg)}\n`))
+        if (conn.closed) return
+        const bytes = encoder.encode(`${JSON.stringify(msg)}\n`)
+        conn.pending.push(bytes)
+        conn.pendingBytes += bytes.byteLength
+        // a client that stopped reading would hold everything since in memory: drop it (it reconnects and resyncs)
+        if (conn.pendingBytes > MAX_PENDING_BYTES) {
+          conn.pending = []
+          conn.pendingBytes = 0
+          conn.socket.end()
+          return
+        }
         flush(conn)
       }),
     }
@@ -285,6 +300,8 @@ export function startControlServer(
       })
     }
     conn.unsubscribe = rt.store.subscribe((event) => {
+      // live output is superseded by the next chunk: a client that's behind doesn't need it
+      if (event.live && conn.pending.length > 32) return
       for (const [subscriptionId, f] of conn.subs) {
         if (f.agentId && event.agentId !== f.agentId) continue
         if (!matchesType(event.type, f.types)) continue

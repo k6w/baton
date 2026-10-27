@@ -4,7 +4,7 @@
  * still hold unmerged work.
  */
 import { existsSync } from "node:fs"
-import { formatCost, formatDuration, RunState } from "@batonsh/kernel"
+import { type FeedItem, formatCost, formatDuration, RunState } from "@batonsh/kernel"
 import type { AgentInfo, BatonEvent } from "@batonsh/protocol"
 import { mdToHtml } from "./md-html.ts"
 import type { Runtime } from "./runtime.ts"
@@ -35,32 +35,52 @@ function firstPrompt(events: BatonEvent[]): string | undefined {
   return undefined
 }
 
+/** What a run summary is made of; everything but the tool output, so big runs stay cheap. */
+const SUMMARY_TYPES = ["run.ended", "agent.spawned", "agent.updated", "usage.updated", "tool.call", "turn.started", "workspace.merge"]
+
 export function summarize(rt: Runtime, runId: string): RunSummary | undefined {
-  const events = rt.store.query({ runId })
-  if (!events.length) return undefined
+  const first = rt.store.query({ runId, limit: 1 })[0]
+  if (!first) return undefined
+  const events = rt.store.query({ runId, types: SUMMARY_TYPES })
   const st = fold(events)
+  const diff = rt.store.diffTotals(runId)
   const merged = events.filter((e) => e.type === "workspace.merge" && e.data.status === "merged" && (e.data.files?.length ?? 0) > 0).length
   return {
     runId,
-    startedAt: events[0]!.ts,
+    startedAt: first.ts,
     endedAt: events.find((e) => e.type === "run.ended")?.ts,
     title: (firstPrompt(events) ?? "(no task)").split("\n")[0]!.slice(0, 120),
     agents: st.agents.size,
     adapters: [...new Set([...st.agents.values()].map((a) => a.adapter))],
     costUsd: st.totals.costUsd,
     toolCalls: st.totals.toolCalls,
-    added: st.totals.added,
-    removed: st.totals.removed,
+    added: diff.added,
+    removed: diff.removed,
     merged,
     current: runId === rt.runId,
   }
 }
 
+/** Past runs don't change: their summaries are kept in the store, keyed by their last event. */
 export function listRunSummaries(rt: Runtime, limit = 30): RunSummary[] {
-  return rt.store
-    .listRuns(limit)
-    .map((r) => summarize(rt, r.runId))
-    .filter((s): s is RunSummary => !!s)
+  const out: RunSummary[] = []
+  for (const r of rt.store.listRuns(limit)) {
+    const key = `summary:${r.runId}`
+    if (r.runId !== rt.runId) {
+      try {
+        const cached = JSON.parse(rt.store.getKV(key) ?? "null") as { lastSeq: number; summary: RunSummary } | null
+        if (cached?.lastSeq === r.lastSeq) {
+          out.push({ ...cached.summary, current: false })
+          continue
+        }
+      } catch {}
+    }
+    const s = summarize(rt, r.runId)
+    if (!s) continue
+    if (r.runId !== rt.runId) rt.store.setKV(key, JSON.stringify({ lastSeq: r.lastSeq, summary: s }))
+    out.push(s)
+  }
+  return out
 }
 
 export function exportRun(rt: Runtime, runId: string, format: "md" | "jsonl" | "html"): string {
@@ -117,45 +137,101 @@ export function exportRun(rt: Runtime, runId: string, format: "md" | "jsonl" | "
   return `${out.join("\n")}\n`
 }
 
+/** The events that say which agents a run had and how each one ended. */
+const LIFECYCLE_TYPES = ["agent.spawned", "agent.updated", "agent.session", "agent.exited", "workspace.created", "workspace.removed", "run.ended"]
+/** Runs from before 0.3.7 don't list their agents in run.ended: exits this close to it were the shutdown. */
+const SHUTDOWN_WINDOW_MS = 15_000
+
+interface PastAgent {
+  info: AgentInfo
+  session?: string
+  workspace?: { path: string; branch?: string; base?: string; mode: string }
+  exitedAt?: number
+}
+
 /**
- * Resume a past run's agents in the current daemon. Agents get their native session back
- * (adapters that support resume), worktrees with unmerged work are re-adopted.
+ * The agents a resume brings back: the ones still running when the run ended (or when the
+ * daemon died). Agents that were killed, failed or finished before that stay gone; an agent
+ * spawned again under the same name counts once, as its latest self.
+ */
+export function resumableAgents(events: BatonEvent[]): { oldId: string; agent: PastAgent }[] {
+  const agents = new Map<string, PastAgent>()
+  let ended: { ts: number; agents?: string[] } | undefined
+  for (const e of events) {
+    const a = e.agentId ? agents.get(e.agentId) : undefined
+    switch (e.type) {
+      case "agent.spawned":
+        agents.set(e.data.agentId, { info: { ...e.data } })
+        break
+      case "agent.updated":
+        if (a) for (const [k, v] of Object.entries(e.data)) if (v !== undefined) (a.info as Record<string, unknown>)[k] = v
+        break
+      case "agent.session":
+        if (a) a.session = e.data.sessionId
+        break
+      case "agent.exited":
+        if (a) a.exitedAt ??= e.ts
+        break
+      case "workspace.created":
+        if (a) a.workspace = e.data
+        break
+      case "workspace.removed":
+        if (a && !e.data.kept) a.workspace = undefined
+        break
+      case "run.ended":
+        ended = { ts: e.ts, agents: e.data.agents }
+        break
+    }
+  }
+  const alive = (id: string, a: PastAgent) => {
+    if (ended?.agents) return ended.agents.includes(id)
+    if (a.exitedAt === undefined) return true
+    return !!ended && ended.ts - a.exitedAt <= SHUTDOWN_WINDOW_MS
+  }
+  const byName = new Map<string, { oldId: string; agent: PastAgent }>()
+  for (const [oldId, agent] of agents) {
+    if (!alive(oldId, agent)) continue
+    // later spawns under the same name replace earlier ones
+    byName.set(agent.info.isOrchestrator ? "\0lead" : agent.info.name.toLowerCase(), { oldId, agent })
+  }
+  return [...byName.values()]
+}
+
+/**
+ * Resume a past run in the current daemon: the agents that were still running when it ended
+ * come back with their native sessions (adapters that support resume) and their worktrees.
+ * Only lifecycle events and each agent's latest events are read, so a big run resumes quickly.
  */
 export async function resumeRun(rt: Runtime, runId: string): Promise<string[]> {
-  const events = rt.store.query({ runId })
+  const events = rt.store.query({ runId, types: LIFECYCLE_TYPES })
   if (!events.length) throw new Error(`no run ${runId}`)
-  const infos = new Map<string, AgentInfo>()
-  const sessions = new Map<string, string>()
-  const workspaces = new Map<string, { path: string; branch?: string; base?: string; mode: string }>()
-  // the old run as the screen showed it: its feeds become the resumed agents' history
-  const old = new RunState()
-  for (const e of events) {
-    old.apply(e)
-    if (e.type === "agent.spawned") infos.set(e.data.agentId, e.data)
-    else if (e.type === "agent.session" && e.agentId) sessions.set(e.agentId, e.data.sessionId)
-    else if (e.type === "workspace.created" && e.agentId) workspaces.set(e.agentId, e.data)
-  }
   const history = (oldId: string, newId: string) => {
-    const items = old.feed(oldId).items.slice(-HISTORY_ITEMS)
+    // the old feed as the screen showed it, rebuilt from the agent's latest events only
+    const st = new RunState()
+    const spawned = events.find((e) => e.type === "agent.spawned" && e.data.agentId === oldId)
+    if (spawned) st.apply(spawned)
+    for (const e of rt.store.query({ runId, agentId: oldId, last: HISTORY_EVENTS })) st.apply(e)
+    const items = st.feed(oldId).items.slice(-HISTORY_ITEMS).map(slimItem)
     if (items.length) rt.emit({ type: "agent.history", data: { fromRun: runId, items: items as unknown as Record<string, unknown>[] } }, newId)
   }
   const started: string[] = []
-  const live = new Set([...rt.agents.values()].filter((a) => !a.closing).map((a) => a.info.name))
-  for (const [oldId, info] of infos) {
+  const live = new Set([...rt.agents.values()].filter((a) => !a.closing).map((a) => a.info.name.toLowerCase()))
+  for (const { oldId, agent } of resumableAgents(events)) {
+    const info = agent.info
     if (info.isOrchestrator) {
       // a lead that hasn't done anything yet makes way for the resumed one (which remembers the conversation)
       const cur = rt.orchestrator()
       if (cur && !rt.state.feed(cur.info.agentId).items.some((it) => it.kind === "user" || it.kind === "message")) await rt.kill(cur.info.agentId)
       const lead = rt.orchestrator()
       if (!lead) {
-        const a = await rt.spawn({ adapter: info.adapter, isOrchestrator: true, model: info.model, label: info.label, resumeId: sessions.get(oldId) })
+        const a = await rt.spawn({ adapter: info.adapter, isOrchestrator: true, model: info.model, label: info.label, resumeId: agent.session })
         history(oldId, a.agentId)
         started.push(a.name)
       } else history(oldId, lead.info.agentId)
       continue
     }
-    if (live.has(info.name)) continue
-    const ws = workspaces.get(oldId)
+    if (live.has(info.name.toLowerCase())) continue
+    const ws = agent.workspace
     const adopt = ws?.mode === "worktree" && existsSync(ws.path) ? ws : undefined
     try {
       const a = await rt.spawn({
@@ -165,7 +241,7 @@ export async function resumeRun(rt: Runtime, runId: string): Promise<string[]> {
         model: info.model,
         role: info.role,
         approval: info.approval as never,
-        resumeId: sessions.get(oldId),
+        resumeId: agent.session,
         adoptWorkspace: adopt ? { path: adopt.path, branch: adopt.branch, base: adopt.base } : undefined,
       })
       history(oldId, a.agentId)
@@ -178,7 +254,21 @@ export async function resumeRun(rt: Runtime, runId: string): Promise<string[]> {
 }
 
 /** How much of each agent's earlier conversation a resume brings back. */
-const HISTORY_ITEMS = 300
+const HISTORY_ITEMS = 150
+/** The events read per agent to rebuild it (its latest ones). */
+const HISTORY_EVENTS = 4000
+/** History is for reading back: long outputs and diffs are cut to what a card shows. */
+const HISTORY_OUTPUT = 2000
+const HISTORY_DIFF_LINES = 60
+
+function slimItem(it: FeedItem): FeedItem {
+  if (it.kind !== "tool") return it
+  return {
+    ...it,
+    ...(it.output && it.output.length > HISTORY_OUTPUT ? { output: it.output.slice(-HISTORY_OUTPUT) } : {}),
+    diffs: it.diffs.map((d) => (d.lines.length > HISTORY_DIFF_LINES ? { ...d, lines: d.lines.slice(0, HISTORY_DIFF_LINES) } : d)),
+  }
+}
 
 // ───────────────────────────── HTML export ─────────────────────────────
 

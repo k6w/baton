@@ -16,7 +16,9 @@ export function copyText(renderer: CliRenderer | undefined, text: string): strin
     for (const cmd of tools) {
       if (!Bun.which(cmd[0] as string)) continue
       try {
-        const r = Bun.spawnSync(cmd, { windowsHide: true, stdin: new TextEncoder().encode(text), stdout: "ignore", stderr: "ignore" })
+        // clip reads the console code page unless the text is UTF-16 with a byte-order mark
+        const input = cmd[0] === "clip" ? Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, "utf16le")]) : new TextEncoder().encode(text)
+        const r = Bun.spawnSync(cmd, { windowsHide: true, stdin: input, stdout: "ignore", stderr: "ignore" })
         if (r.exitCode === 0) return cmd[0] as string
       } catch {}
     }

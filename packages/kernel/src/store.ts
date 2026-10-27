@@ -4,7 +4,7 @@
  * resumed after a crash and replayed deterministically.
  */
 import { Database } from "bun:sqlite"
-import { mkdirSync } from "node:fs"
+import { mkdirSync, renameSync, rmSync } from "node:fs"
 import { dirname } from "node:path"
 import { type AgentEvent, type BatonEvent, type EventType, matchesType, newId, parseEventData } from "@batonsh/protocol"
 
@@ -13,6 +13,8 @@ export interface AppendOptions {
   taskId?: string
   /** Skip zod validation (trusted internal producers on hot paths). */
   trusted?: boolean
+  /** Deliver to listeners without storing it (see `BatonEvent.live`). */
+  live?: boolean
 }
 
 export interface QueryOptions {
@@ -22,6 +24,8 @@ export interface QueryOptions {
   types?: string[]
   agentId?: string
   limit?: number
+  /** Only the newest `last` matching events (still returned oldest first). */
+  last?: number
 }
 
 export interface RunRow {
@@ -34,6 +38,36 @@ export interface RunRow {
 
 type Listener = (e: BatonEvent) => void
 
+/** `rawOutput` larger than this isn't stored: it repeats what `content` already shows. */
+export const MAX_RAW_OUTPUT = 8 * 1024
+/** Bump when `compact()` learns something new, so existing logs are compacted again once. */
+const COMPACT_VERSION = "1"
+
+const SCHEMA = `
+  CREATE TABLE IF NOT EXISTS events (
+    seq      INTEGER PRIMARY KEY AUTOINCREMENT,
+    id       TEXT NOT NULL,
+    ts       INTEGER NOT NULL,
+    run_id   TEXT NOT NULL,
+    agent_id TEXT,
+    task_id  TEXT,
+    type     TEXT NOT NULL,
+    data     TEXT NOT NULL,
+    raw      TEXT
+  );
+  CREATE INDEX IF NOT EXISTS events_run ON events(run_id, seq);
+  CREATE INDEX IF NOT EXISTS events_agent ON events(agent_id, seq);
+  CREATE TABLE IF NOT EXISTS runs (
+    run_id     TEXT PRIMARY KEY,
+    started_at INTEGER NOT NULL,
+    title      TEXT,
+    cwd        TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+`
+/** Lets a run's events of a few types be read without the rest (summaries, resume). */
+const TYPE_INDEX = "CREATE INDEX IF NOT EXISTS events_run_type ON events(run_id, type, seq);"
+
 export class EventStore {
   private db: Database
   private insert: ReturnType<Database["prepare"]>
@@ -41,45 +75,41 @@ export class EventStore {
   private keepRaw = process.env.BATON_KEEP_RAW === "1"
   private pending: BatonEvent[] = []
   private dispatching = false
+  /** Last stored seq: what a live event carries. */
+  private stored = 0
 
-  constructor(path: string = ":memory:") {
+  constructor(private readonly path: string = ":memory:") {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true })
-    this.db = new Database(path, { create: true })
-    this.db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 3000;")
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS events (
-        seq      INTEGER PRIMARY KEY AUTOINCREMENT,
-        id       TEXT NOT NULL,
-        ts       INTEGER NOT NULL,
-        run_id   TEXT NOT NULL,
-        agent_id TEXT,
-        task_id  TEXT,
-        type     TEXT NOT NULL,
-        data     TEXT NOT NULL,
-        raw      TEXT
-      );
-      CREATE INDEX IF NOT EXISTS events_run ON events(run_id, seq);
-      CREATE INDEX IF NOT EXISTS events_agent ON events(agent_id, seq);
-      CREATE TABLE IF NOT EXISTS runs (
-        run_id     TEXT PRIMARY KEY,
-        started_at INTEGER NOT NULL,
-        title      TEXT,
-        cwd        TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);
-    `)
-    this.insert = this.db.prepare("INSERT INTO events (id, ts, run_id, agent_id, task_id, type, data, raw) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING seq")
+    this.db = this.open()
+    this.insert = this.prepareInsert()
+    this.stored = this.lastSeq()
+  }
+
+  private open(): Database {
+    const db = new Database(this.path, { create: true })
+    db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 3000;")
+    db.exec(SCHEMA)
+    // building this index reads the whole log: an old, big one gets it from compact() instead
+    const version = db.query("SELECT v FROM kv WHERE k = 'compact_version'").get() as { v: string } | null
+    const empty = !db.query("SELECT 1 FROM events LIMIT 1").get()
+    if (empty || version?.v === COMPACT_VERSION) db.exec(TYPE_INDEX)
+    if (empty) db.query("INSERT INTO kv (k, v) VALUES ('compact_version', ?) ON CONFLICT(k) DO NOTHING").run(COMPACT_VERSION)
+    return db
+  }
+
+  private prepareInsert() {
+    return this.db.query("INSERT INTO events (id, ts, run_id, agent_id, task_id, type, data, raw) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING seq")
   }
 
   createRun(cwd: string, title?: string): string {
     const runId = newId("run")
-    this.db.prepare("INSERT INTO runs (run_id, started_at, title, cwd) VALUES (?, ?, ?, ?)").run(runId, Date.now(), title ?? null, cwd)
+    this.db.query("INSERT INTO runs (run_id, started_at, title, cwd) VALUES (?, ?, ?, ?)").run(runId, Date.now(), title ?? null, cwd)
     return runId
   }
 
   listRuns(limit = 50): RunRow[] {
     return this.db
-      .prepare(
+      .query(
         `SELECT r.run_id as runId, r.started_at as startedAt, r.title, r.cwd,
                 COALESCE((SELECT MAX(seq) FROM events e WHERE e.run_id = r.run_id), 0) as lastSeq
            FROM runs r ORDER BY r.started_at DESC LIMIT ?`,
@@ -92,10 +122,14 @@ export class EventStore {
     const id = newId("ev")
     const ts = Date.now()
     const raw = this.keepRaw && ev.raw !== undefined ? JSON.stringify(ev.raw) : null
-    const row = this.insert.get(id, ts, runId, opts.agentId ?? null, opts.taskId ?? null, ev.type, JSON.stringify(data), raw) as { seq: number }
+    let seq = this.stored
+    if (!opts.live) {
+      const row = this.insert.get(id, ts, runId, opts.agentId ?? null, opts.taskId ?? null, ev.type, stored(ev.type, data), raw) as { seq: number }
+      seq = this.stored = row.seq
+    }
     const out = {
       id,
-      seq: row.seq,
+      seq,
       ts,
       runId,
       agentId: opts.agentId,
@@ -103,6 +137,7 @@ export class EventStore {
       type: ev.type,
       data,
       ...(raw ? { raw: ev.raw } : {}),
+      ...(opts.live ? { live: true } : {}),
     } as BatonEvent
     // Listeners may append events themselves (e.g. the demo director reacting to a turn).
     // Queue nested appends so every listener observes events in seq order.
@@ -148,22 +183,29 @@ export class EventStore {
       where.push("agent_id = ?")
       args.push(opts.agentId)
     }
-    // filter types in SQL so LIMIT counts matching events, not all events
+    // filter types in SQL so LIMIT counts matching events, not all events; exact types as IN (…)
+    // so the (run_id, type, seq) index finds them without reading the rest of the run
     if (opts.types?.length && !opts.types.includes("*")) {
+      const exact = opts.types.filter((t) => !t.endsWith(".*"))
       const ors: string[] = []
+      if (exact.length) {
+        ors.push(`type IN (${exact.map(() => "?").join(", ")})`)
+        args.push(...exact)
+      }
       for (const t of opts.types) {
-        if (t.endsWith(".*")) {
-          ors.push("substr(type, 1, ?) = ?")
-          args.push(t.length - 1, t.slice(0, -1))
-        } else {
-          ors.push("type = ?")
-          args.push(t)
-        }
+        if (!t.endsWith(".*")) continue
+        ors.push("substr(type, 1, ?) = ?")
+        args.push(t.length - 1, t.slice(0, -1))
       }
       where.push(`(${ors.join(" OR ")})`)
     }
-    const sql = `SELECT * FROM events ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY seq ASC ${opts.limit ? `LIMIT ${Math.floor(opts.limit)}` : ""}`
-    const rows = this.db.prepare(sql).all(...args) as {
+    const filter = where.length ? `WHERE ${where.join(" AND ")}` : ""
+    const sql = opts.last
+      ? `SELECT * FROM (SELECT * FROM events ${filter} ORDER BY seq DESC LIMIT ${Math.floor(opts.last)}) ORDER BY seq ASC`
+      : `SELECT * FROM events ${filter} ORDER BY seq ASC ${opts.limit ? `LIMIT ${Math.floor(opts.limit)}` : ""}`
+    // not cached: the SQL varies with the options
+    const stmt = this.db.prepare(sql)
+    const rows = stmt.all(...args) as {
       seq: number
       id: string
       ts: number
@@ -174,6 +216,7 @@ export class EventStore {
       data: string
       raw: string | null
     }[]
+    stmt.finalize()
     const out: BatonEvent[] = []
     for (const r of rows) {
       if (!matchesType(r.type, opts.types)) continue
@@ -192,22 +235,148 @@ export class EventStore {
     return out
   }
 
+  /** Lines added/removed in a run (the last diff of each file per tool call), without loading the run. */
+  diffTotals(runId: string): { added: number; removed: number } {
+    const count = (kind: string) => `(SELECT count(*) FROM json_each(c.value, '$.lines') l WHERE json_extract(l.value, '$.kind') = '${kind}')`
+    return this.db
+      .query(
+        `SELECT COALESCE(SUM(added), 0) AS added, COALESCE(SUM(removed), 0) AS removed FROM (
+           SELECT json_extract(e.data, '$.toolCallId') AS tc, json_extract(c.value, '$.path') AS path,
+                  COALESCE(json_extract(c.value, '$.added'), ${count("add")}) AS added,
+                  COALESCE(json_extract(c.value, '$.removed'), ${count("del")}) AS removed,
+                  MAX(e.seq)
+             FROM events e, json_each(e.data, '$.content') c
+            WHERE e.run_id = ? AND e.type = 'tool.update' AND json_extract(c.value, '$.type') = 'diff'
+            GROUP BY tc, path)`,
+      )
+      .get(runId) as { added: number; removed: number }
+  }
+
   lastSeq(): number {
-    const r = this.db.prepare("SELECT MAX(seq) as s FROM events").get() as { s: number | null }
+    const r = this.db.query("SELECT MAX(seq) as s FROM events").get() as { s: number | null }
     return r.s ?? 0
   }
 
   getKV(k: string): string | undefined {
-    const r = this.db.prepare("SELECT v FROM kv WHERE k = ?").get(k) as { v: string } | null
+    const r = this.db.query("SELECT v FROM kv WHERE k = ?").get(k) as { v: string } | null
     return r?.v
   }
 
   setKV(k: string, v: string): void {
-    this.db.prepare("INSERT INTO kv (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v").run(k, v)
+    this.db.query("INSERT INTO kv (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v").run(k, v)
+  }
+
+  /** Bytes the database takes (pages × page size). */
+  sizeBytes(): number {
+    const n = this.db.query("PRAGMA page_count").get() as { page_count: number }
+    const p = this.db.query("PRAGMA page_size").get() as { page_size: number }
+    return n.page_count * p.page_size
+  }
+
+  /** Whether `compact()` has work to do: the log predates the current compaction rules. */
+  needsCompact(): boolean {
+    return this.getKV("compact_version") !== COMPACT_VERSION
+  }
+
+  /**
+   * Shrink a log written by an older version. Before 0.3.7 every chunk of a running command's
+   * output was stored with all the output so far (gigabytes for a long run): only the last of
+   * those is kept, and only when the command never reported a result. Big `rawOutput` goes too
+   * (it repeats `content`). The log is read once and what's kept is written to a fresh file
+   * that replaces it, which is much faster than deleting rows from a big one.
+   * Run it with no other process using the log (the daemon stopped).
+   */
+  compact(): { before: number; after: number; removed: number } {
+    const before = this.sizeBytes()
+    const db = this.db
+    // one pass over the tool updates: which are superseded output snapshots
+    db.exec(`
+      DROP TABLE IF EXISTS temp.tu;
+      CREATE TEMP TABLE tu AS
+        SELECT seq, run_id, json_extract(data, '$.toolCallId') AS tc,
+               (COALESCE(json_extract(data, '$.status'), 'in_progress') = 'in_progress'
+                AND json_array_length(data, '$.content') = 1
+                AND json_extract(data, '$.content[0].type') = 'terminal') AS progress
+          FROM events WHERE type = 'tool.update';
+      DROP TABLE IF EXISTS temp.gone;
+      CREATE TEMP TABLE gone (seq INTEGER PRIMARY KEY);
+      INSERT INTO temp.gone
+        SELECT t.seq FROM temp.tu t
+          JOIN (SELECT run_id, tc, MAX(seq) AS last FROM temp.tu GROUP BY run_id, tc) l
+            ON l.run_id = t.run_id AND l.tc IS t.tc
+         WHERE t.progress AND t.seq < l.last;
+      DROP TABLE temp.tu;`)
+    const removed = (db.query("SELECT count(*) AS n FROM temp.gone").get() as { n: number }).n
+    const slimData = `CASE WHEN type = 'tool.update' AND length(data) > ${MAX_RAW_OUTPUT}
+                            AND length(json_extract(data, '$.rawOutput')) > ${MAX_RAW_OUTPUT}
+                           THEN json_remove(data, '$.rawOutput') ELSE data END`
+    if (this.path === ":memory:") {
+      db.transaction(() => {
+        db.exec(`DELETE FROM events WHERE seq IN (SELECT seq FROM temp.gone); UPDATE events SET data = ${slimData} WHERE type = 'tool.update';`)
+        this.setKV("compact_version", COMPACT_VERSION)
+      })()
+      db.exec(`DROP TABLE temp.gone; ${TYPE_INDEX}`)
+      return { before, after: this.sizeBytes(), removed }
+    }
+    const fresh = `${this.path}.compact`
+    for (const f of [fresh, `${fresh}-journal`]) rmSync(f, { force: true })
+    try {
+      db.query("ATTACH DATABASE ? AS fresh").run(fresh)
+      db.exec("PRAGMA fresh.journal_mode = OFF; PRAGMA fresh.synchronous = OFF;")
+      db.exec(SCHEMA.replaceAll("IF NOT EXISTS ", "IF NOT EXISTS fresh."))
+      db.exec(`
+        INSERT INTO fresh.events (seq, id, ts, run_id, agent_id, task_id, type, data, raw)
+          SELECT seq, id, ts, run_id, agent_id, task_id, type, ${slimData}, raw
+            FROM main.events WHERE seq NOT IN (SELECT seq FROM temp.gone) ORDER BY seq;
+        INSERT INTO fresh.runs SELECT * FROM main.runs;
+        INSERT INTO fresh.kv SELECT * FROM main.kv WHERE k <> 'compact_version';
+        -- new events continue after the old log's last seq (clients remember seqs)
+        DELETE FROM fresh.sqlite_sequence WHERE name = 'events';
+        INSERT INTO fresh.sqlite_sequence (name, seq) SELECT name, seq FROM main.sqlite_sequence WHERE name = 'events';`)
+      db.query("INSERT INTO fresh.kv (k, v) VALUES ('compact_version', ?)").run(COMPACT_VERSION)
+      db.exec(TYPE_INDEX.replace("IF NOT EXISTS ", "IF NOT EXISTS fresh."))
+      db.exec("DROP TABLE temp.gone; DETACH DATABASE fresh;")
+    } catch (e) {
+      try {
+        db.exec("DETACH DATABASE fresh")
+      } catch {}
+      rmSync(fresh, { force: true })
+      throw e
+    }
+    // swap the files (closing checkpointed the WAL into the old log): the old one moves aside
+    // until the fresh one has its name, so a failed swap leaves the old log in place
+    this.db.close()
+    const old = `${this.path}.old`
+    try {
+      rmSync(old, { force: true })
+      renameSync(this.path, old)
+      // the old log's WAL must not be replayed into the fresh one
+      for (const f of [`${this.path}-wal`, `${this.path}-shm`]) rmSync(f, { force: true })
+      try {
+        renameSync(fresh, this.path)
+      } catch (e) {
+        renameSync(old, this.path)
+        throw e
+      }
+      rmSync(old, { force: true })
+    } finally {
+      this.db = this.open()
+      this.insert = this.prepareInsert()
+    }
+    return { before, after: this.sizeBytes(), removed }
   }
 
   close(): void {
     this.listeners.clear()
     this.db.close()
   }
+}
+
+/** The stored form of an event's data: without a big `rawOutput` (see MAX_RAW_OUTPUT). */
+function stored(type: string, data: unknown): string {
+  const json = JSON.stringify(data)
+  if (type !== "tool.update" || json.length <= MAX_RAW_OUTPUT) return json
+  const { rawOutput, ...rest } = data as { rawOutput?: unknown }
+  if (rawOutput === undefined || JSON.stringify(rawOutput).length <= MAX_RAW_OUTPUT) return json
+  return JSON.stringify(rest)
 }

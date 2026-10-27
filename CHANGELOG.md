@@ -5,6 +5,48 @@ All notable changes to Baton. Versions follow [semver](https://semver.org); the 
 
 ## Unreleased
 
+## 0.3.7 — 2026-10-27
+
+**The event log stays small** (`.baton/state.db`)
+- A running command's output was stored again with every new chunk, all of it each time: one
+  long command could add hundreds of megabytes, and a busy project's log reached gigabytes.
+  Output is now shown live (a few times a second) and stored once, with the command's result.
+  Big raw tool results that repeat what the card shows aren't stored either.
+- Logs from earlier versions are compacted once, the next time you start `baton` in the
+  project (a 3.6 GB log became 170 MB). `baton compact` does it on demand.
+- After updating, `baton` notices a daemon still running the older version and offers to
+  restart it (`--yes` to just do it): the log gets compacted and the agents that were running
+  come back.
+
+**Knows when there's a new version**
+- Once a day the daemon looks for a newer Baton release and says so in the orchestrator's feed,
+  with the command that updates your install (`baton update`, npm or Homebrew). Leaving the
+  app repeats it. Starting Baton never waits on this. `BATON_NO_UPDATE_CHECK=1` turns it off.
+
+**Resume brings back what was running, quickly**
+- Resuming a run starts only the agents that were still running when it ended. Agents you
+  killed, or that failed or finished earlier, stay gone, and an agent restarted under the
+  same name comes back once. (It used to bring back every agent the run ever had, including
+  every agent an earlier resume had brought back.)
+- The run list (`/resume`, `/history`, `baton history`) opens right away: it no longer
+  reads every past run in full. Resuming reads only the agents' lifecycle and latest events.
+- `baton --continue` (`-c`) resumes the last run, `baton --resume <run>` a given one, and
+  `baton --resume` opens the list to pick from. `baton resume [run]` does the same.
+
+**Several Baton windows at once**
+- Starting Baton while another one was busy could crash it ("Failed to start HTTP Client
+  thread") when the machine was short on memory. Baton now uses much less memory (bounded
+  tool output and history per agent, nothing kept for agents that are gone, slow clients
+  can't make the daemon queue without limit), checks agents a few at a time instead of all
+  at once, and only contacts a local Ollama / LM Studio when something is listening there.
+
+**Keys and copying**
+- `ctrl+c` twice quits and stops all agents, from anywhere in the app. `/quit` still leaves
+  them running in the background.
+- Selecting text with the mouse copies it to the clipboard when you let go.
+- `/web` shows the whole link (and the other addresses it's reachable at), and `c` copies it.
+- Copying on Windows keeps non-English characters intact.
+
 ## 0.3.6 — 2026-10-11
 
 **Resume brings the conversation back**

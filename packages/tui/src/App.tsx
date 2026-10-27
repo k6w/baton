@@ -305,11 +305,12 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
         ui.setOverlay("help")
         break
       case "app.quit":
+        // from the palette (the key needs a second press: see the keyboard handler)
         if (ui.input()) {
           ui.setInput("")
           break
         }
-        props.onExit({ shutdown: false })
+        props.onExit({ shutdown: true })
         break
       case "app.shutdown":
         props.onExit({ shutdown: true })
@@ -658,6 +659,16 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
         debugKeys,
         `${Date.now()} key=${key.name} seq=${JSON.stringify(key.sequence)} overlay=${ui.overlay()} focus=${ui.focus().kind} zoom=${ui.zoomed()}\n`,
       )
+    // ctrl+c twice, from anywhere: quit and stop everything (the first one only closes, clears or warns)
+    if (key.ctrl && key.name === "c" && !key.meta && !key.shift) {
+      const now = Date.now()
+      if (now - lastCtrlC <= 1500) {
+        key.preventDefault?.()
+        props.onExit({ shutdown: true })
+        return
+      }
+      lastCtrlC = now
+    }
     if (ui.capturing()) {
       // an in-pane text box owns the keyboard (it handles its own escape); ctrl+c still gets you out
       if (!(key.ctrl && key.name === "c")) return
@@ -683,12 +694,8 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
       if (!special) return
     }
     if (id === "app.quit" && !ui.input()) {
-      const now = Date.now()
-      if (now - lastCtrlC > 1500) {
-        lastCtrlC = now
-        ui.toast("press ctrl+c again to quit (agents keep running) · ctrl+q stops everything")
-        return
-      }
+      ui.toast("press ctrl+c again to quit and stop all agents · /quit leaves them running")
+      return
     }
     key.preventDefault?.()
     run(id)

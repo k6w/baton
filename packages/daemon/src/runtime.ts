@@ -34,6 +34,7 @@ import {
   runCapture,
   type SpawnParams,
   shellCommand,
+  type ToolContent,
   type ToolKind,
 } from "@batonsh/protocol"
 import { Collaboration } from "./collab.ts"
@@ -85,6 +86,28 @@ export interface AgentRuntime {
   baseApproval: ApprovalMode
   /** agent.exited side effects (results, tasks, workspace) — started once, awaited by kill(). */
   exitHandled?: Promise<void>
+  /** Running commands' latest output: shown live (throttled), stored once with the result. */
+  liveOutput: Map<string, { content: ToolContent; dirty: boolean; timer?: ReturnType<typeof setTimeout> }>
+}
+
+/** How often a running command's output is sent to the screen. */
+const LIVE_OUTPUT_MS = 250
+
+type ToolUpdate = Extract<AgentEvent, { type: "tool.update" }>["data"]
+
+/**
+ * A running command's output so far — nothing else. Agents send one per chunk with all the
+ * output yet; storing each made logs of gigabytes, so these are shown live and not stored.
+ */
+function isOutputProgress(d: ToolUpdate): boolean {
+  return (
+    (d.status === undefined || d.status === "in_progress") &&
+    !d.title &&
+    !d.summary &&
+    d.content?.length === 1 &&
+    d.content[0]!.type === "terminal" &&
+    d.content[0]!.exitCode === undefined
+  )
 }
 
 export interface InboxMessage {
@@ -351,6 +374,7 @@ export class Runtime {
       toolRepeats: 0,
       blocked: 0,
       openTools: new Set(),
+      liveOutput: new Map(),
     }
     this.agents.set(agentId, rt)
     this.policy.setAccess(agentId, access)
@@ -475,6 +499,16 @@ export class Runtime {
     if (this.closed) return
     const agentId = rt.info.agentId
     if (ev.type === "permission.resolved" && this.resolvedRequests.has(ev.data.requestId)) return
+    if (ev.type === "tool.update") {
+      if (isOutputProgress(ev.data)) return this.liveOutput(rt, ev.data)
+      const last = rt.liveOutput.get(ev.data.toolCallId)
+      if (last && (ev.data.status === "completed" || ev.data.status === "failed")) {
+        clearTimeout(last.timer)
+        rt.liveOutput.delete(ev.data.toolCallId)
+        // the result keeps the output it ended with when the agent doesn't repeat it
+        if (!ev.data.content?.some((c) => c.type === "terminal")) ev = { ...ev, data: { ...ev.data, content: [...(ev.data.content ?? []), last.content] } }
+      }
+    }
     let stored: BatonEvent
     try {
       stored = this.emit(ev, agentId)
@@ -512,6 +546,7 @@ export class Runtime {
       case "turn.interrupted":
         rt.busy = false
         rt.openTools.clear()
+        this.storeLiveOutput(rt)
         {
           const outcome = stored.type === "turn.interrupted" ? "interrupted" : stored.data.stopReason === "error" ? "failed" : "ok"
           // a worker with an acceptance check is done only when the check passes
@@ -551,6 +586,44 @@ export class Runtime {
     this.collab.onEvent(rt, stored)
   }
 
+  /** Store the last output of commands that never reported a result (the turn ended without one). */
+  private storeLiveOutput(rt: AgentRuntime) {
+    for (const [toolCallId, o] of rt.liveOutput) {
+      clearTimeout(o.timer)
+      this.emit({ type: "tool.update", data: { toolCallId, content: [o.content] } }, rt.info.agentId)
+    }
+    rt.liveOutput.clear()
+  }
+
+  /** Show a running command's latest output: right away, then at most every LIVE_OUTPUT_MS. */
+  private liveOutput(rt: AgentRuntime, d: ToolUpdate) {
+    rt.lastEventAt = Date.now()
+    if (rt.flagged === "stalled") rt.flagged = undefined
+    const id = d.toolCallId
+    let entry = rt.liveOutput.get(id)
+    if (!entry) {
+      entry = { content: d.content![0]!, dirty: true }
+      rt.liveOutput.set(id, entry)
+    } else {
+      entry.content = d.content![0]!
+      entry.dirty = true
+    }
+    if (entry.timer) return
+    const e = entry
+    const flush = () => {
+      e.timer = undefined
+      if (this.closed || rt.liveOutput.get(id) !== e || !e.dirty) return
+      e.dirty = false
+      this.store.append(
+        this.runId,
+        { type: "tool.update", data: { toolCallId: id, content: [e.content] } },
+        { agentId: rt.info.agentId, live: true, trusted: true },
+      )
+      e.timer = setTimeout(flush, LIVE_OUTPUT_MS)
+    }
+    flush()
+  }
+
   /**
    * Everything that has to happen once an agent is gone — crashed, killed or failed to start:
    * dispatchers get a failed result (so wait_for_results returns), its task fails, pending
@@ -566,6 +639,9 @@ export class Runtime {
     const wasBusy = rt.busy
     rt.busy = false
     if (rt.flushTimer) clearTimeout(rt.flushTimer)
+    if (!this.closed) this.storeLiveOutput(rt)
+    for (const o of rt.liveOutput.values()) clearTimeout(o.timer)
+    rt.liveOutput.clear()
     for (const w of [...rt.waiters]) w()
     this.policy.forgetAgent(rt.info.agentId)
     for (const [id, ask] of this.asks) if (ask.agentId === rt.info.agentId) void this.resolvePermission(rt.info.agentId, id, "no", "cancelled")
@@ -574,6 +650,12 @@ export class Runtime {
       this.reportResult(rt, "failed")
     } else this.collab.onResult(rt, "failed")
     if (!this.closed) await this.collab.remove(rt.info.agentId).catch(() => {})
+    // the entry stays (names, reviews and results still refer to it); what it held goes
+    rt.session = undefined
+    rt.inbox.length = 0
+    rt.deliveries.length = 0
+    rt.turnEdits.clear()
+    rt.openTools.clear()
   }
 
   private authHinted = new Set<string>()
@@ -1290,8 +1372,10 @@ export class Runtime {
     if (this.closed) return
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
     if (this.watchdogTimer) clearInterval(this.watchdogTimer)
+    // what was still running is what resuming this run brings back (agents killed earlier stay gone)
+    const agents = [...this.agents.values()].filter((a) => !a.closing).map((a) => a.info.agentId)
     await Promise.all([...this.agents.keys()].map((id) => this.kill(id)))
-    this.emit({ type: "run.ended", data: { reason: "shutdown" } })
+    this.emit({ type: "run.ended", data: { reason: "shutdown", agents } })
     this.closed = true
     this.store.close()
   }

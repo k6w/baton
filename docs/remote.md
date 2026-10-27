@@ -7,7 +7,7 @@ baton web          # this machine only
 baton web --lan    # reachable from your phone on the same network — scan the QR code
 ```
 
-Or `/web` inside the TUI (press `l` there to allow your network). You get a mobile-first page with:
+Or `/web` inside the TUI (press `l` there to allow your network, `c` to copy the link). You get a mobile-first page with:
 
 - **Inbox:** everything that needs you, with Allow / Always / Deny for approvals, Approve / Reject for plans and
   Merge for finished work.

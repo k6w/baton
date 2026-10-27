@@ -297,10 +297,19 @@ export function webClient(mdToHtml) {
   function toolIcon(t) {
     if (t.coord)
       return t.verb === "Message" ? "msg" : t.verb === "Wait for results" || t.verb === "Check inbox" ? "wait" : t.verb === "Merge" ? "merge" : "agents"
-    if (t.verb === "Write") return "write"
-    if (t.verb === "Search the web") return "web"
-    if (t.verb === "Check") return "check"
-    return TK[t.tk] || "tool"
+    const byVerb = {
+      Run: "run",
+      Read: "read",
+      Edit: "edit",
+      Write: "write",
+      Delete: "delete",
+      Search: "search",
+      "Find files": "search",
+      "Search the web": "web",
+      Fetch: "fetch",
+      Check: "check",
+    }
+    return byVerb[t.verb] || TK[t.tk] || "tool"
   }
   function md(text) {
     return mdToHtml(text).replace(
@@ -1116,13 +1125,35 @@ export function webClient(mdToHtml) {
     patch(content, items)
     setHTML($("insp"), inspector())
     $("app").classList.toggle("menu", S.menu)
-    const to = a ? (a.lead ? "lead" : a.name) : S.view.lead ? "lead" : ""
-    setHTML($("to"), to ? `${icon("send", "xs")} to <b>${esc(to)}</b>` : `${icon("send", "xs")} <b>command</b>`)
+    target()
+    const small = window.innerWidth < 820
     $("text").placeholder =
-      a && !a.lead ? `Message ${a.name}…` : S.view.lead ? "Give the lead a task, @agent a message, or /command…" : "@agent a message, or /command…"
+      a && !a.lead
+        ? `Message ${a.name}…`
+        : S.view.lead
+          ? small
+            ? "Task for the lead…"
+            : "Give the lead a task, @agent a message, or /command…"
+          : small
+            ? "@agent or /command…"
+            : "@agent a message, or /command…"
     const conv = !!a && !S.details
     if (conv && (routeChanged || nearBottom)) sc.scrollTop = sc.scrollHeight
     $("jump").hidden = !conv || sc.scrollHeight - sc.scrollTop - sc.clientHeight < 200
+  }
+
+  /** Who what you're typing goes to: an @mention, a /command, or this page's agent. */
+  function target() {
+    if (!S.view) return
+    const v = $("text").value.trim()
+    const r = S.route
+    const a = r.name === "agent" ? agentById(r.id) : null
+    const at = /^@([\w.-]+)/.exec(v)
+    const to = v[0] === "/" ? "" : at ? at[1] : a ? a.name : S.view.lead ? "lead" : ""
+    setHTML(
+      $("to"),
+      v[0] === "/" ? `${icon("cmd", "xs")} <b>command</b>` : to ? `${icon("send", "xs")} to <b>${esc(to)}</b>` : `${icon("send", "xs")} <b>command</b>`,
+    )
   }
 
   // live clocks without re-rendering
@@ -1436,6 +1467,7 @@ export function webClient(mdToHtml) {
   text.addEventListener("input", () => {
     grow()
     showSuggest()
+    target()
     S.hist = -1
   })
   text.addEventListener("keydown", (e) => {

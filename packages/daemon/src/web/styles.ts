@@ -289,7 +289,7 @@ kbd { font: 500 11px/1 var(--mono); color: var(--text-3); padding: 3px 5px; bord
 .meter { height: 4px; border-radius: 4px; background: #060606; box-shadow: var(--well); margin-top: 10px; overflow: hidden; }
 .meter i { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, #ff6f2a, #ffa86c); }
 
-.files { display: grid; margin-top: 10px; border-radius: var(--r-sm); background: #050505; box-shadow: var(--well); overflow: hidden; }
+.files { display: grid; grid-template-columns: minmax(0, 1fr); margin-top: 10px; border-radius: var(--r-sm); background: #050505; box-shadow: var(--well); overflow: hidden; }
 .file { display: flex; align-items: center; gap: 10px; padding: 5px 10px; font: 12px var(--mono); border-top: 1px solid var(--line); }
 .file:first-child { border-top: 0; }
 .file .p { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
@@ -321,7 +321,7 @@ kbd { font: 500 11px/1 var(--mono); color: var(--text-3); padding: 3px 5px; bord
 .to b { color: var(--text); font-weight: 600; }
 .crow .grow { flex: 1; } .crow .hint { color: var(--text-4); font-size: 11.5px; display: flex; gap: 4px; align-items: center; }
 .send { width: 32px; height: 32px; border-radius: 10px; }
-.suggest { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(100% - 6px); width: min(860px, calc(100% - 40px)); max-height: 260px; overflow-y: auto; padding: 5px;
+.suggest { z-index: 6; position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(100% - 6px); width: min(860px, calc(100% - 40px)); max-height: 260px; overflow-y: auto; padding: 5px;
   border-radius: var(--r-lg); background: #111; border: 1px solid var(--line-2); box-shadow: var(--float); }
 .sg { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: var(--r-sm); font-size: 13px; cursor: pointer; }
 .sg.on, .sg:hover { background: var(--surface-3); }
@@ -376,6 +376,7 @@ kbd { font: 500 11px/1 var(--mono); color: var(--text-3); padding: 3px 5px; bord
   .tabbar .dot { position: absolute; top: 8px; left: calc(50% + 6px); min-width: 16px; height: 16px; border-radius: 8px; padding: 0 4px; font-size: 10px; display: grid; place-items: center;
     background: var(--accent); color: var(--accent-ink); font-weight: 750; }
   .tl-sum { display: none; }
+  .bar kbd, .bar [data-palette] { display: none; }
   .tl-b { padding-left: 10px; }
   .agrid { grid-template-columns: 1fr; }
   .toasts { left: 12px; right: 12px; bottom: calc(70px + env(safe-area-inset-bottom)); }

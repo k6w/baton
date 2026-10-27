@@ -14,6 +14,9 @@ All notable changes to Baton. Versions follow [semver](https://semver.org); the 
   Big raw tool results that repeat what the card shows aren't stored either.
 - Logs from earlier versions are compacted once, the next time you start `baton` in the
   project (a 3.6 GB log became 170 MB). `baton compact` does it on demand.
+- After updating, `baton` notices a daemon still running the older version and offers to
+  restart it (`--yes` to just do it): the log gets compacted and the agents that were running
+  come back.
 
 **Resume brings back what was running, quickly**
 - Resuming a run starts only the agents that were still running when it ended. Agents you

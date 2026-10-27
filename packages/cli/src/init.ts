@@ -193,7 +193,7 @@ export interface InitOptions {
   gitInit?: boolean
 }
 
-async function ask(q: string, def = true): Promise<boolean> {
+export async function ask(q: string, def = true): Promise<boolean> {
   if (!process.stdin.isTTY) return def
   const rl = createInterface({ input: process.stdin, output: process.stdout })
   const a = (await rl.question(`${q} ${def ? "[Y/n]" : "[y/N]"} `)).trim().toLowerCase()

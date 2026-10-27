@@ -48,7 +48,7 @@ import { BATON_VERSION, CONTROL_PROTOCOL_VERSION, ControlErrorCode, REQUIRED_PAR
 import { BatonClient, connect, daemonListening, discoverSocket } from "@batonsh/sdk"
 import { listThemes, loadTheme } from "@batonsh/themes"
 import { runHeadless } from "./headless.ts"
-import { detectAgents, initProject, isInitialized } from "./init.ts"
+import { ask, detectAgents, initProject, isInitialized } from "./init.ts"
 import { c } from "./style.ts"
 import { update } from "./update.ts"
 
@@ -187,11 +187,13 @@ async function cmdStart(args: Args) {
   if (!isInitialized(root)) {
     await initProject({ root, yes: !!args.flags.yes })
   }
+  const upgraded = await upgradeDaemon(root, !!args.flags.yes)
   await compactLog(root)
   const client = await connect({ cwd: root, daemonCommand: (r) => [...selfCommand(), "daemon", "--root", r], clientName: "tui", user: defaultUser() })
   await applyAutonomyFlag(client, args.flags)
   // --continue: the last run · --resume <run>: that one · --resume alone: pick from the list
-  const resume = args.flags.continue ? "last" : args.flags.resume
+  // (after an upgrade restart, the run that was just stopped)
+  const resume = args.flags.continue || (upgraded && args.flags.resume === undefined) ? "last" : args.flags.resume
   let runError: unknown
   if (typeof resume === "string") {
     const run = await findRun(client, resume)
@@ -203,6 +205,37 @@ async function cmdStart(args: Args) {
   await startTui(client, root, args.flags, { overlay: resume === true ? "history" : undefined })
   if (runError) console.error(c.red(`baton: ${runError instanceof Error ? runError.message : runError}`))
   process.exit(runError ? 1 : 0)
+}
+
+/**
+ * A daemon left running by an older Baton keeps behaving like it (and keeps the event log
+ * open). Offer to restart it on this version: its agents come back with --continue.
+ * True when it was stopped.
+ */
+async function upgradeDaemon(root: string, yes: boolean): Promise<boolean> {
+  const sock = discoverSocket(root)
+  if (!daemonListening(sock, root)) return false
+  const old = await BatonClient.open(sock, "cli").catch(() => undefined)
+  if (!old) return false
+  if (!old.daemonVersion || old.daemonVersion === VERSION) {
+    old.close()
+    return false
+  }
+  // never stops running agents unasked: a script needs --yes
+  const restart =
+    yes ||
+    (process.stdin.isTTY &&
+      (await ask(`  Baton ${old.daemonVersion} is still running here (this is ${VERSION}). Restart it on ${VERSION}? Its agents stop and come right back.`)))
+  if (!restart) {
+    old.close()
+    console.log(c.dim(`  staying on Baton ${old.daemonVersion} for now — \`baton stop\` then \`baton --continue\` switches`))
+    return false
+  }
+  await old.shutdown().catch(() => {})
+  old.close()
+  const lock = join(projectPaths(root).run, "daemon.lock")
+  for (let i = 0; i < 150 && (existsSync(lock) || daemonListening(sock, root)); i++) await Bun.sleep(100)
+  return true
 }
 
 /** A past run by id (or the end of one), or the most recent one for "last". */

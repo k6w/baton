@@ -56,6 +56,8 @@ export class BatonClient {
   projectRoot = ""
   runId = ""
   daemonPid = 0
+  /** The Baton version the daemon runs (an older one may still be running after an update). */
+  daemonVersion = ""
 
   private constructor() {
     this.peer = new JsonRpcPeer((msg) => this.write(`${JSON.stringify(msg)}\n`))
@@ -149,6 +151,7 @@ export class BatonClient {
       c.projectRoot = hello.projectRoot
       c.runId = hello.runId
       c.daemonPid = hello.pid
+      c.daemonVersion = hello.daemonVersion
     } catch (e) {
       c.socket?.terminate()
       c.handleClose("hello failed")

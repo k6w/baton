@@ -72,6 +72,13 @@ describe("messages relayed between agents", () => {
 
 test("paths and escape codes", () => {
   expect(shortenPaths(`kept in ${WT} (branch x)`, undefined)).toBe("kept in  (branch x)")
+  // only Baton's own worktrees, and only the whole project root
+  expect(shortenPaths("see src/worktrees/foo/bar/baz.ts", undefined)).toBe("see src/worktrees/foo/bar/baz.ts")
+  expect(shortenPaths("https://github.com/acme/worktrees/blob/main/README.md", undefined)).toBe("https://github.com/acme/worktrees/blob/main/README.md")
+  expect(shortenPaths("/home/me/app/src/a.ts /home/me/app-old/b.ts", "/home/me/app")).toBe("src/a.ts /home/me/app-old/b.ts")
+  const t = Date.now()
+  shortenPaths(`${"/a".repeat(20000)} ${WT}\\x`, "/home/me/app")
+  expect(Date.now() - t).toBeLessThan(300)
   expect(shortenPaths("C:\\Users\\me\\proj\\src\\a.ts and C:/Users/me/proj/b.ts", "C:\\Users\\me\\proj")).toBe("src\\a.ts and b.ts")
   expect(stripAnsi("\u001b[32m✓ ok\u001b[0m\rprogress")).toBe("✓ ok\nprogress")
 })
@@ -96,12 +103,22 @@ describe("the view", () => {
     const { store, st, id } = run()
     store.append(id, { type: "turn.started", data: { turnId: "t", prompt: "build it" } }, { agentId: "o" })
     const sent = new Map<string, number>()
-    const first = buildView(st, { sent })
+    const push = () => {
+      const versions = new Map<string, number>()
+      const v = buildView(st, { sent, versions })
+      for (const [k, n] of versions) sent.set(k, n)
+      return v
+    }
+    const first = push()
     expect(Object.keys(first.feeds).sort()).toEqual(["o", "w"])
     expect(first.feeds.o?.[0]).toMatchObject({ k: "prompt", text: "build it" })
-    expect(Object.keys(buildView(st, { sent }).feeds)).toEqual([])
+    expect(Object.keys(push().feeds)).toEqual([])
     store.append(id, { type: "message.completed", data: { messageId: "m", role: "assistant", text: "on it" } }, { agentId: "w" })
-    expect(Object.keys(buildView(st, { sent }).feeds)).toEqual(["w"])
+    expect(Object.keys(push().feeds)).toEqual(["w"])
+    // a view that was built but never delivered doesn't count
+    store.append(id, { type: "message.completed", data: { messageId: "m2", role: "assistant", text: "again" } }, { agentId: "w" })
+    buildView(st, { sent, versions: new Map() })
+    expect(Object.keys(push().feeds)).toEqual(["w"])
     // another connection gets everything
     expect(Object.keys(buildView(st, { sent: new Map() }).feeds).sort()).toEqual(["o", "w"])
   })

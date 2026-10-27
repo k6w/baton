@@ -20,22 +20,46 @@ export function stripAnsi(s: string): string {
   return s.replace(ANSI, "").replace(/\r(?!\n)/g, "\n")
 }
 
+const PATH_END = /[\s"'`<>()[\]{},;|]/
+
 /**
- * Paths inside Baton worktrees (…/worktrees/<project>-<hash>/<agent>/src/x.ts) and the project
- * (C:\Users\me\project\src\x.ts) as the part that means something: src/x.ts.
+ * Paths inside Baton worktrees (…/baton/worktrees/<project>-<hash>/<agent>/src/x.ts) and the
+ * project (C:\Users\me\project\src\x.ts) as the part that means something: src/x.ts.
+ * Plain string scanning: agent output is long, and a backtracking regex over it is slow.
  */
 export function shortenPaths(s: string, projectRoot?: string): string {
-  let out = s.replace(/(?:[A-Za-z]:)?[\\/](?:[^\s\\/"'`]+[\\/])*?worktrees[\\/][^\s\\/"'`]+[\\/][^\s\\/"'`]+[\\/]?/g, "")
-  if (projectRoot) {
-    const variants = new Set([projectRoot, projectRoot.replace(/\\/g, "/"), projectRoot.replace(/\//g, "\\")])
-    for (const v of variants) {
-      if (v.length < 4) continue
-      const re = new RegExp(`${v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[\\\\/]?`, "gi")
+  let out = s
+  for (const marker of WORKTREE_MARKERS) {
+    let lower = out.toLowerCase()
+    let at = lower.indexOf(marker)
+    while (at >= 0) {
+      let start = at
+      while (start > 0 && !PATH_END.test(out[start - 1] ?? "")) start--
+      // <project>/<agent>/ after the marker
+      let end = at + marker.length
+      for (let seg = 0; seg < 2; seg++) {
+        while (end < out.length && !SEP.test(out[end] ?? "") && !PATH_END.test(out[end] ?? "")) end++
+        if (seg === 0 && SEP.test(out[end] ?? "")) end++
+      }
+      if (SEP.test(out[end] ?? "")) end++
+      out = out.slice(0, start) + out.slice(end)
+      lower = out.toLowerCase()
+      at = lower.indexOf(marker, start)
+    }
+  }
+  if (projectRoot && projectRoot.length >= 4) {
+    for (const v of new Set([projectRoot, projectRoot.replace(/\\/g, "/"), projectRoot.replace(/\//g, "\\")])) {
+      // only the whole root: /home/me/app must not eat the start of /home/me/app-old
+      const re = new RegExp(`${v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:[\\\\/]|(?=$|[\\s"'\`),;:]))`, "gi")
       out = out.replace(re, "")
     }
   }
   return out
 }
+
+const SEP = /[\\/]/
+/** Where Baton keeps worktrees (both separators): what comes after it is <project>/<agent>/… */
+const WORKTREE_MARKERS = ["baton/worktrees/", "baton\\worktrees\\"]
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
 const tail = (s: string, n: number) => (s.length > n ? `…${s.slice(-(n - 1))}` : s)
@@ -278,7 +302,8 @@ export function webItem(it: FeedItem, ctx: ViewContext): WebItem[] {
           coord: look.coord,
           status: it.status,
           summary: it.summary ? clip(short(it.summary), 200) : undefined,
-          output: it.output ? tail(short(stripAnsi(it.output)), MAX_OUTPUT) : undefined,
+          // trimmed before shortening: outputs are long and this runs for every item of a changed feed
+          output: it.output ? short(stripAnsi(tail(it.output, MAX_OUTPUT))) : undefined,
           exit: it.exitCode,
           parent: it.parentId,
           diffs: it.diffs.slice(0, 8).map((d) => {
@@ -317,6 +342,8 @@ export interface ViewOptions {
   projectRoot?: string
   /** Per connection: the feed version last sent for each agent; only changed feeds are sent again. */
   sent?: Map<string, number>
+  /** Filled with the versions of the feeds in this view: copy them into `sent` once it's delivered. */
+  versions?: Map<string, number>
 }
 
 export function buildView(s: RunState, opts: ViewOptions = {}) {
@@ -324,11 +351,16 @@ export function buildView(s: RunState, opts: ViewOptions = {}) {
     id === "user" ? "you" : id === s.orchestratorId ? "lead" : (s.agents.get(id)?.name ?? s.findAgent(id)?.name ?? (id === "baton" ? "baton" : id))
   const ctx: ViewContext = { projectRoot: opts.projectRoot ?? s.projectRoot, name }
   const feeds: Record<string, WebItem[]> = {}
-  const shown = [...s.agents.values()].filter((a) => a.isOrchestrator || a.status !== "exited" || s.workspaces.get(a.agentId)?.files.length)
+  // agents the inbox points at stay too: "Open" on a failed agent shows why it failed
+  const pointed = new Set(attentionItems(s).map((a) => a.agentId))
+  const shown = [...s.agents.values()].filter(
+    (a) => a.isOrchestrator || a.status !== "exited" || s.workspaces.get(a.agentId)?.files.length || pointed.has(a.agentId),
+  )
   for (const a of shown) {
     const v = s.agentVersions.get(a.agentId) ?? 0
     if (opts.sent && opts.sent.get(a.agentId) === v) continue
-    opts.sent?.set(a.agentId, v)
+    // recorded by the caller once the view is out (see ViewOptions.versions)
+    opts.versions?.set(a.agentId, v)
     feeds[a.agentId] = s
       .feed(a.agentId)
       .items.slice(-FEED_ITEMS)

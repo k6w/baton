@@ -134,7 +134,9 @@ export function webClient(mdToHtml) {
     return `${Math.floor(m / 60)}h ${m % 60}m`
   }
   const _clock = (ts) => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-  const stamp = (ts) => `<time data-ago="${ts}" title="${esc(new Date(ts).toLocaleString())}">${ago(ts)}</time>`
+  // clocks are filled by tick(): the HTML stays the same from second to second, so nothing is redrawn under the pointer
+  const stamp = (ts) => `<time data-ago="${ts}" title="${esc(new Date(ts).toLocaleString())}"></time>`
+  const since = (ts, cls) => `<span${cls ? ` class="${cls}"` : ""} data-since="${ts}"></span>`
   const money = (n) => (n >= 100 ? `$${n.toFixed(0)}` : n >= 0.01 ? `$${n.toFixed(2)}` : n > 0 ? "<$0.01" : "$0")
   const count = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}k` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n || 0))
   const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`
@@ -163,7 +165,7 @@ export function webClient(mdToHtml) {
   function api(path, body) {
     return fetch(path, {
       method: body ? "POST" : "GET",
-      headers: { Authorization: `Bearer ${token}`, "content-type": "application/json", "X-Baton-User": S.me || "web" },
+      headers: { Authorization: `Bearer ${token}`, "content-type": "application/json", "X-Baton-User": encodeURIComponent(S.me || "web") },
       body: body ? JSON.stringify(body) : undefined,
     }).then((r) =>
       r.json().then((j) => {
@@ -185,7 +187,7 @@ export function webClient(mdToHtml) {
   }
   let backoff = 600
   function connect() {
-    fetch("/api/stream", { headers: { Authorization: `Bearer ${token}`, "X-Baton-User": S.me || "web" } })
+    fetch("/api/stream", { headers: { Authorization: `Bearer ${token}`, "X-Baton-User": encodeURIComponent(S.me || "web") } })
       .then((res) => {
         if (res.status === 401) {
           try {
@@ -197,8 +199,8 @@ export function webClient(mdToHtml) {
         if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
         S.conn = "live"
         backoff = 600
-        // a fresh connection sends every feed again
-        S.feeds = {}
+        // a fresh connection sends every feed again: replace them when the first view arrives
+        let fresh = true
         const reader = res.body.getReader()
         const dec = new TextDecoder()
         let buf = ""
@@ -213,6 +215,8 @@ export function webClient(mdToHtml) {
               buf = buf.slice(i + 1)
               if (line.trim()) {
                 const v = JSON.parse(line)
+                if (fresh) S.feeds = {}
+                fresh = false
                 for (const k in v.feeds) S.feeds[k] = v.feeds[k]
                 S.view = v
                 S.skew = v.now - Date.now()
@@ -223,13 +227,13 @@ export function webClient(mdToHtml) {
             if (got) safeRender()
             return pump()
           })
-        render()
+        safeRender()
         return pump()
       })
       .catch(() => {
         if (S.conn !== "connecting") {
           S.conn = "offline"
-          render()
+          safeRender()
         }
         setTimeout(connect, backoff)
         backoff = Math.min(backoff * 2, 8000)
@@ -349,7 +353,9 @@ export function webClient(mdToHtml) {
         esc(shown) +
         '</pre><div class="tf">' +
         (t.exit != null ? `<span class="chip ${t.exit === 0 ? "ok" : "err"}">exit ${esc(t.exit)}</span>` : "") +
-        (lines.length > 60 && !full ? `<button class="btn sm ghost" data-toggle="full:${t.id}">Show all ${lines.length} lines</button>` : "<span></span>") +
+        (lines.length > 60 && !full
+          ? `<button class="btn sm ghost" data-toggle="${esc(`full:${t.id}`)}">Show all ${lines.length} lines</button>`
+          : "<span></span>") +
         '<button class="btn sm ghost" data-copy="' +
         esc(t.id) +
         '" type="button">' +
@@ -370,7 +376,7 @@ export function webClient(mdToHtml) {
       esc(t.status) +
       (t.coord ? " coord" : "") +
       '"><button class="tl-h" ' +
-      (expandable ? `data-toggle="t:${t.id}"` : "") +
+      (expandable ? `data-toggle="${esc(`t:${t.id}`)}"` : "") +
       ' type="button" title="' +
       esc(t.verb + (t.target ? ` ${t.target}` : "")) +
       '"><span class="ico">' +
@@ -423,7 +429,7 @@ export function webClient(mdToHtml) {
       '<div class="tools' +
       (open ? " open" : "") +
       '"><button class="tools-h" data-toggle="' +
-      key +
+      esc(key) +
       '" type="button">' +
       icon("chev", "xs chev") +
       (running ? '<span class="spin"></span>' : "") +
@@ -482,7 +488,7 @@ export function webClient(mdToHtml) {
       stamp(it.ts) +
       "</span></div>" +
       (h.text
-        ? `<div class="ho-b"><div class="msg md${long && !open ? " clamp" : ""}">${md(h.text)}</div>${long ? `<button class="btn sm ghost more" data-toggle="${key}">${open ? "Show less" : "Show all"}</button>` : ""}</div>`
+        ? `<div class="ho-b"><div class="msg md${long && !open ? " clamp" : ""}">${md(h.text)}</div>${long ? `<button class="btn sm ghost more" data-toggle="${esc(key)}">${open ? "Show less" : "Show all"}</button>` : ""}</div>`
         : "") +
       (checks ? `<div class="checks">${checks}</div>` : "") +
       "</div>"
@@ -526,7 +532,7 @@ export function webClient(mdToHtml) {
           const to = isOpen(tk)
           h =
             '<div class="thought"><button data-toggle="' +
-            tk +
+            esc(tk) +
             '" type="button">' +
             icon("think", "xs") +
             " Thinking" +
@@ -538,7 +544,7 @@ export function webClient(mdToHtml) {
           const mk = `m:${it.id}`
           const long = it.text.length > 2600 || it.text.split("\n").length > 34
           const mo = isOpen(mk)
-          h = `${who(it.ts)}<div class="msg md${long && !mo ? " clamp" : ""}">${md(it.text)}</div>${long ? `<button class="btn sm ghost more" data-toggle="${mk}">${mo ? "Show less" : "Show all"}</button>` : ""}`
+          h = `${who(it.ts)}<div class="msg md${long && !mo ? " clamp" : ""}">${md(it.text)}</div>${long ? `<button class="btn sm ghost more" data-toggle="${esc(mk)}">${mo ? "Show less" : "Show all"}</button>` : ""}`
         }
       } else if (it.k === "prompt") {
         h = `<div class="prompt"><div class="ph"><b>${esc(it.from || "You")}</b>${owner && !owner.lead ? `→ ${esc(owner.name)}` : ""}${stamp(it.ts)}</div><div class="pt">${esc(it.text)}</div></div>`
@@ -573,7 +579,8 @@ export function webClient(mdToHtml) {
   }
   /** Problems can be put away; approvals and plans can't. A problem that changes comes back. */
   const DISMISSABLE = { failed: 1, stalled: 1, looping: 1, scope: 1, merge: 1, conflict: 1, budget: 1 }
-  const dkey = (a) => `${a.kind}:${a.agentId || ""}:${a.ts}`
+  // what the problem is, not when it was last touched: a conflict's time moves with every event of the agent
+  const dkey = (a) => `${a.kind}:${a.agentId || ""}:${a.title}:${(a.detail || "").slice(0, 120)}`
   const inbox = () => (S.view ? S.view.attention.map((a, i) => ({ a, i })).filter((x) => !S.dismissed.has(dkey(x.a))) : [])
   function dismiss(list) {
     list.forEach((a) => {
@@ -636,7 +643,7 @@ export function webClient(mdToHtml) {
         // approvals read "claude-1: Bash(…)": the agent is shown next to the time already
         const title = a.kind === "approval" ? a.title.replace(/^[^:]+:\s*/, "") : a.title
         return {
-          k: `a:${a.requestId || dkey(a)}`,
+          k: `a:${a.requestId || (a.kind === "plan" ? "plan" : dkey(a))}`,
           h:
             `<div class="card${n === firstApproval ? " sel" : ""}"><div class="card-k k-${esc(a.kind)}"><span class="led ${led}"></span>${esc(KIND[a.kind] || a.kind)}` +
             (a.toolKind ? ` <span class="chip">${esc(a.toolKind)}</span>` : "") +
@@ -666,7 +673,7 @@ export function webClient(mdToHtml) {
         h:
           `<div class="live">${a.status === "awaiting_approval" ? icon("alert", "sm") : '<span class="spin"></span>'}` +
           `<span>${esc(a.status === "awaiting_approval" ? "Waiting for your approval" : a.activity || statusText(a))}</span>` +
-          (a.turnStartedAt ? `<span class="faint num" data-since="${a.turnStartedAt}">${dur(now() - a.turnStartedAt)}</span>` : "") +
+          (a.turnStartedAt ? since(a.turnStartedAt, "faint num") : "") +
           (a.status === "awaiting_approval" ? '<button class="btn sm" data-go="inbox">Open inbox</button>' : "") +
           "</div>",
       })
@@ -726,7 +733,7 @@ export function webClient(mdToHtml) {
       esc(a.status) +
       '"></span> ' +
       esc(statusText(a)) +
-      (a.turnStartedAt && a.status === "busy" ? ` · <span data-since="${a.turnStartedAt}">${dur(now() - a.turnStartedAt)}</span>` : "") +
+      (a.turnStartedAt && a.status === "busy" ? ` · ${since(a.turnStartedAt)}` : "") +
       '</span></div><div class="ac-meta">' +
       esc([a.adapter, a.model, a.role].filter(Boolean).join(" · ")) +
       (a.label ? ` — ${esc(a.label)}` : "") +
@@ -922,7 +929,7 @@ export function webClient(mdToHtml) {
       esc(a.status) +
       '"></span> ' +
       esc(statusText(a)) +
-      (a.turnStartedAt && a.status === "busy" ? ` · <span data-since="${a.turnStartedAt}">${dur(now() - a.turnStartedAt)}</span>` : "") +
+      (a.turnStartedAt && a.status === "busy" ? ` · ${since(a.turnStartedAt)}` : "") +
       "</h4>" +
       (a.detail ? `<div class="dim" style="font-size:12.5px;margin-bottom:10px;overflow-wrap:anywhere">${esc(a.detail)}</div>` : "") +
       '<dl class="kv num">' +
@@ -932,7 +939,7 @@ export function webClient(mdToHtml) {
       row("Task", a.label && a.label !== a.name && a.label !== "orchestrator" ? a.label : "") +
       row("Approval", a.approval) +
       row("Access", a.access) +
-      row("Running for", a.startedAt ? dur(now() - a.startedAt) : "") +
+      (a.startedAt ? `<dt>Running for</dt><dd>${since(a.startedAt)}</dd>` : "") +
       row("Tool calls", count(a.toolCalls)) +
       row("Tokens", a.tokens ? count(a.tokens) : "") +
       row("Cost", a.cost ? money(a.cost) : "") +
@@ -1009,9 +1016,7 @@ export function webClient(mdToHtml) {
                 '</small></span><span class="ad">' +
                 esc(line) +
                 "</span></span>" +
-                (a.turnStartedAt && a.status === "busy"
-                  ? `<span class="tick num" data-since="${a.turnStartedAt}">${dur(now() - a.turnStartedAt)}</span>`
-                  : "") +
+                (a.turnStartedAt && a.status === "busy" ? since(a.turnStartedAt, "tick num") : "") +
                 "</button>"
               )
             })
@@ -1073,7 +1078,7 @@ export function webClient(mdToHtml) {
         esc(a.status) +
         '"></span></h1><span class="sub">' +
         esc(statusText(a)) +
-        (a.turnStartedAt && a.status === "busy" ? ` · <span data-since="${a.turnStartedAt}">${dur(now() - a.turnStartedAt)}</span>` : "") +
+        (a.turnStartedAt && a.status === "busy" ? ` · ${since(a.turnStartedAt)}` : "") +
         " · " +
         esc([a.adapter, a.model].filter(Boolean).join(" · ")) +
         '</span><div class="acts">' +
@@ -1158,6 +1163,7 @@ export function webClient(mdToHtml) {
     const conv = !!a && !S.details
     if (conv && (routeChanged || nearBottom)) sc.scrollTop = sc.scrollHeight
     $("jump").hidden = !conv || sc.scrollHeight - sc.scrollTop - sc.clientHeight < 200
+    tick()
   }
 
   /** Who what you're typing goes to: an @mention, a /command, or this page's agent. */
@@ -1174,15 +1180,16 @@ export function webClient(mdToHtml) {
     )
   }
 
-  // live clocks without re-rendering
-  setInterval(() => {
+  // live clocks, without redrawing anything
+  function tick() {
     doc.querySelectorAll("[data-since]").forEach((el) => {
       el.textContent = dur(now() - Number(el.getAttribute("data-since")))
     })
     doc.querySelectorAll("time[data-ago]").forEach((el) => {
       el.textContent = ago(Number(el.getAttribute("data-ago")))
     })
-  }, 1000)
+  }
+  setInterval(tick, 1000)
 
   // ── actions ──
   function toast(text, kind) {
@@ -1219,9 +1226,9 @@ export function webClient(mdToHtml) {
       ta.remove()
     }
   }
-  function toggle(key) {
-    const open =
-      S.open.has(key) || (!S.shut.has(key) && key.indexOf("g:") === 0 && doc.querySelector(`[data-toggle="${key}"]`)?.parentElement?.classList.contains("open"))
+  function toggle(key, el) {
+    // a group's default (open while it runs) is whatever is on screen
+    const open = S.open.has(key) || (!S.shut.has(key) && key.indexOf("g:") === 0 && !!el?.parentElement?.classList.contains("open"))
     if (open) {
       S.open.delete(key)
       S.shut.add(key)
@@ -1311,7 +1318,7 @@ export function webClient(mdToHtml) {
     const t = e.target.closest("button, a, [data-agent], [data-go]")
     if (!t) return
     const d = t.dataset
-    if (d.toggle) return toggle(d.toggle)
+    if (d.toggle) return toggle(d.toggle, t)
     if (t.hasAttribute("data-coord")) {
       e.preventDefault()
       S.coord = true
@@ -1321,9 +1328,9 @@ export function webClient(mdToHtml) {
     }
     if (d.copyPre !== undefined) return copy(t.closest("pre").querySelector("code").textContent)
     if (d.copy) {
-      const tool = Object.values(S.feeds)
-        .flat()
-        .find((x) => x.id === d.copy)
+      const r = S.route
+      const owner = r.name === "agent" ? r.id : r.name === "lead" ? S.view.lead?.id : ""
+      const tool = (S.feeds[owner] || []).find((x) => x.id === d.copy)
       return tool && copy(tool.output || "")
     }
     if (d.go) return go(d.go)

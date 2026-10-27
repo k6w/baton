@@ -22,6 +22,9 @@ All notable changes to Baton. Versions follow [semver](https://semver.org); the 
 - A command menu (Ctrl K), single-key navigation, `@` and `/` suggestions and message history in the input.
 - Live updates no longer redraw the page: what you've opened, selected or scrolled to stays put, and only
   the agents whose work changed are sent again.
+- Names in any script work (the page used to stay on "Connecting…" for a name like Łukasz or 山田).
+- Agent text: a heading followed by many spaces no longer hangs the page or an HTML export, and file
+  names and URLs keep their underscores (`__init__.py` isn't bold any more).
 
 ## 0.3.7 — 2026-10-27
 

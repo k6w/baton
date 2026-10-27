@@ -100,8 +100,8 @@ export function qrLines(text: string): string[] {
 // ───────────────────────────── view model ─────────────────────────────
 
 /** The whole view (every feed): GET /api/view. The stream sends feeds only when they change. */
-export function remoteView(rt: Runtime, sent?: Map<string, number>): WebView {
-  return buildView(rt.state, { projectRoot: rt.projectRoot, sent })
+export function remoteView(rt: Runtime, opts: { sent?: Map<string, number>; versions?: Map<string, number> } = {}): WebView {
+  return buildView(rt.state, { projectRoot: rt.projectRoot, ...opts })
 }
 
 // ───────────────────────────── server ─────────────────────────────
@@ -233,7 +233,13 @@ export function startRemoteServer(rt: Runtime, opts: { lan?: boolean; port?: num
       if (!path.startsWith("/api/")) return new Response("not found", { status: 404 })
       if (!authed(req, url)) return json({ error: "unauthorized" }, 401)
       // the person on the other end, as they introduced themselves (shared runs)
-      const who = (req.headers.get("x-baton-user") ?? "").trim().slice(0, 40) || undefined
+      // URL-encoded by the page (headers can't carry most scripts); older pages send it plain
+      const raw = req.headers.get("x-baton-user") ?? ""
+      let name = raw
+      try {
+        name = decodeURIComponent(raw)
+      } catch {}
+      const who = name.trim().slice(0, 40) || undefined
       try {
         if (req.method === "GET" && path === "/api/view") return json(remoteView(rt))
         if (req.method === "GET" && path === "/api/stream") return stream(rt, req.signal, who)
@@ -298,7 +304,10 @@ function stream(rt: Runtime, signal: AbortSignal, who?: string): Response {
       const send = () => {
         timer = undefined
         try {
-          ctrl.enqueue(enc.encode(`${JSON.stringify(remoteView(rt, sent))}\n`))
+          const versions = new Map<string, number>()
+          ctrl.enqueue(enc.encode(`${JSON.stringify(remoteView(rt, { sent, versions }))}\n`))
+          // only what went out counts as sent: a view that failed to build goes out in full next time
+          for (const [id, v] of versions) sent.set(id, v)
         } catch {}
       }
       send()

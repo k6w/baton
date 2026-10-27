@@ -16,6 +16,16 @@ let d: Daemon
 let client: BatonClient
 let root: string
 
+/**
+ * The error a daemon call fails with. Not `expect(promise).rejects`: Bun waits on that promise
+ * without serving the named pipe the reply comes back on (Windows), so it can hang until the timeout.
+ */
+const failure = (p: Promise<unknown>) =>
+  p.then(
+    () => new Error("expected the call to fail"),
+    (e: unknown) => (e instanceof Error ? e : new Error(String(e))),
+  )
+
 async function until(pred: () => boolean, ms = 8000) {
   const end = Date.now() + ms
   while (!pred()) {
@@ -183,7 +193,7 @@ describe("recipes", () => {
     expect(r.output).toContain("started")
     const lead = d.runtime.orchestrator()!
     await until(() => d.runtime.state.feed(lead.info.agentId).items.some((i) => i.kind === "user" && i.text.includes("Run the release checklist for v2.3")))
-    await expect(client.submit("/recipe best-of-3")).rejects.toThrow(/usage/)
+    expect((await failure(client.submit("/recipe best-of-3"))).message).toMatch(/usage/)
   })
 })
 

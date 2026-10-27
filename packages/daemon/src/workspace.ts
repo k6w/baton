@@ -370,7 +370,9 @@ export class WorkspaceManager {
     } catch (e) {
       // can't tell whether there's unmerged work: never throw it away
       const msg = e instanceof Error ? e.message : String(e)
-      return { kept: true, reason: `could not check ${ws.path} for unmerged changes, kept it (branch ${ws.branch}): ${msg}` }
+      // git's own complaint is the last line; the command before it is long and says nothing
+      const why = msg.trim().split("\n").filter(Boolean).at(-1) ?? msg
+      return { kept: true, reason: `couldn't check ${ws.path} for unmerged work, so it was kept (branch ${ws.branch}): ${why}` }
     }
     if (this.cfg.cleanup === "merged" && hasChanges) return { kept: true, reason: `unmerged changes kept in ${ws.path} (branch ${ws.branch})` }
     const wtRoot = ws.root ?? ws.path

@@ -27,6 +27,16 @@ export function webClient(mdToHtml) {
   window.addEventListener("error", (e) => {
     doc.documentElement.setAttribute("data-error", String(e.message))
   })
+  /** A drawing bug must not look like a lost connection (and retry forever): show it, keep going. */
+  function safeRender() {
+    try {
+      render()
+    } catch (e) {
+      doc.documentElement.setAttribute("data-error", String(e?.stack ? e.stack : e))
+      const c = doc.getElementById("content")
+      if (c && !c.firstElementChild) c.innerHTML = `<div class="alert err">Couldn't show this view: ${esc(e?.message)}</div>`
+    }
+  }
 
   // ── access ──
   const TOKEN_KEY = `baton-token:${location.host}`
@@ -67,6 +77,7 @@ export function webClient(mdToHtml) {
     shut: new Set(),
     coord: store.get("coord") === true,
     filter: store.get("filter") || "all",
+    dismissed: new Set(store.get("dismissed") || []),
     details: false,
     me:
       store.get("name") ||
@@ -209,7 +220,7 @@ export function webClient(mdToHtml) {
               }
               i = buf.indexOf("\n")
             }
-            if (got) render()
+            if (got) safeRender()
             return pump()
           })
         render()
@@ -273,7 +284,7 @@ export function webClient(mdToHtml) {
   const agentById = (id) => agentsAll().find((a) => a.id === id)
   const STATUS = { starting: "starting", ready: "idle", busy: "working", awaiting_approval: "needs approval", error: "error", exited: "stopped" }
   const statusText = (a) => STATUS[a.status] || a.status
-  const needs = () => (S.view ? S.view.attention.filter((a) => a.kind !== "ready").length : 0)
+  const needs = () => (S.view ? S.view.attention.filter((a) => a.kind !== "ready" && !S.dismissed.has(dkey(a))).length : 0)
   const withChanges = () => (S.view ? S.view.agents.filter((a) => a.workspace?.files.length) : [])
   function defaultRoute() {
     if (!S.view) return "lead"
@@ -551,63 +562,76 @@ export function webClient(mdToHtml) {
     scope: "Out of scope",
     ready: "Ready to merge",
   }
+  /** Problems can be put away; approvals and plans can't. A problem that changes comes back. */
+  const DISMISSABLE = { failed: 1, stalled: 1, looping: 1, scope: 1, merge: 1, conflict: 1, budget: 1 }
+  const dkey = (a) => `${a.kind}:${a.agentId || ""}:${a.ts}`
+  const inbox = () => (S.view ? S.view.attention.map((a, i) => ({ a, i })).filter((x) => !S.dismissed.has(dkey(x.a))) : [])
+  function dismiss(list) {
+    list.forEach((a) => {
+      S.dismissed.add(dkey(a))
+    })
+    store.set("dismissed", Array.from(S.dismissed).slice(-500))
+    render()
+  }
   function inboxView() {
-    const items = S.view.attention
-    if (!items.length) return EMPTY("inbox", "Nothing needs you", "Approvals, finished work and problems show up here.")
-    const firstApproval = items.findIndex((a) => a.kind === "approval")
-    return [{ k: "h", h: `<div class="h2"><h2>${plural(items.length, "item")}</h2><span class="line"></span></div>` }].concat(
-      items.map((a, i) => {
+    const items = inbox()
+    const hidden = S.view.attention.length - items.length
+    const restore = hidden ? `<button class="btn sm ghost" data-restore>${plural(hidden, "dismissed item")} · show</button>` : ""
+    if (!items.length)
+      return EMPTY(
+        "inbox",
+        "Nothing needs you",
+        `Approvals, finished work and problems show up here.${restore ? `<div style="margin-top:12px">${restore}</div>` : ""}`,
+      )
+    const firstApproval = items.findIndex((x) => x.a.kind === "approval")
+    const problems = items.filter((x) => DISMISSABLE[x.a.kind])
+    const head =
+      `<div class="h2"><h2>${plural(items.length, "item")}</h2><span class="line"></span>` +
+      (problems.length > 1 ? `<button class="btn sm ghost" data-dismiss-all>Dismiss ${plural(problems.length, "problem")}</button>` : "") +
+      restore +
+      "</div>"
+    return [{ k: "h", h: head }].concat(
+      items.map((x, n) => {
+        const a = x.a
+        const i = x.i
         let acts = ""
         if (a.kind === "approval") {
           acts =
-            '<button class="btn go" data-a="allow" data-i="' +
-            i +
-            '">' +
-            icon("ok", "sm") +
-            " Allow</button>" +
+            `<button class="btn go" data-a="allow" data-i="${i}">${icon("ok", "sm")} Allow</button>` +
             (a.options || [])
               .filter((o) => o.kind === "allow_always")
               .map((o) => `<button class="btn" data-a="${esc(o.optionId)}" data-i="${i}">Always allow</button>`)
               .join("") +
-            '<button class="btn bad" data-a="deny" data-i="' +
-            i +
-            '">' +
-            icon("x", "sm") +
-            " Deny</button>" +
-            (i === firstApproval ? '<span class="hint"><kbd>Y</kbd> allow <kbd>N</kbd> deny</span>' : "")
+            `<button class="btn bad" data-a="deny" data-i="${i}">${icon("x", "sm")} Deny</button>` +
+            (n === firstApproval ? '<span class="hint"><kbd>Y</kbd> allow <kbd>N</kbd> deny</span>' : "")
         } else if (a.kind === "plan")
           acts = `<button class="btn go" data-a="plan-ok" data-i="${i}">Approve plan</button><button class="btn bad" data-a="plan-no" data-i="${i}">Reject…</button>`
         else if (a.kind === "ready")
           acts = `<button class="btn pri" data-a="merge" data-i="${i}">${icon("merge", "sm")} Merge</button><button class="btn" data-a="open" data-i="${i}">Review</button>`
         else if (a.agentId) acts = `<button class="btn" data-a="open" data-i="${i}">Open ${esc(a.agent || "agent")}</button>`
+        if (DISMISSABLE[a.kind]) acts += `<button class="btn ghost" data-a="dismiss" data-i="${i}">Dismiss</button>`
         const tasks =
           a.kind === "plan" && S.view.tasks.length
-            ? `<div class="well">${S.view.tasks.map((t, n) => `${n + 1}. ${esc(t.title)}${t.owner ? `  → ${esc(t.owner)}` : ""}`).join("\n")}</div>`
+            ? `<div class="well">${S.view.tasks.map((t, k) => `${k + 1}. ${esc(t.title)}${t.owner ? `  → ${esc(t.owner)}` : ""}`).join("\n")}</div>`
             : ""
-        return {
-          k: `a:${a.requestId || a.kind + (a.agentId || "")}`,
-          h:
-            '<div class="card' +
-            (i === firstApproval ? " sel" : "") +
-            '"><div class="card-k k-' +
-            a.kind +
-            '"><span class="led ' +
-            (a.kind === "ready"
-              ? "ok"
-              : a.kind === "approval" || a.kind === "stalled" || a.kind === "looping" || a.kind === "scope"
+        const led =
+          a.kind === "ready"
+            ? "ok"
+            : a.kind === "plan"
+              ? ""
+              : DISMISSABLE[a.kind] && a.kind !== "failed" && a.kind !== "merge" && a.kind !== "conflict"
                 ? "warn"
-                : a.kind === "plan"
-                  ? ""
-                  : "err") +
-            '"></span>' +
-            esc(KIND[a.kind] || a.kind) +
+                : a.kind === "approval"
+                  ? "warn"
+                  : "err"
+        // approvals read "claude-1: Bash(…)": the agent is shown next to the time already
+        const title = a.kind === "approval" ? a.title.replace(/^[^:]+:\s*/, "") : a.title
+        return {
+          k: `a:${a.requestId || dkey(a)}`,
+          h:
+            `<div class="card${n === firstApproval ? " sel" : ""}"><div class="card-k k-${esc(a.kind)}"><span class="led ${led}"></span>${esc(KIND[a.kind] || a.kind)}` +
             (a.toolKind ? ` <span class="chip">${esc(a.toolKind)}</span>` : "") +
-            '<span class="ago">' +
-            (a.agent ? `${esc(a.agent)} · ` : "") +
-            stamp(a.ts) +
-            "</span></div><h3>" +
-            esc(a.title.replace(/^[^:]+:\s*/, a.kind === "approval" ? "" : a.title.indexOf(":") > 0 && a.kind !== "approval" ? a.title : "") || a.title) +
-            "</h3>" +
+            `<span class="ago">${a.agent ? `${esc(a.agent)} · ` : ""}${stamp(a.ts)}</span></div><h3>${esc(title)}</h3>` +
             (a.detail ? `<div class="well">${esc(a.detail)}</div>` : "") +
             tasks +
             (acts ? `<div class="acts">${acts}</div>` : "") +
@@ -931,7 +955,7 @@ export function webClient(mdToHtml) {
     const n = needs()
     const lead = v.lead
     const nav = [
-      ["inbox", "inbox", "Inbox", n ? `<span class="count hot num">${n}</span>` : `<span class="count num">${v.attention.length || ""}</span>`],
+      ["inbox", "inbox", "Inbox", n ? `<span class="count hot num">${n}</span>` : `<span class="count num">${inbox().length || ""}</span>`],
       ["lead", "lead", "Lead", lead ? `<span class="count"><span class="led ${esc(lead.status)}"></span></span>` : ""],
       ["agents", "agents", "Agents", `<span class="count num">${v.agents.length || ""}</span>`],
       ["activity", "activity", "Activity", ""],
@@ -1268,6 +1292,17 @@ export function webClient(mdToHtml) {
       return $("text").focus()
     }
     if (t.hasAttribute("data-palette")) return palette()
+    if (t.hasAttribute("data-dismiss-all"))
+      return dismiss(
+        inbox()
+          .map((x) => x.a)
+          .filter((a) => DISMISSABLE[a.kind]),
+      )
+    if (t.hasAttribute("data-restore")) {
+      S.dismissed.clear()
+      store.set("dismissed", [])
+      return render()
+    }
     if (t.hasAttribute("data-menu")) {
       S.menu = !S.menu
       return render()
@@ -1280,6 +1315,7 @@ export function webClient(mdToHtml) {
       const item = S.view.attention[Number(d.i)]
       if (!item) return
       if (d.a === "open") return go("agent", item.agentId)
+      if (d.a === "dismiss") return dismiss([item])
       if (d.a === "merge") return merge(item.agentId)
       if (d.a === "plan-ok") return act("/api/plan", { approve: true }, "Plan approved")
       if (d.a === "plan-no")

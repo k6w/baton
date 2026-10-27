@@ -78,7 +78,8 @@ svg.i.sm { width: 14px; height: 14px; } svg.i.xs { width: 12px; height: 12px; }
 .agent-link .an { display: flex; align-items: baseline; gap: 6px; }
 .agent-link .an b { font-weight: 600; font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .agent-link .an small { color: var(--text-4); font-size: 11.5px; white-space: nowrap; }
-.agent-link .ad { color: var(--text-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agent-link .ad { display: block; color: var(--text-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agent-link .an { min-width: 0; }
 .agent-link .tick { margin-left: auto; font-size: 11px; color: var(--text-4); }
 .side-foot { border-top: 1px solid var(--line); padding: 12px 14px; display: grid; gap: 10px; }
 .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
@@ -360,6 +361,10 @@ kbd { font: 500 11px/1 var(--mono); color: var(--text-3); padding: 3px 5px; bord
   .app.menu .side { display: flex; position: fixed; inset: 0 0 calc(58px + env(safe-area-inset-bottom)) 0; z-index: 15; width: 100%; }
   .bar { padding: 0 12px; padding-top: env(safe-area-inset-top); height: calc(var(--bar) + env(safe-area-inset-top)); }
   .bar .back { display: inline-flex; }
+  .bar { gap: 8px; }
+  .bar h1 { flex: 1 1 auto; }
+  .bar .sub { display: none; }
+  .bar .acts .btn.sm { padding: 0 8px; }
   .content { padding: 12px 14px 20px; }
   .composer { padding: 8px 10px 10px; }
   .crow .hint { display: none; }

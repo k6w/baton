@@ -41,7 +41,8 @@ type Listener = (e: BatonEvent) => void
 /** `rawOutput` larger than this isn't stored: it repeats what `content` already shows. */
 export const MAX_RAW_OUTPUT = 8 * 1024
 /** Bump when `compact()` learns something new, so existing logs are compacted again once. */
-const COMPACT_VERSION = "1"
+// 2: also native and ACP agents' output (their "still running" is exitCode: null), and each command keeps its last snapshot
+const COMPACT_VERSION = "2"
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS events (
@@ -296,13 +297,17 @@ export class EventStore {
         SELECT seq, run_id, json_extract(data, '$.toolCallId') AS tc,
                (COALESCE(json_extract(data, '$.status'), 'in_progress') = 'in_progress'
                 AND json_array_length(data, '$.content') = 1
-                AND json_extract(data, '$.content[0].type') = 'terminal') AS progress
+                AND json_extract(data, '$.content[0].type') = 'terminal'
+                AND json_extract(data, '$.content[0].exitCode') IS NULL
+                AND json_extract(data, '$.title') IS NULL
+                AND json_extract(data, '$.summary') IS NULL) AS progress
           FROM events WHERE type = 'tool.update';
       DROP TABLE IF EXISTS temp.gone;
       CREATE TEMP TABLE gone (seq INTEGER PRIMARY KEY);
+      -- every snapshot but the last of each command: its result may not repeat the output
       INSERT INTO temp.gone
         SELECT t.seq FROM temp.tu t
-          JOIN (SELECT run_id, tc, MAX(seq) AS last FROM temp.tu GROUP BY run_id, tc) l
+          JOIN (SELECT run_id, tc, MAX(seq) AS last FROM temp.tu WHERE progress GROUP BY run_id, tc) l
             ON l.run_id = t.run_id AND l.tc IS t.tc
          WHERE t.progress AND t.seq < l.last;
       DROP TABLE temp.tu;`)

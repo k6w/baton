@@ -104,12 +104,12 @@ describe("EventStore size", () => {
     s = new EventStore(path)
     expect(s.needsCompact()).toBe(true)
     const r = s.compact()
-    expect(r.removed).toBe(39) // all 20 snapshots of "done" (its result has the output) + 19 of "open" (its last stays)
+    expect(r.removed).toBe(38) // 19 snapshots of each command: the last one stays (a result may not repeat the output)
     expect(s.needsCompact()).toBe(false)
     const updates = s.query({ runId: run, types: ["tool.update"] }) as BatonEvent<"tool.update">[]
-    expect(updates.map((e) => `${e.data.toolCallId}:${e.data.status ?? "-"}`)).toEqual(["open:in_progress", "done:completed", "edit:-"])
+    expect(updates.map((e) => `${e.data.toolCallId}:${e.data.status ?? "-"}`)).toEqual(["done:in_progress", "open:in_progress", "done:completed", "edit:-"])
     expect(outputOf(updates[0]!.data.content).length).toBe(2000)
-    expect(updates[1]!.data).not.toHaveProperty("rawOutput")
+    expect(updates[2]!.data).not.toHaveProperty("rawOutput")
     expect(s.diffTotals(run)).toEqual({ added: 1, removed: 0 })
     expect(s.append(run, { type: "log", data: { level: "info", message: "after" } }).seq).toBe(last + 1)
     s.close()
@@ -303,5 +303,24 @@ describe("scorecards", () => {
     expect(kind).toBe("bugfix")
     expect(picks[0]!.adapter).toBe("codex")
     expect(picks.find((p) => p.adapter === "gemini")!.why).toContain("no track record")
+  })
+})
+
+describe("RunState for exports", () => {
+  test("live state trims a stopped agent's feed; an export or replay keeps all of it", () => {
+    const build = (trim: boolean) => {
+      const st = new RunState()
+      st.trimExited = trim
+      const s = new EventStore()
+      s.subscribe((e) => st.apply(e))
+      const run = s.createRun("/tmp")
+      s.append(run, { type: "agent.spawned", data: { agentId: "a", name: "w", adapter: "mock", cwd: "/tmp" } }, { agentId: "a" })
+      for (let i = 0; i < 150; i++)
+        s.append(run, { type: "message.completed", data: { messageId: `m${i}`, role: "assistant", text: `m${i}` } }, { agentId: "a" })
+      s.append(run, { type: "agent.exited", data: { code: 0, reason: "closed" } }, { agentId: "a" })
+      return st.feed("a").items.length
+    }
+    expect(build(true)).toBe(100)
+    expect(build(false)).toBe(150)
   })
 })

@@ -330,3 +330,46 @@ describe("command output", () => {
     expect(rt.agents.get(rt.findAgent("w")!.info.agentId)?.liveOutput.size).toBe(0)
   })
 })
+
+describe("command output from every kind of agent", () => {
+  const term = (output: string, exitCode?: number | null) => ({ type: "terminal" as const, terminalId: "c", command: "make", output, exitCode })
+
+  test("'still running' as exitCode null (native, ACP) is live output too", async () => {
+    const { rt, fake } = setup()
+    await rt.spawn({ adapter: "fake", name: "w" })
+    const f = fake("w")
+    f.emit({ type: "tool.call", data: { toolCallId: "n1", kind: "execute", name: "shell", title: "make", status: "in_progress" } })
+    for (let i = 0; i < 20; i++) f.emit({ type: "tool.update", data: { toolCallId: "n1", content: [term("x".repeat(i), null)] } })
+    expect(rt.store.query({ runId: rt.runId, types: ["tool.update"] }).length).toBe(0)
+  })
+
+  test("a newer stored output wins over an older live one when the result has none", async () => {
+    const { rt, fake } = setup()
+    await rt.spawn({ adapter: "fake", name: "w" })
+    const f = fake("w")
+    f.emit({ type: "tool.call", data: { toolCallId: "n2", kind: "execute", name: "shell", title: "make", status: "in_progress" } })
+    f.emit({ type: "tool.update", data: { toolCallId: "n2", content: [term("old", null)] } })
+    f.emit({ type: "tool.update", data: { toolCallId: "n2", content: [term("final", 0)] } })
+    f.emit({ type: "tool.update", data: { toolCallId: "n2", status: "completed" } })
+    const stored = rt.store.query({ runId: rt.runId, types: ["tool.update"] }) as BatonEvent<"tool.update">[]
+    expect(stored.map((e) => outputOf(e.data.content))).toEqual(["final", "final"])
+  })
+
+  test("output after the agent is gone is dropped", async () => {
+    const { rt, fake } = setup()
+    const w = await rt.spawn({ adapter: "fake", name: "w" })
+    const f = fake("w")
+    await rt.kill(w.agentId)
+    f.emit({ type: "tool.update", data: { toolCallId: "n3", content: [term("late", null)] } })
+    expect(rt.agents.get(w.agentId)?.liveOutput.size).toBe(0)
+  })
+})
+
+describe("one lead", () => {
+  test("a task and a resume asking for a lead at the same time get the same one", async () => {
+    const { rt } = setup({ orchestrator: { enabled: true, agent: "fake" } })
+    const [a, b] = await Promise.all([rt.ensureOrchestrator(), rt.spawnLead({ adapter: "fake", resumeId: "s1" })])
+    expect(a.info.agentId).toBe(b.info.agentId)
+    expect([...rt.agents.values()].filter((x) => x.info.isOrchestrator && !x.closing).length).toBe(1)
+  })
+})

@@ -27,7 +27,7 @@ The `?` overlay lists your current bindings and flags any conflicts.
 |---|---|---|
 | `app.palette` | `ctrl+p`, `ctrl+k` | global |
 | `app.help` | `?`, `f1` | grid |
-| `app.quit` (agents keep running) | `ctrl+c` ×2 | global |
+| `app.quit` (stops all agents; `/quit` leaves them running) | `ctrl+c` ×2 | global |
 | `app.shutdown` (stop daemon + agents) | `ctrl+q` | global |
 | `inbox.open` (everything that needs you) / `approvals.allow` | `ctrl+a` / `ctrl+y` | global |
 | `attention.next` (jump to the next ⚑) | `ctrl+n` | global |

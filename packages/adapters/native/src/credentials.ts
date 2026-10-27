@@ -15,6 +15,7 @@
  * Secret values are never logged; `source` only names where a key came from.
  */
 import { readFileSync } from "node:fs"
+import { connect } from "node:net"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import type { ProviderSpec } from "@batonsh/protocol"
@@ -111,7 +112,35 @@ export function pickLocalModel(names: string[]): string | undefined {
   return usable.find((n) => /coder/i.test(n)) ?? usable.find((n) => CODER.test(n)) ?? usable[0]
 }
 
+/**
+ * Whether anything listens at the URL's host and port. Checked before the real fetch, which
+ * starts Bun's HTTP client thread: a Baton started while memory is short (another Baton and
+ * its agents running) crashed creating that thread just to find no local model server.
+ */
+export function listening(url: string, timeoutMs: number): Promise<boolean> {
+  let u: URL
+  try {
+    u = new URL(url)
+  } catch {
+    return Promise.resolve(false)
+  }
+  const port = Number(u.port || (u.protocol === "https:" ? 443 : 80))
+  return new Promise((resolve) => {
+    const sock = connect({ host: u.hostname.replace(/^\[|\]$/g, ""), port })
+    const done = (ok: boolean) => {
+      clearTimeout(timer)
+      sock.destroy()
+      resolve(ok)
+    }
+    const timer = setTimeout(() => done(false), timeoutMs)
+    sock.once("connect", () => done(true))
+    sock.once("error", () => done(false))
+  })
+}
+
 async function getJson(fetcher: Fetcher, url: string, timeoutMs: number): Promise<unknown> {
+  // only the real fetch needs the check (tests pass their own)
+  if (fetcher === fetch && !(await listening(url, timeoutMs))) return undefined
   try {
     const res = await fetcher(url, { signal: AbortSignal.timeout(timeoutMs) })
     if (!res.ok) return undefined

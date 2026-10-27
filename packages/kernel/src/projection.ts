@@ -48,7 +48,15 @@ export interface AgentFeed {
 }
 
 const MAX_FEED = 400
+/** An agent that's gone keeps only its latest items (its card and history). */
+const MAX_FEED_EXITED = 100
 const MAX_BUS = 1000
+/** Tool output kept per feed item (the tail): the screen shows a few lines of it. */
+export const MAX_ITEM_OUTPUT = 32 * 1024
+/** Diff lines kept per file per tool call; counts stay exact. */
+const MAX_DIFF_LINES = 2000
+
+const tailOf = (s: string) => (s.length > MAX_ITEM_OUTPUT ? s.slice(-MAX_ITEM_OUTPUT) : s)
 
 export class RunState {
   runId = ""
@@ -132,8 +140,10 @@ export class RunState {
   }
 
   apply(e: BatonEvent): void {
-    if (e.seq <= this.lastSeq && this.lastSeq !== 0) return
-    this.lastSeq = e.seq
+    if (!e.live) {
+      if (e.seq <= this.lastSeq && this.lastSeq !== 0) return
+      this.lastSeq = e.seq
+    }
     if (!this.runId) this.runId = e.runId
     const aid = e.agentId
     const agent = aid ? this.agents.get(aid) : undefined
@@ -199,6 +209,10 @@ export class RunState {
           agent.turnStartedAt = undefined
         }
         for (const [k, p] of this.approvals) if (p.agentId === aid) this.approvals.delete(k)
+        if (aid) {
+          const f = this.feeds.get(aid)
+          if (f && f.items.length > MAX_FEED_EXITED) for (const r of f.items.splice(0, f.items.length - MAX_FEED_EXITED)) f.index.delete(r.id)
+        }
         break
       case "agent.history": {
         if (!aid) break
@@ -300,7 +314,7 @@ export class RunState {
               }
               it.diffs.splice(prev, 1)
             }
-            it.diffs.push({ path: c.path, lines, added, removed })
+            it.diffs.push({ path: c.path, lines: lines.length > MAX_DIFF_LINES ? lines.slice(0, MAX_DIFF_LINES) : lines, added, removed })
             this.totals.added += added
             this.totals.removed += removed
             if (agent) {
@@ -308,10 +322,10 @@ export class RunState {
               agent.diff.removed += removed
             }
           } else if (c.type === "terminal") {
-            it.output = c.output
+            it.output = tailOf(c.output)
             if (c.exitCode !== undefined) it.exitCode = c.exitCode
           } else if (c.type === "text" && !it.summary) {
-            it.output = (it.output ?? "") + c.text
+            it.output = tailOf((it.output ?? "") + c.text)
           }
         }
         break

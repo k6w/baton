@@ -5,9 +5,10 @@ import { type BatonConfig, configDir, noticeFor, projectBatonDir, shouldNotify }
 import type { BatonEvent } from "@batonsh/protocol"
 import type { BatonClient, LiveRun } from "@batonsh/sdk"
 import { loadTheme } from "@batonsh/themes"
-import { createCliRenderer } from "@opentui/core"
+import { createCliRenderer, type Selection } from "@opentui/core"
 import { render } from "@opentui/solid"
 import { App } from "./App.tsx"
+import { copyText } from "./clipboard.ts"
 import { UiContext } from "./context.ts"
 import { Replay, replayState } from "./replay.ts"
 import { playSound } from "./sound.ts"
@@ -20,6 +21,8 @@ export interface RunTuiOptions {
   live?: LiveRun
   /** Replay mode: play back a past run's events (read-only, no daemon actions). */
   replay?: { events: BatonEvent[]; title: string }
+  /** Open with this overlay showing (`baton --resume` opens the run history). */
+  overlay?: "history"
 }
 
 export interface RunTuiResult {
@@ -63,6 +66,14 @@ export async function runTui(opts: RunTuiOptions): Promise<RunTuiResult> {
   }
   ui.requestReplay = (runId) => exit({ shutdown: false, replay: runId })
 
+  // select text with the mouse: it's copied when the button is released
+  renderer.on("selection", (sel: Selection | null) => {
+    const text = sel?.getSelectedText() ?? ""
+    if (!text.trim()) return
+    const via = copyText(renderer, text)
+    ui.toast(via.startsWith("nothing") ? `couldn't copy: ${via}` : `copied ${text.length} character${text.length === 1 ? "" : "s"}`)
+  })
+
   let watching = new Set(state.viewers.map((v) => v.name).filter((n) => n !== ui.me))
   const off = opts.live ? opts.live.onEvent((e: BatonEvent) => onLiveEvent(e)) : () => {}
   function onLiveEvent(e: BatonEvent) {
@@ -103,6 +114,7 @@ export async function runTui(opts: RunTuiOptions): Promise<RunTuiResult> {
     ),
     renderer,
   )
+  if (opts.overlay && !replay) ui.setOverlay(opts.overlay)
   // replays start playing right away, from the first event
   if (replay) {
     replay.seek(1)

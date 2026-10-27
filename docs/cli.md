@@ -19,6 +19,8 @@ Options for `baton` and `baton demo`:
 | `--orchestrator <agent>` | Which agent leads, for this session (`claude`, `codex`, `opencode`, …). |
 | `--autonomy <normal\|auto\|yolo\|ask>` | Start with this autonomy level for every agent. `--yolo` is short for `--autonomy yolo`. |
 | `--theme <name>` · `--layout <grid\|list\|focus\|swarm\|wide>` | Looks for this session (saved settings are untouched). |
+| `-c`, `--continue` | Bring back the agents that were running when the last run ended. |
+| `--resume [run]` | The same for a given run (an id, or its end, from `baton history`); alone, it opens the list to pick from. |
 | `-y`, `--yes` | Accept setup defaults without asking. |
 
 ## Running without the screen
@@ -63,7 +65,9 @@ In the app: `/features [name on|off]`, `/roles`, `/skills`, `/notes [add <text>]
 
 | Command | What it does |
 |---|---|
-| `baton history` | List past runs in this project (in the app: <kbd>ctrl</kbd>+<kbd>r</kbd> to resume one). |
+| `baton history` | List past runs in this project (in the app: <kbd>ctrl</kbd>+<kbd>r</kbd> or `/resume` to resume one). |
+| `baton resume [run]` | Resume a run: the agents that were still running when it ended come back with their conversations. The last run by default. |
+| `baton compact` | Shrink this project's event log (`.baton/state.db`). Logs from before 0.3.7 are compacted once automatically. Stop the daemon first (`baton stop`). |
 | `baton replay [run]` | Play a run back like a video: <kbd>space</kbd> pause, <kbd>,</kbd> <kbd>.</kbd> jump between moments, <kbd>-</kbd> <kbd>+</kbd> speed. |
 | `baton export <run> [--format md\|html\|jsonl]` | Write a run out as Markdown (default), a standalone HTML page, or raw events. |
 | `baton watch` | A plain, line-by-line view with typed input: screen-reader friendly, and good over slow connections. |

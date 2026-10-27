@@ -28,6 +28,7 @@ import {
   configDir,
   configJsonSchema,
   defaultUser,
+  EventStore,
   FEATURES,
   type FeatureKey,
   findProjectRoot,
@@ -89,12 +90,13 @@ function parseArgs(argv: string[]): Args {
           "title",
           "host",
           "public-url",
+          "resume",
         ].includes(k)
       )
         out.flags[k] = argv[++i] as string
       else out.flags[k] = true
     } else if (a.startsWith("-") && a.length > 1) {
-      for (const ch of a.slice(1)) out.flags[{ y: "yes", h: "help", v: "version", j: "json" }[ch] ?? ch] = true
+      for (const ch of a.slice(1)) out.flags[{ y: "yes", h: "help", v: "version", j: "json", c: "continue" }[ch] ?? ch] = true
     } else out._.push(a)
   }
   return out
@@ -148,12 +150,14 @@ async function replayRun(client: BatonClient, config: BatonConfig, runId: string
   await runTui({ client, config, replay: { events, title: `${title} · ${new Date(events[0]!.ts).toLocaleString()}` } })
 }
 
-async function startTui(client: BatonClient, root: string, flags: Args["flags"]): Promise<void> {
+async function startTui(client: BatonClient, root: string, flags: Args["flags"], first?: { overlay?: "history" }): Promise<void> {
   const config = await tuiConfig(client, root, flags)
   const { runTui } = await import("@batonsh/tui")
+  let overlay = first?.overlay
   for (;;) {
     const live = await client.live()
-    const res = await runTui({ client, live, config })
+    const res = await runTui({ client, live, config, overlay })
+    overlay = undefined
     await live.stop().catch(() => {})
     // history → replay: show it, then come back to the live run
     if (res.replay && !client.closed) {
@@ -183,14 +187,59 @@ async function cmdStart(args: Args) {
   if (!isInitialized(root)) {
     await initProject({ root, yes: !!args.flags.yes })
   }
+  await compactLog(root)
   const client = await connect({ cwd: root, daemonCommand: (r) => [...selfCommand(), "daemon", "--root", r], clientName: "tui", user: defaultUser() })
   await applyAutonomyFlag(client, args.flags)
+  // --continue: the last run · --resume <run>: that one · --resume alone: pick from the list
+  const resume = args.flags.continue ? "last" : args.flags.resume
+  let runError: unknown
+  if (typeof resume === "string") {
+    const run = await findRun(client, resume)
+    // agents come back while the screen is up (each shows up as it starts)
+    client.call("run.resume", { runId: run.runId }).catch((e) => (runError = e))
+  }
   const task = args._.slice(0).join(" ").trim()
-  let submitError: unknown
-  if (task) client.submit(task).catch((e) => (submitError = e))
-  await startTui(client, root, args.flags)
-  if (submitError) console.error(c.red(`baton: the task wasn't sent: ${submitError instanceof Error ? submitError.message : submitError}`))
-  process.exit(submitError ? 1 : 0)
+  if (task) client.submit(task).catch((e) => (runError = e))
+  await startTui(client, root, args.flags, { overlay: resume === true ? "history" : undefined })
+  if (runError) console.error(c.red(`baton: ${runError instanceof Error ? runError.message : runError}`))
+  process.exit(runError ? 1 : 0)
+}
+
+/** A past run by id (or the end of one), or the most recent one for "last". */
+async function findRun(client: BatonClient, want: string) {
+  const runs = (await client.call("runs.list", { limit: 200 })).runs
+  const run = want === "last" ? runs.find((r) => !r.current) : runs.find((r) => r.runId === want || r.runId.endsWith(want))
+  if (!run) throw new Error(want === "last" ? "no past runs to continue yet" : `no run ${want} (baton history lists them)`)
+  return run
+}
+
+const mb = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(n / 1e6))} MB`)
+
+/**
+ * Event logs written before 0.3.7 stored every chunk of command output with all the output
+ * so far, and grew to gigabytes. Shrink one once, before the daemon opens it.
+ */
+async function compactLog(root: string, opts: { force?: boolean } = {}) {
+  const path = projectPaths(root).state
+  if (!existsSync(path)) return opts.force ? console.log(c.dim("no event log yet")) : undefined
+  // the daemon has it open (a stale socket only postpones this to a later start)
+  if (daemonListening(discoverSocket(root), root)) {
+    if (opts.force) throw new Error("the daemon has the log open: run `baton stop` first")
+    return
+  }
+  const store = new EventStore(path)
+  try {
+    if (!opts.force && !store.needsCompact()) return
+    const size = store.sizeBytes()
+    const say = opts.force || size > 64e6
+    if (say) console.log(`  ${c.dim("…")} compacting the event log (${mb(size)}${opts.force ? "" : ", once"})`)
+    const r = store.compact()
+    if (say) console.log(`  ${c.green("✓")} event log ${mb(r.before)} → ${mb(r.after)}`)
+  } catch (e) {
+    console.error(c.yellow(`  event log not compacted: ${e instanceof Error ? e.message : e}`))
+  } finally {
+    store.close()
+  }
 }
 
 async function cmdDemo(args: Args) {
@@ -786,12 +835,14 @@ function help() {
 ${b("Examples")}
   baton                                   ${d("start (or re-attach) in this project; sets it up on first run")}
   baton "add tests for src/auth.ts"       ${d("start with a task for the orchestrator")}
+  baton --continue                        ${d("bring back the agents that were running when you left")}
   baton demo                              ${d("see it work with simulated agents (no tokens)")}
   baton --yolo                            ${d("every agent acts without asking (no sandbox) — shift+tab in the app cycles")}
   baton run "update the changelog" --approve all --json   ${d("headless, for scripts/CI")}
 
 ${b("Commands")}
   baton [task]          start or attach                    baton doctor          check terminal, agents, auth
+  baton resume [run]    bring a past run's agents back     baton compact         shrink this project's event log
   baton demo [task]     simulated agents                   baton agents          installed agent CLIs
   baton run "<task>"    headless run (--json)              baton history         past runs (resume: ctrl+r)
   baton init            re-run project setup               baton export <run>    run as Markdown / --format html
@@ -808,10 +859,12 @@ ${b("Commands")}
   baton config get|explain|path|schema|defaults            baton theme list|set <name>
 
 ${b("Flags")}
+  -c/--continue  resume the last run's agents     --resume [run]  pick a past run to resume (or give its id)
   --theme <name>  --layout <grid|list|focus|swarm|wide>  --orchestrator <adapter>  --autonomy <normal|ask|auto|yolo>  --yolo
   -y/--yes  --help  --version
 
 ${b("In the app")}
+  ctrl+c twice: quit and stop all agents (/quit leaves them running) · select text with the mouse to copy it
   @name talk to an agent · / commands · shift+tab autonomy · ctrl+a inbox · ctrl+d changes · ctrl+s settings
   ctrl+t themes · /style looks · ? all keys · /guide lessons
 
@@ -840,6 +893,8 @@ const COMMANDS = [
   "theme",
   "trust",
   "history",
+  "resume",
+  "compact",
   "export",
   "web",
   "mcp",
@@ -906,6 +961,10 @@ async function main() {
       return cmdTrust(sub)
     case "history":
       return cmdHistory()
+    case "resume":
+      return cmdStart({ _: sub._.slice(1), flags: { ...sub.flags, resume: sub._[0] ?? "last" } })
+    case "compact":
+      return compactLog(findProjectRoot(process.cwd()), { force: true })
     case "web":
       return cmdWeb(sub)
     case "mcp":

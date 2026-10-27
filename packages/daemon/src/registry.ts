@@ -114,7 +114,24 @@ export class AdapterRegistry {
     this.detected.delete(id)
   }
 
+  /**
+   * Every adapter's detect(), a few at a time: each one starts CLIs (`--version`, auth checks),
+   * and thirty of them at once could use up a busy machine's memory.
+   */
   async detectAll(refresh = false): Promise<(DetectResult & { id: string; displayName: string })[]> {
-    return Promise.all(this.list().map(async (a) => ({ id: a.id, displayName: a.displayName, ...((await this.detect(a.id, refresh)) as DetectResult) })))
+    const list = this.list()
+    const out: (DetectResult & { id: string; displayName: string })[] = new Array(list.length)
+    let next = 0
+    const worker = async () => {
+      for (let i = next++; i < list.length; i = next++) {
+        const a = list[i]!
+        out[i] = { id: a.id, displayName: a.displayName, ...((await this.detect(a.id, refresh)) as DetectResult) }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(DETECT_CONCURRENCY, list.length) }, worker))
+    return out
   }
 }
+
+/** Adapters detected at the same time (see detectAll). */
+const DETECT_CONCURRENCY = 6

@@ -7,7 +7,7 @@ import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { BatonConfig } from "@batonsh/kernel"
-import type { AdapterContext, AgentAdapter, AgentEvent, AgentSession, PromptInput } from "@batonsh/protocol"
+import type { AdapterContext, AgentAdapter, AgentEvent, AgentSession, BatonEvent, PromptInput } from "@batonsh/protocol"
 import { Runtime } from "./runtime.ts"
 
 interface Fake {
@@ -274,5 +274,59 @@ describe("runtime lifecycle", () => {
     await rt.setAutonomy("normal")
     expect(fake("w").approvals.at(-1)).toBe("ask")
     expect(fake("orchestrator").approvals.at(-1)).toBe("auto-edit")
+  })
+})
+
+/** The output of an update's first (terminal) content. */
+const outputOf = (content?: unknown[]) => (content?.[0] as { output?: string } | undefined)?.output ?? ""
+
+describe("command output", () => {
+  const terminal = (id: string, output: string, exitCode?: number) => ({
+    type: "terminal" as const,
+    terminalId: id,
+    command: "npm test",
+    output,
+    ...(exitCode !== undefined ? { exitCode } : {}),
+  })
+
+  test("a running command's output is shown live but stored once, with its result", async () => {
+    const { rt, fake } = setup()
+    const w = await rt.spawn({ adapter: "fake", name: "w" })
+    const f = fake("w")
+    const live: string[] = []
+    rt.store.subscribe((e) => {
+      if (e.type === "tool.update" && e.live) live.push(outputOf(e.data.content))
+    })
+    f.emit({ type: "tool.call", data: { toolCallId: "c1", kind: "execute", name: "shell", title: "npm test", status: "in_progress" } })
+    let out = ""
+    for (let i = 0; i < 50; i++) {
+      out += `line ${i}\n`
+      f.emit({ type: "tool.update", data: { toolCallId: "c1", status: "in_progress", content: [terminal("c1", out)] } })
+    }
+    // throttled: the first chunk right away, the rest at most every 250ms
+    expect(live.length).toBe(1)
+    expect(rt.state.feed(w.agentId).index.get("c1")).toMatchObject({ output: "line 0\n" })
+    await Bun.sleep(300)
+    expect(live.at(-1)).toBe(out)
+    expect(rt.state.feed(w.agentId).index.get("c1")).toMatchObject({ output: out })
+    // a result without the output keeps the last one shown
+    f.emit({ type: "tool.update", data: { toolCallId: "c1", status: "completed", summary: "50 lines" } })
+    const stored = rt.store.query({ runId: rt.runId, types: ["tool.update"] }) as BatonEvent<"tool.update">[]
+    expect(stored.length).toBe(1)
+    expect(stored[0]!.data.status).toBe("completed")
+    expect(outputOf(stored[0]!.data.content)).toBe(out)
+  })
+
+  test("output of a command that never reported a result is stored when the turn ends", async () => {
+    const { rt, fake } = setup()
+    await rt.spawn({ adapter: "fake", name: "w", prompt: "go" })
+    const f = fake("w")
+    f.emit({ type: "tool.call", data: { toolCallId: "c2", kind: "execute", name: "shell", title: "sleep", status: "in_progress" } })
+    f.emit({ type: "tool.update", data: { toolCallId: "c2", content: [terminal("c2", "partial")] } })
+    expect((rt.store.query({ runId: rt.runId, types: ["tool.update"] }) as BatonEvent<"tool.update">[]).length).toBe(0)
+    f.emit({ type: "turn.interrupted", data: { turnId: "t1" } })
+    const stored = rt.store.query({ runId: rt.runId, types: ["tool.update"] }) as BatonEvent<"tool.update">[]
+    expect(stored.map((e) => outputOf(e.data.content))).toEqual(["partial"])
+    expect(rt.agents.get(rt.findAgent("w")!.info.agentId)?.liveOutput.size).toBe(0)
   })
 })

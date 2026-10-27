@@ -369,7 +369,7 @@ Baton runs a small background daemon per project. It starts coding agents — Cl
 \`\`\`
 - Type a task **without @** and it goes to the **orchestrator**, an agent too. It decides how many agents to use, gives each a clear task, waits for results, reviews and merges.
 - Agents talk over the **bus**: they message each other, report progress and claim files.
-- Quit with \`ctrl+c\` and the agents keep working; run \`baton\` again to re-attach.`,
+- \`ctrl+c\` twice quits and stops every agent; \`/quit\` leaves them working, and \`baton\` re-attaches.`,
   },
   {
     id: "talk",

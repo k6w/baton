@@ -5,6 +5,22 @@ All notable changes to Baton. Versions follow [semver](https://semver.org); the 
 
 ## Unreleased
 
+**A new web view** (`baton web`, `/web`)
+- Redesigned from scratch: black, quiet, with a faint touch of depth (controls that look pressable, status
+  lights, recessed code). A sidebar with the run, the autonomy switch and every agent on a desktop; tabs on
+  a phone.
+- Agents' work is readable: tool calls grouped and described in words (Run `npm test`, Edit `src/app.ts`)
+  with their output and diffs a click away; thinking folded; Markdown with code blocks, tables and task lists;
+  long messages shortened until you open them; worktree paths shortened to the part that matters.
+- What agents send each other shows as cards: who to whom, done or failed, lines changed, acceptance checks,
+  work waiting to be merged — without the instructions Baton adds for the agents.
+- New views: Activity (the plan and the conversation between agents) and Changes (all unmerged work, with
+  Merge). An inspector shows an agent's details, files and conflicts.
+- The inbox lets you dismiss old problems; the tab title shows how many things need you.
+- A command menu (Ctrl K), single-key navigation, `@` and `/` suggestions and message history in the input.
+- Live updates no longer redraw the page: what you've opened, selected or scrolled to stays put, and only
+  the agents whose work changed are sent again.
+
 ## 0.3.7 — 2026-10-27
 
 **The event log stays small** (`.baton/state.db`)

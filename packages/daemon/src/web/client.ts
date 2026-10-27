@@ -657,7 +657,20 @@ export function webClient(mdToHtml) {
         a.lead ? "The lead is ready" : `${esc(a.name)} hasn't done anything yet`,
         a.lead ? "Give it a task below — it plans, starts agents and merges their work." : "Send it a message below.",
       )
-    return conversation(items, a, a.status === "busy" || a.status === "starting" || a.status === "awaiting_approval")
+    const live = a.status === "busy" || a.status === "starting" || a.status === "awaiting_approval"
+    const out = conversation(items, a, live)
+    // what it's doing right now, at the end of the conversation
+    if (live)
+      out.push({
+        k: "live",
+        h:
+          `<div class="live">${a.status === "awaiting_approval" ? icon("alert", "sm") : '<span class="spin"></span>'}` +
+          `<span>${esc(a.status === "awaiting_approval" ? "Waiting for your approval" : a.activity || statusText(a))}</span>` +
+          (a.turnStartedAt ? `<span class="faint num" data-since="${a.turnStartedAt}">${dur(now() - a.turnStartedAt)}</span>` : "") +
+          (a.status === "awaiting_approval" ? '<button class="btn sm" data-go="inbox">Open inbox</button>' : "") +
+          "</div>",
+      })
+    return out
   }
   const ORDER = { awaiting_approval: 0, error: 1, busy: 2, starting: 3, ready: 4, exited: 5 }
   function agentsView() {
@@ -916,7 +929,7 @@ export function webClient(mdToHtml) {
       row("Agent", a.adapter) +
       row("Model", a.model) +
       row("Role", a.role) +
-      row("Task", a.label) +
+      row("Task", a.label && a.label !== a.name && a.label !== "orchestrator" ? a.label : "") +
       row("Approval", a.approval) +
       row("Access", a.access) +
       row("Running for", a.startedAt ? dur(now() - a.startedAt) : "") +
@@ -1016,6 +1029,8 @@ export function webClient(mdToHtml) {
         count(t.toolCalls) +
         '</b><span>tools</span></div><div class="stat"><b><span class="plus">+' +
         count(t.added) +
+        '</span> <span class="minus">−' +
+        count(t.removed) +
         '</span></b><span>lines</span></div></div><div class="viewers">' +
         '<span class="avatar" title="you">' +
         esc((S.me || "w")[0].toUpperCase()) +
@@ -1098,6 +1113,9 @@ export function webClient(mdToHtml) {
       return
     }
     if (!S.route.name) S.route = { name: defaultRoute(), id: "" }
+    // the tab says when something needs you
+    const n = needs()
+    doc.title = `${n ? `(${n}) ` : ""}${S.view.project ? `${S.view.project} · ` : ""}baton`
     let r = S.route
     if (r.name === "agent" && !agentById(r.id)) S.route = r = { name: "agents", id: "" }
     const sc = $("scroll")

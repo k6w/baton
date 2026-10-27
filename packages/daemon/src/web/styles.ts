@@ -85,7 +85,7 @@ svg.i.sm { width: 14px; height: 14px; } svg.i.xs { width: 12px; height: 12px; }
 .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
 .stat { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 6px 8px; box-shadow: var(--edge); min-width: 0; }
 .stat b { display: block; font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.stat span { font-size: 10.5px; color: var(--text-4); text-transform: uppercase; letter-spacing: .05em; }
+.stat > span { font-size: 10.5px; color: var(--text-4); text-transform: uppercase; letter-spacing: .05em; }
 .viewers { display: flex; align-items: center; gap: 6px; color: var(--text-3); font-size: 12px; }
 .avatar { width: 20px; height: 20px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 10px; font-weight: 700; background: var(--surface-3); color: var(--text-2);
   box-shadow: var(--edge), 0 0 0 2px var(--bg-1); }
@@ -169,6 +169,9 @@ kbd { font: 500 11px/1 var(--mono); color: var(--text-3); padding: 3px 5px; bord
 .thought > button:hover { color: var(--text-2); }
 .thought .tb { margin: 4px 0 6px 2px; padding-left: 12px; border-left: 2px solid var(--surface-4); color: var(--text-3); font-size: 13.5px; font-style: italic; }
 .thought .pv { color: var(--text-4); font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 520px; display: inline-block; vertical-align: bottom; }
+.live { display: flex; align-items: center; gap: 10px; margin: 14px 0 4px; padding: 9px 12px; border-radius: var(--r); font-size: 13px; color: var(--text-2);
+  background: linear-gradient(90deg, rgba(255,123,58,.07), transparent 70%); border: 1px solid rgba(255,123,58,.14); }
+.live span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12.5px; }
 .note { display: flex; align-items: center; gap: 8px; color: var(--text-3); font-size: 12.5px; margin: 6px 0; }
 .note::before, .note::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 .note span { max-width: 80%; text-align: center; overflow-wrap: anywhere; }

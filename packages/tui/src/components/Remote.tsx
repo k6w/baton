@@ -63,7 +63,12 @@ export function RemoteOverlay(props: { onClose: () => void }) {
     }
   })
   /** Other ways in: the remaining network addresses and this machine's. */
-  const others = (i: RemoteInfo) => [...new Set([...i.lanUrls, i.url])].filter((u) => u && u !== i.openUrl)
+  /** Other ways in: the remaining network addresses and this machine's, each with the access key. */
+  const others = (i: RemoteInfo) => {
+    const key = i.openUrl.slice(i.openUrl.indexOf("#"))
+    const local = i.url && !i.url.includes("#") ? `${i.url.replace(/\/$/, "")}/${key}` : i.url
+    return [...new Set([...i.lanUrls, local])].filter((u) => u && u !== i.openUrl)
+  }
   const inner = () => W() - 4
   const text = (): Line[] => {
     const t = ui.theme()

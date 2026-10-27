@@ -5,6 +5,26 @@ All notable changes to Baton. Versions follow [semver](https://semver.org); the 
 
 ## Unreleased
 
+## 0.3.9 — 2026-10-27
+
+**Fixes**
+- The event log no longer grows with Baton's own agent or ACP agents (Gemini, Qwen, …) either: their
+  running commands' output is shown live and stored once, like Claude's and Codex's. Logs are compacted
+  once more, and a command whose result doesn't repeat its output keeps its last output.
+- `baton -c "task"` (or `--resume` with a task) could start a second lead next to the resumed one; the
+  task now goes to the resumed lead. Whatever asks for a lead at the same moment gets the same one.
+- `--continue` resumes the last run that had agents (not the empty run `baton history` starts).
+- Compacting the log waits for a daemon that is still shutting down (on macOS and Linux it could lose the
+  run's last events).
+- `ctrl+c` twice quits only right after its "press again" warning: a `ctrl+c` that closed a menu, cleared
+  what you typed or left a text box no longer counts.
+- Windows: a client that stops reading (a suspended laptop, a stalled phone) is disconnected instead of
+  making the daemon hold everything for it, and lagging clients skip live output.
+- HTML exports and replays show agents that stopped in full again.
+- A long-running daemon checks for updates every day, not just when it starts.
+- `/web` in the app: the other addresses it lists carry the access key.
+- A worktree that can't be checked says why in one line.
+
 ## 0.3.8 — 2026-10-27
 
 **A new web view** (`baton web`, `/web`)

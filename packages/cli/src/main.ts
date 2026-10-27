@@ -18,7 +18,7 @@
  *   baton export <run>     a run as Markdown (--format html for a shareable page, jsonl for raw events)
  *   baton daemon           run the daemon in the foreground (normally started automatically)
  */
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { basename, join, resolve } from "node:path"
 import { runDaemonProcess, socketPathFor, startDaemon } from "@batonsh/daemon"
@@ -197,13 +197,15 @@ async function cmdStart(args: Args) {
   // (after an upgrade restart, the run that was just stopped)
   const resume = args.flags.continue || (upgraded && args.flags.resume === undefined) ? "last" : args.flags.resume
   let runError: unknown
+  let resumed: Promise<unknown> = Promise.resolve()
   if (typeof resume === "string") {
     const run = await findRun(client, resume)
     // agents come back while the screen is up (each shows up as it starts)
-    client.call("run.resume", { runId: run.runId }).catch((e) => (runError = e))
+    resumed = client.call("run.resume", { runId: run.runId }).catch((e) => (runError = e))
   }
   const task = args._.slice(0).join(" ").trim()
-  if (task) client.submit(task).catch((e) => (runError = e))
+  // a task goes to the resumed lead, not to a fresh one started for it meanwhile
+  if (task) void resumed.then(() => client.submit(task).catch((e) => (runError = e)))
   await startTui(client, root, args.flags, { overlay: resume === true ? "history" : undefined })
   if (runError) console.error(c.red(`baton: ${runError instanceof Error ? runError.message : runError}`))
   // what the daemon's daily check found (no network here)
@@ -243,10 +245,23 @@ async function upgradeDaemon(root: string, yes: boolean): Promise<boolean> {
   return true
 }
 
+/** Whether a live process holds the daemon lock (its pid comes first in the file). */
+function lockHeld(lock: string): boolean {
+  try {
+    const pid = Number(readFileSync(lock, "utf8").split(":")[0])
+    if (!pid) return false
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** A past run by id (or the end of one), or the most recent one for "last". */
 async function findRun(client: BatonClient, want: string) {
   const runs = (await client.call("runs.list", { limit: 200 })).runs
-  const run = want === "last" ? runs.find((r) => !r.current) : runs.find((r) => r.runId === want || r.runId.endsWith(want))
+  // "last": the latest run that had agents (`baton history` and the like start empty ones)
+  const run = want === "last" ? runs.find((r) => !r.current && r.agents > 0) : runs.find((r) => r.runId === want || r.runId.endsWith(want))
   if (!run) throw new Error(want === "last" ? "no past runs to continue yet" : `no run ${want} (baton history lists them)`)
   return run
 }
@@ -260,8 +275,9 @@ const mb = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.max
 async function compactLog(root: string, opts: { force?: boolean } = {}) {
   const path = projectPaths(root).state
   if (!existsSync(path)) return opts.force ? console.log(c.dim("no event log yet")) : undefined
-  // the daemon has it open (a stale socket only postpones this to a later start)
-  if (daemonListening(discoverSocket(root), root)) {
+  // the daemon has it open (a stale socket or lock only postpones this to a later start); on POSIX a
+  // daemon that is shutting down has removed its socket but still writes until its lock is gone
+  if (daemonListening(discoverSocket(root), root) || lockHeld(join(projectPaths(root).run, "daemon.lock"))) {
     if (opts.force) throw new Error("the daemon has the log open: run `baton stop` first")
     return
   }

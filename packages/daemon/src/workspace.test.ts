@@ -282,7 +282,7 @@ describe("WorkspaceManager", () => {
     ws.base = "0000000000000000000000000000000000000bad" // snapshot/diff will fail
     const r = await wm.remove("a1")
     expect(r.kept).toBe(true)
-    expect(r.reason).toContain("could not check")
+    expect(r.reason).toContain("couldn't check")
     expect(existsSync(join(ws.path, "x.txt"))).toBe(true)
   })
 

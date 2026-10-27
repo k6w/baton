@@ -142,6 +142,8 @@ export class Replay {
 /** A fresh RunState already showing the run's project (empty until played). */
 export function replayState(events: BatonEvent[]): RunState {
   const st = new RunState()
+  // a replay shows the whole run
+  st.trimExited = false
   const started = events.find((e) => e.type === "run.started")
   if (started && started.type === "run.started") st.projectRoot = started.data.cwd
   return st

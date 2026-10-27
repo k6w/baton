@@ -26,6 +26,8 @@ export interface RunSummary {
 
 function fold(events: BatonEvent[]): RunState {
   const st = new RunState()
+  // exports show a run in full, agents that stopped included
+  st.trimExited = false
   for (const e of events) st.apply(e)
   return st
 }
@@ -224,9 +226,10 @@ export async function resumeRun(rt: Runtime, runId: string): Promise<string[]> {
       if (cur && !rt.state.feed(cur.info.agentId).items.some((it) => it.kind === "user" || it.kind === "message")) await rt.kill(cur.info.agentId)
       const lead = rt.orchestrator()
       if (!lead) {
-        const a = await rt.spawn({ adapter: info.adapter, isOrchestrator: true, model: info.model, label: info.label, resumeId: agent.session })
-        history(oldId, a.agentId)
-        started.push(a.name)
+        // a lead someone else is starting right now is used instead of a second one
+        const a = await rt.spawnLead({ adapter: info.adapter, model: info.model, label: info.label, resumeId: agent.session })
+        history(oldId, a.info.agentId)
+        started.push(a.info.name)
       } else history(oldId, lead.info.agentId)
       continue
     }

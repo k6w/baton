@@ -147,16 +147,21 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   attachRemoteNotify(runtime)
   // a newer Baton? asked once a day, after startup has settled (agents are detected first)
   if (!opts.ephemeral) {
-    const updateTimer = setTimeout(() => {
+    // said once per version: a daemon that stays up for days checks every day
+    let told = ""
+    const check = () =>
       void checkForUpdate().then((v) => {
-        if (v && !stopping)
-          runtime.emit({
-            type: "orch.note",
-            data: { level: "info", text: `Baton ${v} is available (this is ${BATON_VERSION}) — update with \`${updateCommand()}\`` },
-          })
+        if (!v || v === told || stopping) return
+        told = v
+        runtime.emit({
+          type: "orch.note",
+          data: { level: "info", text: `Baton ${v} is available (this is ${BATON_VERSION}) — update with \`${updateCommand()}\`` },
+        })
       })
-    }, UPDATE_CHECK_DELAY_MS)
-    updateTimer.unref?.()
+    const first = setTimeout(check, UPDATE_CHECK_DELAY_MS)
+    const daily = setInterval(check, 24 * 60 * 60 * 1000)
+    first.unref?.()
+    daily.unref?.()
   }
   const telemetry = config.telemetry.otlp_endpoint ? new TelemetryExporter(runtime, config.telemetry.otlp_endpoint) : undefined
 

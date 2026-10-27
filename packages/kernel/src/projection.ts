@@ -85,6 +85,8 @@ export class RunState {
   /** Bumped on every applied event; per-agent versions let UIs re-render selectively. */
   version = 0
   agentVersions = new Map<string, number>()
+  /** Agents that stopped keep only their latest items (live state); exports and replays turn this off. */
+  trimExited = true
   busVersion = 0
   /** Bus messages excluding heartbeats/progress (status bar "msgs"). */
   busChatCount = 0
@@ -209,7 +211,7 @@ export class RunState {
           agent.turnStartedAt = undefined
         }
         for (const [k, p] of this.approvals) if (p.agentId === aid) this.approvals.delete(k)
-        if (aid) {
+        if (aid && this.trimExited) {
           const f = this.feeds.get(aid)
           if (f && f.items.length > MAX_FEED_EXITED) for (const r of f.items.splice(0, f.items.length - MAX_FEED_EXITED)) f.index.delete(r.id)
         }

@@ -106,7 +106,8 @@ function isOutputProgress(d: ToolUpdate): boolean {
     !d.summary &&
     d.content?.length === 1 &&
     d.content[0]!.type === "terminal" &&
-    d.content[0]!.exitCode === undefined
+    // native and ACP agents say "still running" with exitCode: null
+    d.content[0]!.exitCode == null
   )
 }
 
@@ -500,8 +501,11 @@ export class Runtime {
     const agentId = rt.info.agentId
     if (ev.type === "permission.resolved" && this.resolvedRequests.has(ev.data.requestId)) return
     if (ev.type === "tool.update") {
-      if (isOutputProgress(ev.data)) return this.liveOutput(rt, ev.data)
+      if (isOutputProgress(ev.data)) return rt.closing ? undefined : this.liveOutput(rt, ev.data)
       const last = rt.liveOutput.get(ev.data.toolCallId)
+      const term = ev.data.content?.find((c) => c.type === "terminal")
+      // a stored update with output is newer than what's live: the result mustn't fall back to it
+      if (last && term && ev.data.status !== "completed" && ev.data.status !== "failed") last.content = term
       if (last && (ev.data.status === "completed" || ev.data.status === "failed")) {
         clearTimeout(last.timer)
         rt.liveOutput.delete(ev.data.toolCallId)
@@ -763,8 +767,28 @@ export class Runtime {
     const existing = this.orchestrator()
     if (existing) return existing
     if (!this.config.orchestrator.enabled) throw new Error("orchestrator is disabled (orchestrator.enabled = false)")
-    const info = await this.spawn({ adapter: this.config.orchestrator.agent, isOrchestrator: true, label: this.config.orchestrator.mode })
-    return this.agents.get(info.agentId) as AgentRuntime
+    return this.spawnLead({ adapter: this.config.orchestrator.agent, label: this.config.orchestrator.mode })
+  }
+
+  /** A lead being started: whoever else needs one (a task, a resume) waits for it instead of starting a second. */
+  private leadStarting?: Promise<AgentInfo>
+
+  /** Start the lead, unless one is running or already starting (then that one). */
+  async spawnLead(params: SpawnParams & { resumeId?: string }): Promise<AgentRuntime> {
+    for (;;) {
+      const existing = this.orchestrator()
+      if (existing) return existing
+      if (!this.leadStarting) break
+      await this.leadStarting.catch(() => {})
+    }
+    const starting = this.spawn({ ...params, isOrchestrator: true })
+    this.leadStarting = starting
+    try {
+      const info = await starting
+      return this.agents.get(info.agentId) as AgentRuntime
+    } finally {
+      if (this.leadStarting === starting) this.leadStarting = undefined
+    }
   }
 
   // ───────────────────────────── bus ─────────────────────────────

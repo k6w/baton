@@ -17,3 +17,63 @@ test("self-contained: the web page embeds it via toString()", () => {
   const fn = new Function(`return ${mdToHtml.toString()}`)() as typeof mdToHtml
   expect(fn("**x**")).toBe("<p><strong>x</strong></p>")
 })
+
+test("what agents write: code with a language, nested and task lists, tables, quotes", () => {
+  const h = mdToHtml(
+    [
+      "```ts",
+      "const a = 1 < 2",
+      "```",
+      "- top",
+      "  - nested `x`",
+      "- [x] done",
+      "- [ ] todo",
+      "",
+      "3. three",
+      "4. four",
+      "",
+      "| file | +/- |",
+      "|:-----|----:|",
+      "| a.ts | **+3** |",
+      "",
+      "> one",
+      "> two",
+    ].join("\n"),
+  )
+  expect(h).toContain('<pre data-lang="ts"><code>const a = 1 &lt; 2</code></pre>')
+  expect(h).toContain("<ul><li>top<ul><li>nested <code>x</code></li></ul></li>")
+  expect(h).toContain('<li class="task done"><span class="box">✓</span> done</li>')
+  expect(h).toContain('<li class="task"><span class="box"></span> todo</li>')
+  expect(h).toContain('<ol start="3"><li>three</li><li>four</li></ol>')
+  expect(h).toContain('<th style="text-align:right">+/-</th>')
+  expect(h).toContain('<td style="text-align:right"><strong>+3</strong></td>')
+  expect(h).toContain("<blockquote>one<br>two</blockquote>")
+  // every list closes
+  expect(h.split("<ul>").length).toBe(h.split("</ul>").length)
+  expect(h.split("<li").length).toBe(h.split("</li>").length)
+})
+
+test("a table cell or a code language can't inject markup either", () => {
+  const h = mdToHtml('| a | b |\n|---|---|\n| <img src=x onerror=alert(1)> | ok |\n```"><script>\nx\n```')
+  expect(h).not.toContain("<img")
+  expect(h).not.toContain("<script")
+})
+
+test("paths and URLs keep their underscores and stars", () => {
+  expect(mdToHtml("edit src/__init__.py and my_snake_case")).toBe("<p>edit src/__init__.py and my_snake_case</p>")
+  expect(mdToHtml("see https://x.dev/_next/static_/a.js")).toContain('href="https://x.dev/_next/static_/a.js"')
+  expect(mdToHtml("[see https://a.com](https://b.com)")).toBe('<p><a href="https://b.com" target="_blank" rel="noopener noreferrer">see https://a.com</a></p>')
+  expect(mdToHtml("[`x`](https://b.com) and __bold__ and _it_")).toBe(
+    '<p><a href="https://b.com" target="_blank" rel="noopener noreferrer"><code>x</code></a> and <strong>bold</strong> and <em>it</em></p>',
+  )
+  expect(mdToHtml("## Title ##")).toBe("<h4>Title</h4>")
+  expect(mdToHtml("# C#")).toBe("<h3>C#</h3>")
+})
+
+test("no input makes it slow", () => {
+  const t = Date.now()
+  mdToHtml(`# a${" ".repeat(20000)}x`)
+  mdToHtml(`- a${"\n".repeat(20000)}- b`)
+  mdToHtml(`${"\n".repeat(20000)}x`)
+  expect(Date.now() - t).toBeLessThan(500)
+})

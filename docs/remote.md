@@ -7,14 +7,28 @@ baton web          # this machine only
 baton web --lan    # reachable from your phone on the same network — scan the QR code
 ```
 
-Or `/web` inside the TUI (press `l` there to allow your network, `c` to copy the link). You get a mobile-first page with:
+Or `/web` inside the TUI (press `l` there to allow your network, `c` to copy the link). You get one page
+that works on a phone and on a big screen:
 
-- **Inbox:** everything that needs you, with Allow / Always / Deny for approvals, Approve / Reject for plans and
-  Merge for finished work.
-- **Lead:** the orchestrator's thread, including the agents' messages to each other.
-- **Agents:** every worker with its status, cost and unmerged changes. Tap one for its activity, then
-  Message / Interrupt / Merge.
-- **The autonomy dial** (normal · auto · YOLO · ask) and an input for tasks, `@agent` messages and `/commands`.
+- **Inbox:** everything that needs you. Allow / Always allow / Deny for approvals (`Y` / `N` on a keyboard),
+  Approve / Reject for plans, Merge for finished work. Problems (a crashed agent, a stuck one) can be dismissed
+  one at a time or all at once; one that changes comes back.
+- **Lead** and every **agent**: the conversation, readable. Tool calls are grouped ("3 commands · 1 edit"),
+  each one says what it did (Run `npm test`, Edit `src/app.ts`) and opens to its output or diff. Thinking is
+  folded, results agents send each other are cards (done or failed, lines changed, acceptance checks, work
+  waiting to be merged), and Baton's own coordination calls are hidden until you ask for them. A line at the
+  end shows what a working agent is doing right now.
+- **Agents:** cards with status, current step, progress, changes and cost; filter by working / needs you /
+  idle / stopped. An agent's page has Message, Interrupt, Merge and Stop.
+- **Activity:** the plan with its progress, and what agents tell each other, newest first.
+- **Changes:** every worktree with unmerged work, its files and a Merge button.
+- **The autonomy switch** (normal · auto · YOLO · ask) and an input for tasks, `@agent` messages and `/commands`,
+  with suggestions as you type (`@` for agents, `/` for commands, ↑ for earlier messages).
+- **Ctrl K** opens a command menu (go to any view or agent, merge, interrupt, switch autonomy, show coordination
+  calls). Single keys: `I` inbox, `L` lead, `A` agents, `T` activity, `C` changes, `/` to type.
+
+On a desktop the run's details sit on the right (an agent's model, cost, files and conflicts; otherwise totals,
+the plan and what's waiting to be merged). On a phone the views are tabs at the bottom.
 
 It updates live and keeps running inside the daemon after the command exits; `baton web --stop` turns it off.
 `[remote] autostart = true` starts it with the daemon, and `port = 4777` keeps the address stable for

@@ -123,6 +123,17 @@ describe("web view", () => {
     ac.abort()
   })
 
+  test("a viewer's name in any script (the page sends it URL-encoded)", async () => {
+    const ac = new AbortController()
+    const res = await fetch(`${base()}/api/stream`, {
+      headers: { Authorization: `Bearer ${token}`, "X-Baton-User": encodeURIComponent("Łukasz 山田") },
+      signal: ac.signal,
+    })
+    await res.body!.getReader().read()
+    expect(d.runtime.state.viewers.some((v) => v.name === "Łukasz 山田")).toBe(true)
+    ac.abort()
+  })
+
   test("QR codes have a quiet zone and square rows", () => {
     const q = qrLines("http://127.0.0.1:4777/#t=abc")
     expect(q.length).toBeGreaterThan(10)

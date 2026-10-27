@@ -7,6 +7,16 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { type Daemon, startDaemon } from "./daemon.ts"
 
+/**
+ * The error a daemon call fails with. Not `expect(promise).rejects`: Bun waits on that promise
+ * without serving the named pipe the reply comes back on (Windows), so it can hang until the timeout.
+ */
+const failure = (p: Promise<unknown>) =>
+  p.then(
+    () => new Error("expected the call to fail"),
+    (e: unknown) => (e instanceof Error ? e : new Error(String(e))),
+  )
+
 let daemon: Daemon
 let client: BatonClient
 const root = mkdtempSync(join(tmpdir(), "baton-daemon-"))
@@ -82,7 +92,7 @@ describe("daemon", () => {
   test.skipIf(process.platform === "win32")("@mentions route directly, unknown mention errors", async () => {
     const r = await client.submit("@alpha @beta pong")
     expect(r.routedTo.sort()).toEqual(["alpha", "beta"])
-    await expect(client.submit("@nobody hi")).rejects.toThrow(/no agent/)
+    expect((await failure(client.submit("@nobody hi"))).message).toMatch(/no agent/)
   })
 
   // skipped on Windows: under bun's test runner the client stops receiving replies after the MCP test
@@ -128,6 +138,6 @@ describe("daemon", () => {
     expect(r.routedTo.length).toBe(2)
     const kill = await client.submit(`/kill ${r.routedTo[0]}`)
     expect(kill.output).toBe("killed 1")
-    await expect(client.submit("/nope")).rejects.toThrow(/unknown command/)
+    expect((await failure(client.submit("/nope"))).message).toMatch(/unknown command/)
   })
 })

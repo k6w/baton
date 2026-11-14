@@ -74,9 +74,9 @@ export async function snapshotTree(cwd: string, exclude: string[] = []): Promise
   }
 }
 
-export async function commitTree(cwd: string, tree: string, parents: string[], message: string): Promise<string> {
+export async function commitTree(cwd: string, tree: string, parents: string[], message: string, env?: Record<string, string>): Promise<string> {
   const args = ["commit-tree", tree, ...parents.flatMap((p) => ["-p", p]), "-m", message]
-  return (await git(cwd, args)).stdout.trim()
+  return (await git(cwd, args, { env })).stdout.trim()
 }
 
 /** Commit object capturing the working tree right now (parent: HEAD, if any). */
@@ -229,7 +229,20 @@ export async function checkoutPaths(top: string, tree: string, changes: RawChang
   }
 }
 
+/** The committer identity of the user (for commits on their branch), or {} to fall back to Baton's. */
+export async function userIdentity(cwd: string): Promise<Record<string, string>> {
+  const get = async (k: string) => (await git(cwd, ["config", k], { allowFail: true })).stdout.trim()
+  const [name, email] = await Promise.all([get("user.name"), get("user.email")])
+  return name && email ? { GIT_AUTHOR_NAME: name, GIT_AUTHOR_EMAIL: email, GIT_COMMITTER_NAME: name, GIT_COMMITTER_EMAIL: email } : {}
+}
+
 /** The empty tree's id (differs between SHA-1 and SHA-256 repositories). */
 export async function emptyTree(cwd: string): Promise<string> {
   return (await git(cwd, ["mktree"], { input: "" })).stdout.trim()
+}
+
+/** Paths (relative to the repo top) whose staged version differs from HEAD. */
+export async function stagedPaths(cwd: string): Promise<string[]> {
+  const r = await git(cwd, ["diff-index", "--cached", "-z", "--name-only", "HEAD"], { allowFail: true })
+  return r.code === 0 ? r.stdout.split("\0").filter(Boolean) : []
 }

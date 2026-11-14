@@ -5,6 +5,27 @@ All notable changes to Baton. Versions follow [semver](https://semver.org); the 
 
 ## Unreleased
 
+**Changed**
+- A merge now lands as a commit on your **current branch** (`baton: <agent> — <task>`), not as uncommitted
+  changes. Only the agent's files go into it. If you have uncommitted or staged edits in any of those
+  files, the merge is left uncommitted, so your own work is never swept into Baton's commit. `/undo` takes
+  the commit back off the branch while it is still the tip. Set `workspace.merge = "working-tree"` to get
+  the old behaviour.
+- `/pr` also counts merged changes that are committed but not pushed yet (also on a branch with no
+  upstream). When everything is committed, the PR is one commit with only Baton's files. If the PR
+  would also carry unpushed commits that aren't Baton merges, `/pr` says so.
+
+**Fixes**
+- Worker branches start at your real HEAD. Your uncommitted edits and untracked files are written into
+  the worktree as uncommitted changes instead of being committed onto every worker branch.
+- Each worktree gets a real `node_modules` (setting: `workspace.clone`, default `["node_modules"]`)
+  instead of a symlink to your checkout, which Turbopack rejects and which `bun add` in a worker used to
+  change. It is a copy-on-write clone on macOS (APFS) and on Linux filesystems with reflinks (btrfs, XFS).
+  **On other Linux filesystems (e.g. ext4) it is a full copy per worker**, which is slower and uses disk
+  space. If the copy fails, the project's package manager installs it (up to 10 minutes); the old
+  symlink is the last resort. Set `workspace.clone = []` to keep symlinking.
+- No more conflict warnings for a change that was already in the other worker's base.
+
 ## 0.3.9 — 2026-10-27
 
 **Fixes**

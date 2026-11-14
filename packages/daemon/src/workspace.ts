@@ -31,12 +31,15 @@ import {
   mergeBase,
   mergeTree,
   overlayTree,
+  type RawChange,
   rawChanges,
   repoPrefix,
   repoPrefixSync,
   snapshotCommit,
   snapshotTree,
+  stagedPaths,
   treeOf,
+  userIdentity,
 } from "./git.ts"
 
 export interface Workspace {
@@ -80,6 +83,8 @@ export function worktreeRoot(projectRoot: string, cfg: Cfg): string {
 
 export interface MergeOptions {
   onStage?: (s: "verifying") => void
+  /** Task label for the commit message ("baton: <agent> — <label>"). */
+  label?: string
   /** Called inside the merge queue right after the refresh; a returned string blocks the merge with that detail. */
   gate?: (ws: Workspace) => string | undefined
 }
@@ -88,7 +93,7 @@ export class WorkspaceManager {
   readonly byAgent = new Map<string, Workspace>()
   private queue: Promise<unknown> = Promise.resolve()
   /** Landed merges, newest last (for undo). */
-  private history: { agentId: string; agentName: string; before: string; after: string; prevBase?: string; files: FileStat[] }[] = []
+  private history: { agentId: string; agentName: string; before: string; after: string; prevBase?: string; files: FileStat[]; landed?: string }[] = []
   private repo: boolean | undefined
   private loc: { prefix: string; top: string } | undefined
 
@@ -310,41 +315,98 @@ export class WorkspaceManager {
       }
       const wtRoot = ws.root ?? ws.path
       const { top } = await this.location()
+      const message = `baton: ${ws.agentName}${opts.label ? ` — ${opts.label}` : ""}`
       // the agent's full tree (its base included) — what gets merged three-way into the project
       const work = await commitTree(ws.path, tree, [ws.base], `baton snapshot ${ws.agentName}`)
       // the branch gets only the files the agent changed (the uncommitted files it started with stay off
       // it — though a file both you and the agent edited is committed with your uncommitted lines in it)
       const mine = await rawChanges(ws.path, ws.base, work)
       const branchHead = await headCommit(ws.path)
-      const commit = await commitTree(ws.path, await overlayTree(ws.path, branchHead, mine), branchHead ? [branchHead] : [], `baton: ${ws.agentName}`)
+      const commit = await commitTree(ws.path, await overlayTree(ws.path, branchHead, mine), branchHead ? [branchHead] : [], message)
       if (ws.branch) await git(ws.path, ["update-ref", `refs/heads/${ws.branch}`, commit])
       // move the worktree's HEAD *and index* to the new commit; the working tree is untouched
       await git(wtRoot, ["reset", "-q", commit])
       // merge against the project *as it is now*
-      const current = await snapshotCommit(this.projectRoot, "baton merge target", undefined, this.cfg.link)
+      const userHead = await headCommit(this.projectRoot)
+      const current = await snapshotCommit(this.projectRoot, "baton merge target", userHead, this.cfg.link)
       const merged = await mergeTree(this.projectRoot, ws.base, current, work)
       if (!merged.clean || !merged.tree)
         return { status: "conflict", files: ws.files, conflicts: merged.conflicts, detail: `conflicts in ${merged.conflicts.join(", ")}` }
+      const landing = await rawChanges(this.projectRoot, current, merged.tree)
+      // commit only when the user has no uncommitted (or staged) edits in the files being landed
+      // — otherwise their own work would be swept into Baton's commit
+      let commitIt = this.cfg.merge === "commit" && !!userHead
+      if (commitIt) {
+        const dirty = new Set([...(await rawChanges(this.projectRoot, userHead as string, current)).map((c) => c.path), ...(await stagedPaths(top))])
+        commitIt = !landing.some((c) => dirty.has(c.path))
+      }
       // patch paths are relative to the repository top level, so apply it there
       const patch = await diffPatch(this.projectRoot, current, merged.tree)
       const check = await applyPatch(top, patch, true)
       if (check.code !== 0) return { status: "failed", files: ws.files, detail: `project changed while merging; retry (${check.stderr.trim()})` }
       const applied = await applyPatch(top, patch)
       if (applied.code !== 0) return { status: "failed", files: ws.files, detail: applied.stderr.trim() }
+      let landed: string | undefined
+      let note: string | undefined
+      if (commitIt && landing.length) {
+        try {
+          landed = await this.commitOnUserBranch(top, userHead as string, landing, message)
+        } catch (e) {
+          note = `left uncommitted: couldn't commit (${e instanceof Error ? e.message.trim().split("\n").at(-1) : e})`
+        }
+        // HEAD moved: a failure syncing the index must not lose track of the commit (undo needs it)
+        if (landed)
+          await this.resetIndex(
+            top,
+            landing.map((c) => c.path),
+          ).catch(() => {
+            note = "committed; run `git reset -q` to refresh your index"
+          })
+      }
       const files = ws.files
       const afterCommit = await commitTree(this.projectRoot, merged.tree, [current], `baton merged ${ws.agentName}`)
-      this.history.push({ agentId, agentName: ws.agentName, before: current, after: afterCommit, prevBase: ws.base, files })
+      this.history.push({ agentId, agentName: ws.agentName, before: current, after: afterCommit, prevBase: ws.base, files, landed })
       ws.base = work
       await this.pin(ws)
       ws.files = []
       ws.snapshot = undefined
       ws.tree = undefined
       ws.merged = true
-      return { status: "merged", commit, files }
+      return {
+        status: "merged",
+        commit: landed ?? commit,
+        files,
+        ...(note
+          ? { detail: note }
+          : this.cfg.merge === "commit" && !landed
+            ? { detail: "left uncommitted: you have uncommitted edits in the same files" }
+            : {}),
+      }
     }
     const p = this.queue.then(run, run)
     this.queue = p.catch(() => {})
     return p.catch((e) => ({ status: "failed" as const, files: [], detail: e instanceof Error ? e.message : String(e) }))
+  }
+
+  /**
+   * Commit HEAD + exactly `changes` (already written to the working tree) on the user's current
+   * branch. Other uncommitted work stays uncommitted.
+   */
+  private async commitOnUserBranch(top: string, head: string, changes: RawChange[], message: string): Promise<string> {
+    const tree = await overlayTree(top, head, changes)
+    const c = await commitTree(top, tree, [head], message, await userIdentity(top))
+    // compare-and-swap: never clobber a commit the user made meanwhile
+    await git(top, ["update-ref", "-m", message, "HEAD", c, head])
+    return c
+  }
+
+  /** Make the user's index match HEAD for these paths (repo-top-relative). */
+  private async resetIndex(top: string, paths: string[]) {
+    if (!paths.length) return
+    await git(top, ["reset", "-q", "--pathspec-from-file=-", "--pathspec-file-nul"], {
+      input: `${paths.join("\0")}\0`,
+      env: { GIT_LITERAL_PATHSPECS: "1" },
+    })
   }
 
   /**
@@ -365,9 +427,17 @@ export class WorkspaceManager {
           files: r.conflicts,
           detail: `files changed since the merge conflict with the undo: ${r.conflicts.join(", ")}`,
         }
-      const applied = await applyPatch((await this.location()).top, await diffPatch(this.projectRoot, now, r.tree))
+      const top = (await this.location()).top
+      const applied = await applyPatch(top, await diffPatch(this.projectRoot, now, r.tree))
       if (applied.code !== 0) return { ok: false, agentName: h.agentName, files: [], detail: applied.stderr.trim() }
       this.history.splice(idx, 1)
+      // the merge landed as a commit that is still the branch tip: take it back off the branch
+      if (h.landed && (await headCommit(this.projectRoot)) === h.landed) {
+        const parent = (await git(top, ["rev-parse", `${h.landed}^`])).stdout.trim()
+        const paths = (await rawChanges(top, parent, h.landed)).map((c) => c.path)
+        await git(top, ["update-ref", "-m", "baton undo", "HEAD", parent, h.landed])
+        await this.resetIndex(top, paths)
+      }
       const ws = this.byAgent.get(h.agentId)
       if (ws && h.prevBase) {
         ws.base = h.prevBase

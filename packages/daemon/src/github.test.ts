@@ -31,6 +31,7 @@ const api = Bun.serve({
         labels: [{ name: "ui" }],
         comments: 1,
       })
+    if (url.pathname === "/repos/acme/app" && req.method === "GET") return Response.json({ default_branch: "main" })
     if (url.pathname === "/repos/acme/app/issues/7/comments") return Response.json([{ user: { login: "dana" }, body: "Only on Safari." }])
     if (url.pathname === "/repos/acme/app/pulls" && req.method === "POST") {
       pulls.push((await req.json()) as Record<string, unknown>)
@@ -105,4 +106,47 @@ test("a PR is built from merged files only, without touching the working tree, i
   expect(sh(root, "git", "rev-parse", "--abbrev-ref", "HEAD")).toBe("main")
   expect(sh(root, "git", "diff", "--cached", "--name-only")).toBe("staged.txt")
   expect(sh(root, "git", "status", "--porcelain", "a.txt")).toBe("M a.txt")
+})
+
+test("merges that landed as commits on a branch never pushed still make a PR — with only Baton's files", async () => {
+  sh(root, "git", "reset", "-q", "--hard")
+  sh(root, "git", "clean", "-fdq")
+  sh(root, "git", "checkout", "-q", "-b", "feat") // no upstream
+  writeFileSync(join(root, "keep.txt"), "user's own commit\n")
+  sh(root, "git", "-c", "user.email=u@x", "-c", "user.name=U", "commit", "-qam", "user work")
+  // workspace.merge = "commit": the merged a.txt is committed, the checkout is clean
+  writeFileSync(join(root, "a.txt"), "one\nthree\n")
+  sh(root, "git", "-c", "user.email=u@x", "-c", "user.name=U", "commit", "-qam", "baton: codex-1 — task")
+  expect(sh(root, "git", "status", "--porcelain")).toBe("")
+  rt.emit({ type: "workspace.merge", data: { status: "merged", files: ["a.txt"] } }, "w1")
+  const plan = await planPr(rt, "Committed merges")
+  expect(plan.files).toEqual(["a.txt"])
+  expect(plan.base).toBe("main")
+  const headBefore = sh(root, "git", "rev-parse", "HEAD")
+  const r = await openPr(rt, "Committed merges")
+  expect(r.files).toEqual(["a.txt"])
+  expect(sh(bare, "git", "show", `${plan.branch}:a.txt`)).toBe("one\nthree")
+  // the user's unrelated unpushed commit is not in the PR
+  expect(sh(bare, "git", "diff", "--name-only", "main", plan.branch)).toBe("a.txt")
+  expect(sh(bare, "git", "log", "-1", "--format=%s", plan.branch)).toBe("Committed merges")
+  expect(sh(root, "git", "rev-parse", "HEAD")).toBe(headBefore)
+})
+
+test("a PR built on unpushed commits that aren't Baton merges says so", async () => {
+  // continues on "feat" from the previous test (a user commit + a Baton merge commit, both unpushed);
+  // forget the remote-tracking refs so no fork point can be found locally: the PR commit sits on HEAD
+  const main = sh(root, "git", "rev-parse", "refs/remotes/origin/main")
+  sh(root, "git", "update-ref", "-d", "refs/remotes/origin/main")
+  try {
+    writeFileSync(join(root, "a.txt"), "one\nthree\nfour\n") // a fresh, uncommitted merge
+    const plan = await planPr(rt, "On top of HEAD")
+    expect(plan.fork).toBeUndefined()
+    const r = await openPr(rt, "On top of HEAD")
+    expect(sh(bare, "git", "rev-parse", `${plan.branch}^`)).toBe(sh(root, "git", "rev-parse", "HEAD"))
+    expect(r.warning).toContain("user work")
+    expect(r.warning).not.toContain("baton: codex-1")
+    expect(r.warning).not.toContain("On top of HEAD")
+  } finally {
+    sh(root, "git", "update-ref", "refs/remotes/origin/main", main)
+  }
 })

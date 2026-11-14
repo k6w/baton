@@ -64,8 +64,8 @@ describe("WorkspaceManager", () => {
     expect(r?.files.map((f) => f.path)).toEqual(["new.ts"])
   })
 
-  test("refresh reports changed files; merge applies them to the working tree only", async () => {
-    const wm = new WorkspaceManager(root, cfg(), "run_x")
+  test("merge = working-tree: refresh reports changed files; merge applies them to the working tree only", async () => {
+    const wm = new WorkspaceManager(root, cfg({ merge: "working-tree" }), "run_x")
     const ws = await wm.create("a1", "codex-1", "worktree")
     writeFileSync(join(ws.path, "README.md"), "# demo\n\nthe fastest way\n")
     writeFileSync(join(ws.path, "new.ts"), "export {}\n")
@@ -367,12 +367,49 @@ describe("WorkspaceManager", () => {
     expect((await wm.refresh("a1"))?.files).toEqual([])
   })
 
+  test("merge lands as a commit on the user's branch, without the user's unrelated uncommitted work", async () => {
+    const head = (await git(root, ["rev-parse", "HEAD"])).stdout.trim()
+    const wm = new WorkspaceManager(root, cfg(), "run_x")
+    const ws = await wm.create("a1", "codex-1", "worktree")
+    writeFileSync(join(root, "README.md"), "# demo\n\nuser wip\n") // unrelated, uncommitted
+    writeFileSync(join(root, "notes.txt"), "user notes\n") // unrelated, untracked
+    writeFileSync(join(ws.path, "a.ts"), "export const a = 'agent'\n")
+    writeFileSync(join(ws.path, "new.ts"), "export {}\n")
+    const m = await wm.merge("a1", { label: "fix the thing" })
+    expect(m.status).toBe("merged")
+    expect((await git(root, ["log", "-1", "--format=%s"])).stdout.trim()).toBe("baton: codex-1 — fix the thing")
+    expect((await git(root, ["rev-parse", "HEAD^"])).stdout.trim()).toBe(head)
+    expect(m.commit).toBe((await git(root, ["rev-parse", "HEAD"])).stdout.trim())
+    expect((await git(root, ["diff", "--name-only", "HEAD^", "HEAD"])).stdout.trim().split("\n").sort()).toEqual(["a.ts", "new.ts"])
+    // only the user's own changes are left uncommitted; nothing of the agent's is staged or dirty
+    const status = (await git(root, ["status", "--porcelain"])).stdout.trimEnd().split("\n").sort()
+    expect(status).toEqual([" M README.md", "?? notes.txt"])
+    // undo takes the commit back off the branch
+    expect((await wm.undoMerge()).ok).toBe(true)
+    expect((await git(root, ["rev-parse", "HEAD"])).stdout.trim()).toBe(head)
+    expect(readFileSync(join(root, "a.ts"), "utf8")).toBe("export const a = 1\nexport const b = 2\nexport const c = 3\n")
+    expect(existsSync(join(root, "new.ts"))).toBe(false)
+    expect((await git(root, ["status", "--porcelain"])).stdout.trimEnd().split("\n").sort()).toEqual([" M README.md", "?? notes.txt"])
+  })
+
+  test("merge is left uncommitted when the user has uncommitted edits in the same file", async () => {
+    const wm = new WorkspaceManager(root, cfg(), "run_x")
+    const ws = await wm.create("a1", "codex-1", "worktree")
+    writeFileSync(join(ws.path, "a.ts"), "export const a = 10\nexport const b = 2\nexport const c = 3\n")
+    writeFileSync(join(root, "a.ts"), "export const a = 1\nexport const b = 2\nexport const c = 30\n")
+    const m = await wm.merge("a1")
+    expect(m.status).toBe("merged")
+    expect(m.detail).toContain("uncommitted")
+    expect((await git(root, ["log", "--oneline"])).stdout.trim().split("\n").length).toBe(1)
+    expect(readFileSync(join(root, "a.ts"), "utf8")).toBe("export const a = 10\nexport const b = 2\nexport const c = 30\n")
+  })
+
   test("no conflict warning for a change that is already in the other worker's base", async () => {
     const lines = (o: Record<number, string> = {}) => `${Array.from({ length: 8 }, (_, i) => o[i] ?? `line ${i}`).join("\n")}\n`
     writeFileSync(join(root, "f.txt"), lines())
     await git(root, ["add", "-A"])
     await git(root, ["commit", "-q", "-m", "f"])
-    const wm = new WorkspaceManager(root, cfg(), "run_x")
+    const wm = new WorkspaceManager(root, cfg({ merge: "working-tree" }), "run_x")
     const w1 = await wm.create("a1", "codex-1", "worktree")
     writeFileSync(join(w1.path, "f.txt"), lines({ 1: "one" }))
     expect((await wm.merge("a1")).status).toBe("merged")

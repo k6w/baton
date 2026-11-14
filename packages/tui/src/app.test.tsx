@@ -44,7 +44,7 @@ afterAll(async () => {
   await daemon?.stop()
 })
 
-async function mount(width: number, height: number, prefs: Record<string, unknown> = {}) {
+async function mount(width: number, height: number, prefs: Record<string, unknown> = {}, render: { kittyKeyboard?: boolean } = {}) {
   const remote = (await client.call("config.get", {})).config as ReturnType<typeof loadConfig>["config"]
   const config = { ...remote, ui: { ...remote.ui, fps: 120, ...prefs } } as typeof remote
   const ui = createUiState({ client, run: live.state, config, theme: loadTheme(config.ui.theme, { appearance: "dark" }), persist: false })
@@ -60,7 +60,7 @@ async function mount(width: number, height: number, prefs: Record<string, unknow
         />
       </UiContext.Provider>
     ),
-    { width, height },
+    { width, height, ...render },
   )
   return {
     t,
@@ -189,6 +189,65 @@ describe("TUI", () => {
     await until(() => live.state.bus.some((b) => b.from === "user" && b.body === "pong"))
     f = await m.frame()
     expect(f).toContain("codex")
+    m.dispose()
+  })
+
+  test("orchestrator input is multi-line: shift+enter / alt+enter / ctrl+j add a row, enter sends", async () => {
+    const m = await mount(120, 40, {}, { kittyKeyboard: true })
+    await m.frame()
+    const long = "word ".repeat(60).trim() // wraps over several rows
+    await m.t.mockInput.typeText(long)
+    m.t.mockInput.pressEnter({ shift: true })
+    await m.t.mockInput.typeText("second paragraph")
+    m.t.mockInput.pressEnter({ meta: true })
+    await m.t.mockInput.typeText("third")
+    m.t.mockInput.pressEnter({ shift: true })
+    await m.t.mockInput.typeText("fourth")
+    const f = await m.frame()
+    expect(m.ui.input()).toBe(`${long}\nsecond paragraph\nthird\nfourth`)
+    expect(f).toContain("second paragraph")
+    expect(f).toContain("third")
+    // enter sends (to an agent, so the demo lead doesn't spawn more workers) and clears the box
+    m.ui.setInput("@codex-1 multiline-ping")
+    await m.frame()
+    m.t.mockInput.pressEnter()
+    await m.frame()
+    expect(m.ui.input()).toBe("")
+    await until(() => live.state.bus.some((b) => b.from === "user" && b.body === "multiline-ping"))
+    m.dispose()
+  })
+
+  test("orchestrator input caps at 8 rows and the history still shows above it", async () => {
+    const m = await mount(120, 40, {}, { kittyKeyboard: true })
+    await m.frame()
+    for (let i = 0; i < 14; i++) {
+      await m.t.mockInput.typeText(`line${i}`)
+      m.t.mockInput.pressEnter({ shift: true })
+    }
+    await m.t.mockInput.typeText("last")
+    const f = await m.frame()
+    const rows = f.split("\n")
+    // the box scrolls internally: the newest line is visible, the oldest is not
+    expect(f).toContain("last")
+    expect(f).not.toContain("line0")
+    expect(rows.filter((r) => /line\d|last/.test(r)).length).toBeLessThanOrEqual(8)
+    expect(f).toContain("orchestrator")
+    m.dispose()
+  })
+
+  test("PgUp/PgDn while typing scroll the orchestrator history (not the grid)", async () => {
+    if (!live.state.orchestratorId) await client.submit("hello")
+    await until(() => !!live.state.orchestratorId)
+    const m = await mount(120, 30)
+    for (let i = 0; i < 10; i++) await m.frame()
+    expect(m.ui.orchScroll.current).toBeDefined()
+    const before = await m.frame()
+    const page = m.ui.page()
+    m.t.mockInput.pressKey("PAGE_UP")
+    const after = await m.frame()
+    expect(m.ui.page()).toBe(page)
+    expect(after).not.toBe(before)
+    m.t.mockInput.pressKey("PAGE_DOWN")
     m.dispose()
   })
 
@@ -513,4 +572,51 @@ test("agent messages render Markdown (no raw ** or backticks on screen)", async 
   expect(f).not.toContain("`POST")
   expect(f).not.toContain("## Done")
   m.dispose()
+})
+
+describe("sent messages stay visible in the orchestrator pane", () => {
+  test("a message appears at once as a user line, multi-line preserved, and survives the daemon echo once", async () => {
+    const m = await mount(120, 40, {}, { kittyKeyboard: true })
+    await m.frame()
+    await m.t.mockInput.typeText("first line of ask")
+    m.t.mockInput.pressEnter({ shift: true })
+    await m.t.mockInput.typeText("second line of ask")
+    m.t.mockInput.pressEnter()
+    const f = await m.frame()
+    expect(f).toContain("> first line of ask")
+    expect(f).toContain("second line of ask")
+    expect(m.ui.sends().some((s) => s.text === "first line of ask\nsecond line of ask")).toBe(true)
+    m.dispose()
+  })
+
+  test("queued messages are marked in the history and pinned above the input; steering is marked too", async () => {
+    const m = await mount(120, 40)
+    await m.frame()
+    m.ui.addSend({ text: "wait your turn please", mode: "queued" })
+    let f = await m.frame()
+    expect(f).toContain("wait your turn please")
+    expect(f).toContain("◌ queued — waits")
+    expect(f).toContain("1 queued — next: wait your turn please")
+    m.dispose()
+
+    if (!live.state.orchestratorId) await client.submit("hello")
+    await until(() => !!live.state.orchestratorId)
+    const id = live.state.orchestratorId
+    const m2 = await mount(120, 40)
+    const turn = Date.now() + 1e9 // a "current turn" that never ends: the lead is busy with it
+    const lead = live.state.agents.get(id!)!
+    const prev = lead.turnStartedAt
+    lead.turnStartedAt = turn
+    m2.ui.addSend({ text: "change course now", mode: "steering", turn })
+    m2.ui.bump()
+    f = await m2.frame()
+    expect(f).toContain("change course now")
+    expect(f).toContain("↳ steering")
+    lead.turnStartedAt = prev // the turn is over: plain
+    m2.ui.bump()
+    f = await m2.frame()
+    expect(f).toContain("change course now")
+    expect(f).not.toContain("↳ steering")
+    m2.dispose()
+  })
 })

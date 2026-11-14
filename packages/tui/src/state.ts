@@ -117,6 +117,19 @@ export interface Toast {
   level: "info" | "warn" | "error"
 }
 
+/** A message the user sent from the main input, tracked locally: the daemon only echoes it once a turn starts. */
+export interface Send {
+  id: number
+  text: string
+  ts: number
+  /** "queued": waits for the agent's current turn · "steering": injected into it · "sent": delivered to an idle agent. */
+  mode: "queued" | "steering" | "sent"
+  /** Steering only: the turn it was injected into (plain once that turn is over). */
+  turn?: number
+  /** Leading @mentions (direct messages are not echoed into the lead's feed, so they are never matched). */
+  to?: string[]
+}
+
 export interface UiState {
   client: BatonClient | undefined
   run: RunState
@@ -151,6 +164,8 @@ export interface UiState {
   /** Set by the zoom view: runs zoom.* keymap commands (search, copy, …). */
   zoomAction: Accessor<((id: string) => void) | undefined>
   setZoomAction: (fn: ((id: string) => void) | undefined) => void
+  /** Set by the orchestrator pane: scrolls its history (dir −1 up / +1 down, by a page). PgUp/PgDn while typing. */
+  orchScroll: { current?: (dir: -1 | 1) => void }
   /** Agent shown in the peek overlay. */
   peekAgent: Accessor<string | null>
   setPeekAgent: Setter<string | null>
@@ -163,6 +178,10 @@ export interface UiState {
   toast: (text: string, level?: Toast["level"]) => void
   input: Accessor<string>
   setInput: Setter<string>
+  /** Messages sent from the main input, shown in the orchestrator pane until the daemon's own echo takes over. */
+  sends: Accessor<Send[]>
+  addSend: (s: Omit<Send, "id" | "ts">) => number
+  dropSend: (id: number) => void
   keymap: Keymap
   verbs: string[]
   spinnerFrames: Accessor<string[]>
@@ -260,6 +279,14 @@ export function createUiState(opts: {
   const [zoomAction, setZoomActionSig] = createSignal<((id: string) => void) | undefined>(undefined)
   const [toasts, setToasts] = createSignal<Toast[]>([])
   const [input, setInput] = createSignal("")
+  const [sends, setSends] = createSignal<Send[]>([])
+  let sendId = 0
+  const addSend = (s: Omit<Send, "id" | "ts">) => {
+    const id = ++sendId
+    setSends((l) => [...l.slice(-49), { ...s, id, ts: Date.now() }])
+    return id
+  }
+  const dropSend = (id: number) => setSends((l) => l.filter((x) => x.id !== id))
   const [imageSupport, setImageSupport] = createSignal(false)
   const [termFocused, setTermFocused] = createSignal(true)
 
@@ -364,11 +391,15 @@ export function createUiState(opts: {
     capturing,
     setCapturing,
     zoomAction,
+    orchScroll: {},
     setZoomAction: (fn) => setZoomActionSig(() => fn),
     toasts,
     toast,
     input,
     setInput,
+    sends,
+    addSend,
+    dropSend,
     keymap: new Keymap(opts.config.keys),
     verbs: opts.config.ui.verbs?.length ? opts.config.ui.verbs : DEFAULT_VERBS,
     spinnerFrames,

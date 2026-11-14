@@ -6,14 +6,16 @@
 
 import type { FeedItem } from "@batonsh/kernel"
 import { formatCost } from "@batonsh/kernel"
-import type { InputRenderable } from "@opentui/core"
-import { createEffect, createMemo, createSignal, Show } from "solid-js"
+import type { ScrollBoxRenderable, TextareaRenderable } from "@opentui/core"
+import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js"
 import { agentLook, whoFn } from "../agent-style.ts"
 import { AUTONOMY_INFO, currentAutonomy } from "../autonomy.ts"
 import { type Completion, completions } from "../completion.ts"
 import { useUi } from "../context.ts"
 import { clip, type Line, renderFeed, type Seg, statusLine, width as sw, wrap } from "../lines.ts"
+import { pendingSends, type SendView } from "../outbox.ts"
 import { Frame, innerSize } from "../ui/Frame.tsx"
+import { MessageInput, setMessage } from "../ui/MessageInput.tsx"
 import { segs, toStyled } from "../ui/styled.ts"
 import { Txt } from "../ui/Txt.tsx"
 
@@ -33,7 +35,9 @@ export function Orchestrator(props: OrchestratorProps) {
   const [selected, setSelected] = createSignal(0)
   const history: string[] = []
   let historyIdx = -1
-  let inputRef: InputRenderable | undefined
+  let inputRef: TextareaRenderable | undefined
+  let scroll: ScrollBoxRenderable | undefined
+  const [inputRows, setInputRows] = createSignal(1)
 
   // only "changes" when the lead's own events change (not on every worker event)
   const orchVer = createMemo(() => {
@@ -92,6 +96,10 @@ export function Orchestrator(props: OrchestratorProps) {
 
   const autonomy = () => currentAutonomy(ui)
   const yolo = () => autonomy() === "yolo"
+
+  onCleanup(() => {
+    ui.orchScroll.current = undefined
+  })
 
   const inner = () => innerSize(props.width, props.height, ui.prefs.border, 1, ui.prefs.frame)
 
@@ -156,13 +164,38 @@ export function Orchestrator(props: OrchestratorProps) {
     return items
   })
 
+  /** What I sent that the daemon hasn't echoed yet (or never will: direct messages, steered input). */
+  const sent = createMemo<SendView[]>(() => {
+    threadKey()
+    const id = ui.run.orchestratorId
+    return pendingSends(ui.sends(), id ? ui.run.feed(id).items : [], id ? ui.run.agents.get(id)?.turnStartedAt : undefined)
+  })
+
+  /** One of my messages as a user line (full text, multi-line kept) with its delivery marker underneath. */
+  const sentLines = (v: SendView, width: number): Line[] => {
+    const t = ui.theme()
+    const to = v.send.to ? `→ ${v.send.to.map((n) => `@${n}`).join(" ")} ` : ""
+    const lines = wrap(v.send.text, Math.max(4, width - 2 - sw(to)))
+    const out: Line[] = lines.slice(0, 12).map((l, i) => ({
+      segs: [
+        { text: i === 0 ? "> " : "  ", fg: t.textMuted },
+        ...(i === 0 && to ? [{ text: to, fg: t.accent }] : []),
+        { text: l, fg: v.marker === "queued" ? t.textMuted : t.text, bold: v.marker !== "queued" },
+      ],
+    }))
+    if (lines.length > 12) out.push({ segs: [{ text: `  … ${lines.length - 12} more lines`, fg: t.textSubtle }] })
+    if (v.marker === "queued") out.push({ segs: [{ text: "  ◌ queued — waits for the current turn to finish", fg: t.warning }] })
+    else if (v.marker === "steering") out.push({ segs: [{ text: "  ↳ steering — injected into the current turn", fg: t.info }] })
+    return out
+  }
+
   const body = createMemo(() => {
     const t = ui.theme()
     const { width } = inner()
     const o = orch()
     const look = o ? agentLook(ui, o).look : "claude"
     const lines: Line[] = [...infoLines()]
-    const feed = renderFeed(thread().slice(-80), {
+    const ctx = {
       theme: t,
       width,
       look,
@@ -172,9 +205,21 @@ export function Orchestrator(props: OrchestratorProps) {
       maxOutputLines: 2,
       who: whoFn(ui),
       me: ui.me,
-    })
-    lines.push(...feed)
-    if (!o && thread().length === 0) {
+    }
+    // my own sends interleave by time; still-queued ones sit last (they happen after everything shown)
+    const items = thread().slice(-400)
+    const mine = sent()
+    const done = mine.filter((v) => v.marker !== "queued")
+    let from = 0
+    for (const v of done) {
+      let to = from
+      while (to < items.length && items[to]!.ts <= v.send.ts) to++
+      lines.push(...renderFeed(items.slice(from, to), ctx), ...sentLines(v, width))
+      from = to
+    }
+    lines.push(...renderFeed(items.slice(from), ctx))
+    for (const v of mine) if (v.marker === "queued") lines.push(...sentLines(v, width))
+    if (!o && thread().length === 0 && mine.length === 0) {
       lines.push({ segs: [{ text: "" }] })
       for (const l of wrap(
         "Type a task for the orchestrator, @name to talk to an agent directly, or /spawn codex 3 to start agents. ctrl+p for everything else.",
@@ -182,15 +227,11 @@ export function Orchestrator(props: OrchestratorProps) {
       ))
         lines.push({ segs: [{ text: l, fg: t.textMuted }] })
     }
-    const rows = bodyRows()
-    const visible = lines.slice(-rows)
-    // bottom-align: pad above so the newest line sits right above the status/input rows
-    while (visible.length < rows) visible.unshift({ segs: [{ text: "" }] })
-    return visible
+    return lines
   })
 
   function bodyRows() {
-    return Math.max(1, inner().height - 1 - Math.min(6, suggestions().length) - status().length)
+    return Math.max(1, inner().height - inputRows() - Math.min(6, suggestions().length) - status().length)
   }
 
   function status(): Line[] {
@@ -217,6 +258,16 @@ export function Orchestrator(props: OrchestratorProps) {
         ],
       })
     }
+    const queued = sent().filter((v) => v.marker === "queued")
+    if (queued.length) {
+      out.push({
+        segs: [
+          { text: "◌ ", fg: t.warning, bold: true },
+          { text: `${queued.length} queued`, fg: t.warning, bold: true },
+          { text: ` — next: ${clip(queued[0]!.send.text.split("\n")[0]!, Math.max(8, inner().width - 24))}`, fg: t.textMuted },
+        ],
+      })
+    }
     if (o && o.status !== "ready") {
       const busyWorkers = workers().filter((w) => w.status === "busy").length
       out.push(
@@ -236,19 +287,13 @@ export function Orchestrator(props: OrchestratorProps) {
 
   const applyCompletion = (c: Completion) => {
     ui.setInput(c.replace)
-    if (inputRef) {
-      inputRef.value = c.replace
-      inputRef.cursorOffset = c.replace.length
-    }
+    setMessage(inputRef, c.replace)
   }
 
   // programmatic input changes (prefill from m / palette "Message: …") → the input element
   createEffect(() => {
     const v = ui.input()
-    if (inputRef && inputRef.value !== v) {
-      inputRef.value = v
-      inputRef.cursorOffset = v.length
-    }
+    setMessage(inputRef, v)
   })
 
   const submit = (value: string) => {
@@ -258,7 +303,7 @@ export function Orchestrator(props: OrchestratorProps) {
     if (history.length > 200) history.length = 200
     historyIdx = -1
     ui.setInput("")
-    if (inputRef) inputRef.value = ""
+    setMessage(inputRef, "")
     props.onSubmit(text)
   }
 
@@ -283,11 +328,16 @@ export function Orchestrator(props: OrchestratorProps) {
         return
       }
     }
-    if (key.name === "up" && history.length) {
+    // multi-line text: up/down move the cursor between rows; history only from the first/last row
+    const cur = inputRef?.visualCursor
+    const rowsTotal = inputRef?.virtualLineCount ?? 1
+    const atTop = !cur || cur.visualRow <= 0
+    const atBottom = !cur || cur.visualRow >= rowsTotal - 1
+    if (key.name === "up" && history.length && atTop) {
       historyIdx = Math.min(history.length - 1, historyIdx + 1)
       applyCompletion({ replace: history[historyIdx]!, label: "", detail: "" })
       key.preventDefault?.()
-    } else if (key.name === "down" && historyIdx >= 0) {
+    } else if (key.name === "down" && historyIdx >= 0 && atBottom) {
       historyIdx--
       applyCompletion({ replace: historyIdx >= 0 ? history[historyIdx]! : "", label: "", detail: "" })
       key.preventDefault?.()
@@ -300,32 +350,27 @@ export function Orchestrator(props: OrchestratorProps) {
   }
 
   const inputEl = () => (
-    <box height={1} flexDirection="row">
+    <box height={inputRows()} flexDirection="row">
       <Txt value={prompt()} />
-      <input
-        ref={(r: InputRenderable) => {
+      <MessageInput
+        ref={(r) => {
           inputRef = r
         }}
-        flexGrow={1}
+        cols={Math.max(1, props.width - (props.slim ? 2 : 6))}
+        onRows={setInputRows}
         focused={props.focused && ui.overlay() === null && !ui.overlayClosing() && !ui.replay}
         placeholder={
           ui.replay
             ? "replay — read only · space play/pause · esc back"
             : orch()
-              ? "message the orchestrator · @agent · /command"
+              ? "message the orchestrator · @agent · /command · shift+enter newline"
               : "what should we build? · @agent · /spawn codex 3"
         }
-        backgroundColor="transparent"
-        focusedBackgroundColor="transparent"
-        textColor={ui.theme().text}
-        focusedTextColor={ui.theme().text}
-        placeholderColor={ui.theme().textSubtle}
-        cursorColor={ui.theme().primary}
-        onInput={(v: string) => {
+        onInput={(v) => {
           ui.setInput(v)
           setSelected(0)
         }}
-        onSubmit={((v: unknown) => submit(typeof v === "string" ? v : (inputRef?.value ?? ""))) as never}
+        onSubmit={submit}
         onKeyDown={onKey}
       />
     </box>
@@ -392,7 +437,7 @@ export function Orchestrator(props: OrchestratorProps) {
   }
 
   const slim = () => (
-    <box height={2 + Math.min(6, suggestions().length)} width={props.width} flexDirection="column" backgroundColor={ui.theme().background}>
+    <box height={1 + inputRows() + Math.min(6, suggestions().length)} width={props.width} flexDirection="column" backgroundColor={ui.theme().background}>
       <Txt height={1} value={swarmHeader()} />
       {suggestionBox()}
       {inputEl()}
@@ -417,9 +462,19 @@ export function Orchestrator(props: OrchestratorProps) {
         ]}
         right={headerRight()}
       >
-        <box height={bodyRows()} overflow="hidden">
-          <Txt height={bodyRows()} wrapMode="none" value={toStyled(body(), inner().width)} />
-        </box>
+        <scrollbox
+          ref={(r: ScrollBoxRenderable) => {
+            scroll = r
+            ui.orchScroll.current = (dir) => scroll?.scrollBy(dir * Math.max(1, bodyRows() - 1))
+          }}
+          height={bodyRows()}
+          flexShrink={0}
+          stickyScroll
+          stickyStart="bottom"
+          scrollY
+        >
+          <Txt value={toStyled(body(), inner().width - 1)} />
+        </scrollbox>
         <Show when={status().length > 0}>
           <Txt height={status().length} wrapMode="none" value={toStyled(status(), inner().width)} />
         </Show>

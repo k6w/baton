@@ -30,6 +30,7 @@ import { ZoomView } from "./components/ZoomView.tsx"
 import { useUi } from "./context.ts"
 import type { KeyContext } from "./keymap.ts"
 import { loadOnboarding, saveOnboarding } from "./onboarding.ts"
+import { canSteer, mentionsOf, notDelivered } from "./outbox.ts"
 import type { Prefs } from "./state.ts"
 import { buildSystemTheme } from "./system-theme.ts"
 
@@ -644,9 +645,30 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
 
   const submit = (text: string) => {
     if (localCommand(text)) return
-    void call(ui.client?.submit(text), (r) => {
-      if (r.output) ui.toast(r.output)
-    })
+    // a message (not a /command or !interrupt): show it in the pane right away, with its delivery state
+    let sendId: number | undefined
+    if (!/^[/!]/.test(text.trim()) && !ui.replay) {
+      const id = ui.run.orchestratorId
+      const to = mentionsOf(text.trim())
+      const lead = to ? undefined : id ? ui.run.agents.get(id) : undefined
+      const busy = lead?.status === "busy" || lead?.status === "awaiting_approval"
+      sendId = ui.addSend({
+        text: text.trim(),
+        ...(to ? { to } : {}),
+        mode: !busy ? "sent" : canSteer(lead?.adapter) ? "steering" : "queued",
+        ...(busy ? { turn: lead?.turnStartedAt } : {}),
+      })
+    }
+    void call(
+      ui.client?.submit(text).catch((e) => {
+        if (sendId !== undefined) ui.dropSend(sendId) // never delivered: don't leave it in the history
+        throw e
+      }),
+      (r) => {
+        if (sendId !== undefined && notDelivered(r)) ui.dropSend(sendId)
+        if (r.output) ui.toast(r.output)
+      },
+    )
   }
 
   // ───────────────────────────── keyboard ─────────────────────────────
@@ -687,6 +709,12 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
     contexts.push("global")
     // while completions are open, tab/up/down belong to the input
     if (typing && ["tab", "up", "down"].includes(key.name) && completions(ui.input(), ui.run, ui.config, ui.client).length > 0) return
+    // typing in the orchestrator: PgUp/PgDn scroll its history (like zoom), not the agent grid
+    if (typing && (key.name === "pageup" || key.name === "pagedown") && ui.orchScroll.current) {
+      key.preventDefault?.()
+      ui.orchScroll.current(key.name === "pageup" ? -1 : 1)
+      return
+    }
     const id = ui.keymap.resolve(key, contexts)
     if (!id) return
     // while typing, only fire global commands bound to modifier / special keys

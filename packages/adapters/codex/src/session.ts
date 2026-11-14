@@ -109,7 +109,8 @@ export class CodexSession implements AgentSession {
       await this.peer.request("initialize", init, REQUEST_TIMEOUT_MS)
       this.peer.notify("initialized")
       await this.openThread(modelProvider)
-      this.translator.setStatus("ready")
+      // not a blind "ready": a request codex raised while the thread opened is still awaiting an answer
+      this.translator.syncStatus()
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
       this.ctx.emit({ type: "error", data: { message: `codex failed to start: ${message}`, fatal: true } })
@@ -188,7 +189,7 @@ export class CodexSession implements AgentSession {
       return
     }
     if (msg.method !== undefined) {
-      if (this.translator.isForeign(msg.params)) {
+      if (this.translator.isForeign(msg.params) && msg.method !== "serverRequest/resolved") {
         this.ctx.log("debug", `codex: ignoring ${msg.method} for another thread`)
         return
       }

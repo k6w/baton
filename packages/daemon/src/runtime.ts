@@ -60,6 +60,9 @@ export interface AgentRuntime {
   lastEventAt: number
   lastToolTitle?: string
   toolRepeats: number
+  /** The latest repeat of `lastToolTitle` and its output: a different output is progress. */
+  loopCallId?: string
+  loopOutput?: string
   flagged?: "stalled" | "looping"
   lastAssistantText: string
   turnDiff: { added: number; removed: number }
@@ -69,6 +72,14 @@ export interface AgentRuntime {
   failReason?: string
   /** Acceptance check outcome to append to the next result. */
   acceptanceNote?: string
+  /** A review verdict submitted this turn: goes out with the reviewer's own result (once). */
+  reviewNote?: string
+  /** The last non-empty summary of any turn (a follow-up turn without one falls back to it). */
+  lastSummary?: string
+  /** Approval answers decided before the session existed (asked during adapter.start): sent once it does. */
+  earlyAnswers?: { requestId: string; optionId: string | null; by: "user" | "policy" | "timeout" | "cancelled"; who?: string }[]
+  /** Turn ended, result not out yet (acceptance check running): messages wait for the result. */
+  finishing?: boolean
   /** Failed acceptance checks in a row (the worker gets two more tries). */
   acceptanceTries?: number
   busy: boolean
@@ -95,6 +106,69 @@ const LIVE_OUTPUT_MS = 250
 
 type ToolUpdate = Extract<AgentEvent, { type: "tool.update" }>["data"]
 
+/** What a turn said and changed, captured when it ends (the result may go out later). */
+interface TurnSnapshot {
+  text: string
+  diff: { added: number; removed: number }
+}
+
+/** The shell command of a tool call (its input when given, else its title). */
+export function commandOf(call: { title: string; rawInput?: unknown }): string {
+  const raw = call.rawInput as { command?: unknown; cmd?: unknown } | undefined
+  const c = raw && typeof raw === "object" ? (raw.command ?? raw.cmd) : undefined
+  if (typeof c === "string" && c.trim()) return c.trim()
+  if (Array.isArray(c) && c.length) return c.map(String).join(" ")
+  return call.title
+    .replace(/^(?:Run|Ran|Running)\s+/, "")
+    .replace(/^Bash\((.*)\)$/s, "$1")
+    .trim()
+}
+
+const READ_ONLY = new Set([
+  "cd",
+  "ls",
+  "pwd",
+  "cat",
+  "head",
+  "tail",
+  "less",
+  "wc",
+  "rg",
+  "grep",
+  "egrep",
+  "find",
+  "fd",
+  "tree",
+  "stat",
+  "file",
+  "which",
+  "echo",
+  "true",
+  "realpath",
+  "dirname",
+  "basename",
+])
+const READ_ONLY_GIT = new Set(["status", "diff", "log", "show", "branch", "rev-parse", "ls-files", "blame"])
+
+/** Navigation / inspection only (cd, ls, cat, rg, git status|diff|log …): never a sign of a loop. */
+export function isReadOnlyCommand(command: string): boolean {
+  let cmd = command.trim()
+  const wrapped = /^(?:\/\S*\/)?(?:ba|z)?sh\s+-l?c\s+(['"])([\s\S]*)\1$/.exec(cmd)
+  if (wrapped) cmd = wrapped[2] as string
+  const parts = cmd
+    .split(/&&|\|\||;|\||\n/)
+    .map((p) => p.trim().replace(/^(?:\w+=\S*\s+)+/, ""))
+    .filter(Boolean)
+  if (!parts.length) return false
+  return parts.every((p) => {
+    const [w, sub, ...rest] = p.split(/\s+/)
+    if (!w) return true
+    if (w === "git") return !!sub && READ_ONLY_GIT.has(sub)
+    if (w === "sed") return sub === "-n" && !rest.some((a) => a.startsWith("-i"))
+    return READ_ONLY.has(w)
+  })
+}
+
 /**
  * A running command's output so far — nothing else. Agents send one per chunk with all the
  * output yet; storing each made logs of gigabytes, so these are shown live and not stored.
@@ -120,6 +194,8 @@ export interface InboxMessage {
   ts: number
   /** Doesn't start a turn or end a wait: read along with the next real message (acks, chatter). */
   quiet?: boolean
+  /** Ends any wait (wait_for_results) right away, whatever it waits for (e.g. a worker blocked on an approval). */
+  urgent?: boolean
 }
 
 export interface RuntimeOptions {
@@ -479,6 +555,7 @@ export class Runtime {
         },
       )
     } catch (e) {
+      rt.earlyAnswers = undefined
       const message = e instanceof Error ? e.message : String(e)
       this.emit({ type: "error", data: { message: `failed to start ${name}: ${message}`, fatal: true } }, agentId)
       rt.closing = true
@@ -486,6 +563,9 @@ export class Runtime {
       await this.onExited(rt, message)
       throw new Error(`failed to start ${name}: ${message}`)
     }
+    // approvals answered while the adapter was starting: deliver them now that there is a session
+    for (const a of rt.earlyAnswers?.splice(0) ?? []) await this.resolvePermission(agentId, a.requestId, a.optionId, a.by, a.who)
+    rt.earlyAnswers = undefined
     if (this.state.agents.get(agentId)?.status === "starting") this.emit({ type: "agent.status", data: { status: "ready" } }, agentId)
     if (params.prompt) await this.promptAgent(agentId, params.prompt, { from: params.parentId ?? "user", expectResult: !!params.parentId })
     // messages that arrived while the agent was starting
@@ -523,10 +603,13 @@ export class Runtime {
     rt.lastEventAt = stored.ts
     if (rt.flagged === "stalled") rt.flagged = undefined
     if (stored.type === "tool.call") {
-      this.loopCheck(rt, stored.data.title)
+      this.loopCheck(rt, stored.data)
       if (stored.data.status === "pending" || stored.data.status === "in_progress") rt.openTools.add(stored.data.toolCallId)
-    } else if (stored.type === "tool.update" && (stored.data.status === "completed" || stored.data.status === "failed"))
-      rt.openTools.delete(stored.data.toolCallId)
+    } else if (stored.type === "tool.update") {
+      const done = stored.data.status === "completed" || stored.data.status === "failed"
+      if (done) rt.openTools.delete(stored.data.toolCallId)
+      this.loopProgress(rt, stored.data, done)
+    }
     switch (stored.type) {
       case "turn.started":
         rt.busy = true
@@ -535,7 +618,10 @@ export class Runtime {
         rt.turnEdits.clear()
         break
       case "message.completed":
-        if (stored.data.role === "assistant" && stored.data.text.trim()) rt.lastAssistantText = stored.data.text
+        if (stored.data.role === "assistant" && stored.data.text.trim()) {
+          rt.lastAssistantText = stored.data.text
+          rt.lastSummary = stored.data.text
+        }
         break
       case "tool.update":
         for (const c of stored.data.content ?? [])
@@ -553,9 +639,19 @@ export class Runtime {
         this.storeLiveOutput(rt)
         {
           const outcome = stored.type === "turn.interrupted" ? "interrupted" : stored.data.stopReason === "error" ? "failed" : "ok"
-          // a worker with an acceptance check is done only when the check passes
-          if (outcome === "ok" && rt.info.acceptance && rt.resultTo.size && !rt.closing) void this.checkAcceptance(rt)
-          else this.reportResult(rt, outcome)
+          // what this turn said and changed: a follow-up turn starting meanwhile mustn't replace it
+          const snap: TurnSnapshot = { text: rt.lastAssistantText, diff: { ...rt.turnDiff } }
+          // a worker with an acceptance check is done only when the check passes; messages that
+          // arrive meanwhile wait for its result, then start a turn of their own
+          if (outcome === "ok" && rt.info.acceptance && rt.resultTo.size && !rt.closing) {
+            rt.finishing = true
+            void this.checkAcceptance(rt, snap)
+              .catch(() => {})
+              .finally(() => {
+                rt.finishing = false
+                queueMicrotask(() => this.flushInbox(rt))
+              })
+          } else this.reportResult(rt, outcome, snap)
         }
         queueMicrotask(() => this.flushInbox(rt))
         break
@@ -804,7 +900,7 @@ export class Runtime {
   }
 
   /** Send a bus message. Returns the message id; throws if nobody matches `to`. */
-  send(params: { from: string; to: string; body: string; kind?: BusKind; delivery?: Delivery; replyTo?: string }): string {
+  send(params: { from: string; to: string; body: string; kind?: BusKind; delivery?: Delivery; replyTo?: string; urgent?: boolean }): string {
     const sender = this.agents.get(params.from)
     const fromName = sender?.info.name ?? params.from
     const kind = params.kind ?? "chat"
@@ -830,7 +926,11 @@ export class Runtime {
     if (kind === "heartbeat" || kind === "progress") return messageId
     for (const r of recipients) {
       const quiet = this.isChatter(sender, r, kind, body)
-      this.deliver(r, { messageId, from: params.from, fromName, kind, body, ts: Date.now(), ...(quiet ? { quiet } : {}) }, params.delivery ?? "queue")
+      this.deliver(
+        r,
+        { messageId, from: params.from, fromName, kind, body, ts: Date.now(), ...(quiet ? { quiet } : {}), ...(params.urgent ? { urgent: true } : {}) },
+        params.delivery ?? "queue",
+      )
     }
     return messageId
   }
@@ -867,7 +967,7 @@ export class Runtime {
   }
 
   private deliver(rt: AgentRuntime, msg: InboxMessage, delivery: Delivery) {
-    if (!rt.session || rt.closing || msg.quiet) {
+    if (!rt.session || rt.closing || msg.quiet || rt.finishing) {
       rt.inbox.push(msg)
       return
     }
@@ -927,7 +1027,7 @@ export class Runtime {
   }
 
   private flushInbox(rt: AgentRuntime) {
-    if (rt.busy || rt.closing || !rt.session || rt.waiters.size > 0 || !rt.inbox.some((m) => !m.quiet)) return
+    if (rt.busy || rt.finishing || rt.closing || !rt.session || rt.waiters.size > 0 || !rt.inbox.some((m) => !m.quiet)) return
     if (this.runStopped || rt.budgetStopped) return
     if (!this.allowAutoDelivery(rt)) return
     const msgs = rt.inbox.splice(0)
@@ -965,7 +1065,7 @@ export class Runtime {
   async waitInbox(agentId: string, timeoutMs: number, until?: (inbox: InboxMessage[]) => boolean, signal?: AbortSignal): Promise<InboxMessage[]> {
     const rt = this.agents.get(agentId)
     if (!rt) return []
-    const ready = () => rt.inbox.some((m) => !m.quiet) && (!until || until(rt.inbox))
+    const ready = () => rt.inbox.some((m) => !m.quiet) && (!until || until(rt.inbox) || rt.inbox.some((m) => m.urgent))
     if (!ready()) {
       const d = deferred<void>()
       const w = () => {
@@ -1004,18 +1104,27 @@ export class Runtime {
     }
   }
 
-  private reportResult(rt: AgentRuntime, outcome: "ok" | "failed" | "interrupted") {
+  private reportResult(rt: AgentRuntime, outcome: "ok" | "failed" | "interrupted", snap?: TurnSnapshot) {
     this.collab.onResult(rt, outcome)
+    const review = rt.reviewNote
+    rt.reviewNote = undefined
     if (rt.resultTo.size === 0) return
     const targets = [...rt.resultTo]
     rt.resultTo.clear()
-    const diff = rt.turnDiff.added || rt.turnDiff.removed ? ` (+${rt.turnDiff.added} −${rt.turnDiff.removed})` : ""
-    const text = rt.failReason
+    const turnDiff = snap?.diff ?? rt.turnDiff
+    const diff = turnDiff.added || turnDiff.removed ? ` (+${turnDiff.added} −${turnDiff.removed})` : ""
+    const summary = (snap?.text ?? rt.lastAssistantText).trim()
+    // a follow-up turn that ended without a message (e.g. it only replied via send_message)
+    const fallback = rt.lastSummary?.trim() ? `(no new summary this turn — ${rt.info.name}'s last summary:)\n${rt.lastSummary.trim()}` : "(no summary)"
+    let text = rt.failReason
       ? `${rt.failReason}. It cannot work until that is resolved — give its task to a different agent (another adapter).`
-      : rt.lastAssistantText.trim() || "(no summary)"
+      : summary || fallback
+    // a review verdict travels with the reviewer's own result: the lead gets it once
+    // (a fail reason is never dropped; a summary that only repeats the verdict is)
+    if (review) text = rt.failReason || !summary || !review.includes(summary) ? `${review}\n\n${text}` : review
     const ws = this.collab.workspaces.byAgent.get(rt.info.agentId)
     const where =
-      ws?.mode === "worktree" && (rt.turnDiff.added || rt.turnDiff.removed)
+      ws?.mode === "worktree" && (turnDiff.added || turnDiff.removed)
         ? `\n[changes are in ${rt.info.name}'s own worktree — call merge("${rt.info.name}") to bring them into the project]`
         : ""
     const check = rt.acceptanceNote ? `\n${rt.acceptanceNote}` : ""
@@ -1034,14 +1143,14 @@ export class Runtime {
    * Pass → its result goes out with "acceptance ✓". Fail → the worker gets the output and two
    * more tries; after that the result goes out as failed.
    */
-  private async checkAcceptance(rt: AgentRuntime): Promise<void> {
+  private async checkAcceptance(rt: AgentRuntime, snap: TurnSnapshot): Promise<void> {
     const cmd = rt.info.acceptance as string
     const id = rt.info.agentId
     let d = this.policy.decide({ agentId: id, agentName: rt.info.name, adapter: rt.info.adapter, title: `Bash(${cmd})`, kind: "execute", detail: cmd })
     if (d === "ask") d = (await this.askUser(id, `run ${rt.info.name}'s acceptance check?`, cmd)) ? "allow" : "deny"
     if (d === "deny") {
       rt.acceptanceNote = `acceptance check \`${cmd}\` was not run (not allowed)`
-      return this.reportResult(rt, "ok")
+      return this.reportResult(rt, "ok", snap)
     }
     const toolCallId = newId("acc")
     this.emit({ type: "tool.call", data: { toolCallId, kind: "execute", name: "acceptance", title: `Acceptance: ${cmd}`, status: "in_progress" } }, id)
@@ -1068,7 +1177,7 @@ export class Runtime {
     if (ok) {
       rt.acceptanceTries = 0
       rt.acceptanceNote = `acceptance ✓ \`${cmd}\` passed`
-      return this.reportResult(rt, "ok")
+      return this.reportResult(rt, "ok", snap)
     }
     rt.acceptanceTries = (rt.acceptanceTries ?? 0) + 1
     if (rt.acceptanceTries <= 2) {
@@ -1084,27 +1193,60 @@ export class Runtime {
     }
     rt.acceptanceTries = 0
     rt.acceptanceNote = `acceptance ✗ \`${cmd}\` still failing (exit ${r.code ?? "timeout"}):\n${output.split("\n").slice(-15).join("\n")}`
-    this.reportResult(rt, "failed")
+    this.reportResult(rt, "failed", snap)
   }
 
-  /** Same tool call N times in a row → the agent is probably looping. */
-  private loopCheck(rt: AgentRuntime, title: string) {
+  /**
+   * The same command N times in a row with nothing changing in between → the agent is probably
+   * looping. Navigation / read-only commands (cd, ls, cat, git status …) don't count; a file edit
+   * or a repeat with different output is progress and restarts the count.
+   */
+  private loopCheck(rt: AgentRuntime, call: { toolCallId: string; kind: string; title: string; rawInput?: unknown }) {
     const n = this.config.watchdog.loop_repeats
-    if (rt.lastToolTitle === title) rt.toolRepeats++
+    const cmd = commandOf(call)
+    if (call.kind === "execute" && isReadOnlyCommand(cmd)) return
+    const key = `${call.kind}|${call.title}|${cmd}`
+    if (rt.lastToolTitle === key) rt.toolRepeats++
     else {
-      rt.lastToolTitle = title
+      rt.lastToolTitle = key
       rt.toolRepeats = 1
-      if (rt.flagged === "looping") {
-        rt.flagged = undefined
-        this.emit({ type: "agent.attention", data: { reason: "clear" } }, rt.info.agentId)
-      }
+      rt.loopOutput = undefined
+      this.clearLooping(rt)
     }
+    rt.loopCallId = call.toolCallId
     if (n > 0 && rt.toolRepeats === n) {
       rt.flagged = "looping"
-      const detail = `${title} ×${n}`
+      const shown = cmd.length > 120 ? `${cmd.slice(0, 120)}…` : cmd
+      const detail = `\`${shown}\` ×${n} with no file changes or new output`
       this.emit({ type: "agent.attention", data: { reason: "looping", detail } }, rt.info.agentId)
       this.notifyLeadAbout(rt, `${rt.info.name} may be stuck in a loop (${detail}).`)
     }
+  }
+
+  /** File changes, or a repeated command whose output differs, are progress: the loop count restarts. */
+  private loopProgress(rt: AgentRuntime, d: ToolUpdate, done: boolean) {
+    if (d.content?.some((c) => c.type === "diff")) {
+      rt.lastToolTitle = undefined
+      rt.toolRepeats = 0
+      rt.loopOutput = undefined
+      this.clearLooping(rt)
+      return
+    }
+    if (!done || d.toolCallId !== rt.loopCallId) return
+    // what the command produced — not ids, which differ on every call
+    const shown = (d.content ?? []).map((c) => (c.type === "terminal" ? [c.output, c.exitCode] : c.type === "text" ? c.text : c.type))
+    const out = JSON.stringify([d.status, d.summary ?? "", shown])
+    if (rt.loopOutput !== undefined && out !== rt.loopOutput) {
+      rt.toolRepeats = 1
+      this.clearLooping(rt)
+    }
+    rt.loopOutput = out
+  }
+
+  private clearLooping(rt: AgentRuntime) {
+    if (rt.flagged !== "looping") return
+    rt.flagged = undefined
+    this.emit({ type: "agent.attention", data: { reason: "clear" } }, rt.info.agentId)
   }
 
   /** Busy agents that went silent. Runs on the heartbeat timer (and every 30s). */
@@ -1124,17 +1266,42 @@ export class Runtime {
     }
   }
 
-  private notifyLeadAbout(rt: AgentRuntime, text: string) {
+  private notifyLeadAbout(rt: AgentRuntime, text: string, opts: { advice?: boolean; urgent?: boolean } = {}) {
     const lead = this.orchestrator()
     if (!lead || lead === rt) return
     try {
       this.send({
         from: "baton",
         to: lead.info.agentId,
-        body: `${text} Consider nudging it (send_message), interrupting, or reassigning the task.`,
+        body: opts.advice === false ? text : `${text} Consider nudging it (send_message), interrupting, or reassigning the task.`,
         kind: "system",
+        urgent: opts.urgent,
       })
     } catch {}
+  }
+
+  /** How long a worker's approval may wait before the lead is reminded (then again, a few times). */
+  approvalRemindMs = 120_000
+
+  /**
+   * A worker is blocked on an approval only the user can give: tell the lead right away (waking
+   * wait_for_results), and again while it stays pending.
+   */
+  private notifyApproval(rt: AgentRuntime, requestId: string, title: string, detail: string | undefined, round = 0) {
+    if (this.closed || rt.closing || !this.state.approvals.has(requestId)) return
+    const lead = this.orchestrator()
+    if (!lead || lead === rt) return
+    const extra = detail?.trim() && !title.includes(detail.trim()) ? `: ${detail.trim()}` : ""
+    const what = `${title}${extra}`.replace(/\s+/g, " ")
+    const ask = what.length > 300 ? `${what.slice(0, 300)}…` : what
+    const mins = Math.max(1, Math.round((round * this.approvalRemindMs) / 60_000))
+    const lead_ = round === 0 ? `${rt.info.name} is blocked waiting for approval` : `${rt.info.name} is STILL blocked waiting for approval (${mins}+ min)`
+    this.notifyLeadAbout(
+      rt,
+      `${lead_} — it asks to: ${ask} (request ${requestId}). Only the user can answer it (approvals inbox): tell them, or interrupt / reassign the task.`,
+      { advice: false, urgent: true },
+    )
+    if (round < 5) setTimeout(() => this.notifyApproval(rt, requestId, title, detail, round + 1), this.approvalRemindMs).unref?.()
   }
 
   private heartbeat() {
@@ -1165,6 +1332,7 @@ export class Runtime {
     const req = { agentId: rt.info.agentId, agentName: rt.info.name, adapter: rt.info.adapter, title, kind, detail }
     const decision = this.policy.decide(req)
     if (decision === "ask") {
+      this.notifyApproval(rt, requestId, title, detail)
       const timeout = this.config.policy.timeout_s
       if (timeout > 0) {
         setTimeout(() => {
@@ -1250,7 +1418,14 @@ export class Runtime {
     }
     const rt = this.agents.get(agentId)
     const pending = this.state.approvals.get(requestId)
-    if (!rt?.session || !pending) return
+    if (!rt || !pending) return
+    if (!rt.session) {
+      // asked while the adapter was still starting (codex does): answer as soon as the session exists
+      if (rt.closing) return
+      rt.earlyAnswers ??= []
+      if (!rt.earlyAnswers.some((a) => a.requestId === requestId)) rt.earlyAnswers.push({ requestId, optionId, by, who })
+      return
+    }
     const opt = pending.options.find((o) => o.optionId === optionId)
     if (opt && (opt.kind === "allow_always" || opt.kind === "reject_always")) {
       this.policy.remember(

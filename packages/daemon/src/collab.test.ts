@@ -212,4 +212,18 @@ describe("scope drift", () => {
     expect(d.runtime.state.agents.get(w.agentId)?.attention?.reason).toBe("scope")
     expect(d.runtime.state.bus.some((m) => m.body.includes("outside its task scope"))).toBe(true)
   })
+
+  test("the warning names only the unexpected files, not the whole claimed list", async () => {
+    const globs = ["src/a/**", "src/b/**", "src/c/**", "src/d/**", "src/e/**"]
+    d.runtime.emit({ type: "task.created", data: { taskId: "many", title: "Wide task", deps: [], files: globs } })
+    const w = await client.spawn({ adapter: "mock", name: "wide", options: { speed: 0 }, taskId: "many" })
+    const p = d.runtime.state.workspaces.get(w.agentId)!.path
+    writeFileSync(join(p, "stray.txt"), "x\n")
+    await d.runtime.collab.refresh(w.agentId)
+    const msg = d.runtime.state.bus.findLast((m) => m.body.includes("wide changed files outside"))!
+    expect(msg.body).toContain("stray.txt")
+    expect(msg.body).toContain("its 5 claimed paths")
+    expect(msg.body).not.toContain("src/c/**")
+    expect(d.runtime.state.agents.get(w.agentId)?.attention?.detail).not.toContain("src/c/**")
+  })
 })

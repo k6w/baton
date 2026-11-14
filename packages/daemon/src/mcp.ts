@@ -26,6 +26,98 @@ async function guard(fn: () => Promise<ToolResult> | ToolResult): Promise<ToolRe
   }
 }
 
+/**
+ * How long a blocking tool call (wait_for_results, read_inbox wait_s) may be held open. Many MCP clients give up
+ * on a request after ~60 s (the MCP SDK default) unless the server sends progress notifications;
+ * the call then reports "timed out" to the model while the server keeps waiting and consumes the
+ * results into a response nobody reads. So: clients that asked for progress (a progressToken)
+ * get keep-alive notifications and the full timeout; adapters known to allow long tool calls
+ * (codex: tool_timeout_sec=1900 in adapters/codex/src/config.ts; mock: plain fetch, no timeout)
+ * are held for the full timeout; everyone else (Claude Code included: its tool calls time out
+ * after ~60 s without progress) gets an honest "still waiting" reply before their client would
+ * time out. Mutable for tests.
+ */
+export const waitTuning = {
+  progressMs: 15_000,
+  shortHoldMs: 50_000,
+  longHoldAdapters: new Set(["codex", "mock"]),
+}
+
+const secs = (ms: number) => Math.round(ms / 1000)
+
+/** How long this caller's request may be held: the full `wantMs`, or a slice its client survives. */
+function holdFor(adapter: string, progressToken: unknown, wantMs: number): number {
+  const long = progressToken !== undefined || waitTuning.longHoldAdapters.has(adapter)
+  return long ? wantMs : Math.min(wantMs, waitTuning.shortHoldMs)
+}
+
+/** Send `notifications/progress` every waitTuning.progressMs while a long call is held (keeps the client's request alive). */
+function keepAlive(
+  extra: { _meta?: { progressToken?: string | number }; sendNotification: (n: never) => Promise<void> } | undefined,
+  total: number,
+  message: (elapsedMs: number) => string,
+): () => void {
+  const progressToken = extra?._meta?.progressToken
+  if (!extra || progressToken === undefined) return () => {}
+  const started = performance.now()
+  const t = setInterval(() => {
+    const el = performance.now() - started
+    void extra
+      .sendNotification({ method: "notifications/progress", params: { progressToken, progress: secs(el), total: secs(total), message: message(el) } } as never)
+      .catch(() => {})
+  }, waitTuning.progressMs)
+  return () => clearInterval(t)
+}
+const ago = (ts: number) => {
+  const s = Math.max(0, secs(Date.now() - ts))
+  return s < 120 ? `${s}s` : `${Math.round(s / 60)}m`
+}
+
+/** Per-file `+added −removed` summary of a unified diff (git format). */
+export function diffStat(diff: string): { path: string; added: number; removed: number; binary: boolean }[] {
+  const files: { path: string; added: number; removed: number; binary: boolean }[] = []
+  let cur: (typeof files)[number] | undefined
+  let inHunk = false
+  for (const line of diff.split("\n")) {
+    const head = /^diff --git a\/(.*?) b\/(.*)$/.exec(line)
+    if (head) {
+      cur = { path: head[2] ?? head[1] ?? "?", added: 0, removed: 0, binary: false }
+      files.push(cur)
+      inHunk = false
+      continue
+    }
+    if (!cur) continue
+    if (line.startsWith("@@")) {
+      inHunk = true
+      continue
+    }
+    // `--- a/x` / `+++ b/x` are file headers only before the first hunk; inside one they're content
+    if (!inHunk && (line.startsWith("+++ ") || line.startsWith("--- "))) continue
+    if (line.startsWith("Binary files ")) cur.binary = true
+    else if (line.startsWith("+")) cur.added++
+    else if (line.startsWith("-")) cur.removed++
+  }
+  return files
+}
+
+/**
+ * One page of `text`: at most `maxBytes` UTF-8 bytes from byte `offset`, ending on a line
+ * boundary when possible (never inside a character). `next` is the offset of the following page.
+ */
+export function pageText(text: string, offset: number, maxBytes: number): { page: string; next: number | undefined; total: number } {
+  const buf = Buffer.from(text, "utf8")
+  const total = buf.length
+  const start = Math.min(Math.max(0, offset), total)
+  let end = Math.min(total, start + maxBytes)
+  if (end < total) {
+    const nl = buf.lastIndexOf(0x0a, end - 1)
+    if (nl >= start) end = nl + 1
+    // no newline in the window: cut, but not inside a multi-byte character
+    else while (end > start && ((buf[end] ?? 0) & 0xc0) === 0x80) end--
+  }
+  return { page: buf.subarray(start, end).toString("utf8"), next: end < total ? end : undefined, total }
+}
+
 export function buildMcpServer(rt: Runtime, caller: AgentRuntime, signal?: AbortSignal): McpServer {
   const server = new McpServer({ name: "baton", version: BATON_VERSION }, { instructions: "Baton multi-agent coordination tools." })
   const me = caller.info.agentId
@@ -55,10 +147,30 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime, signal?: Abort
       description: "Read (and consume) messages addressed to you. Optionally wait up to `wait_s` seconds for one to arrive.",
       inputSchema: { wait_s: z.number().min(0).max(600).optional() },
     },
-    (a) =>
+    (a, extra) =>
       guard(async () => {
-        const msgs = a.wait_s ? await rt.waitInbox(me, a.wait_s * 1000, undefined, signal) : rt.drainInbox(me)
-        if (msgs.length === 0) return ok("(inbox empty)")
+        if (!a.wait_s) {
+          const msgs = rt.drainInbox(me)
+          return ok(msgs.length ? msgs.map((m) => `from ${m.fromName} [${m.kind}]:\n${m.body}`).join("\n\n---\n\n") : "(inbox empty)")
+        }
+        const started = performance.now()
+        const wantMs = a.wait_s * 1000
+        const holdMs = holdFor(caller.info.adapter, extra?._meta?.progressToken, wantMs)
+        const stop = keepAlive(extra, wantMs, (el) => `waiting ${secs(el)}s for a message`)
+        let msgs: Awaited<ReturnType<typeof rt.waitInbox>>
+        try {
+          msgs = await rt.waitInbox(me, holdMs, undefined, signal)
+        } finally {
+          stop()
+        }
+        if (msgs.length === 0) {
+          const el = performance.now() - started
+          return ok(
+            el + 50 < wantMs
+              ? `(inbox empty after ${secs(el)}s of wait_s ${a.wait_s}: returned early so your MCP client doesn't time out (~${secs(holdMs)}s per call) — call read_inbox again to keep waiting)`
+              : `(inbox empty after ${secs(el)}s)`,
+          )
+        }
         return ok(msgs.map((m) => `from ${m.fromName} [${m.kind}]:\n${m.body}`).join("\n\n---\n\n"))
       }),
   )
@@ -73,7 +185,11 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime, signal?: Abort
           .map((a) => {
             const pct = a.progress !== undefined ? ` ${Math.round(a.progress * 100)}%` : ""
             const you = a.agentId === me ? " (you)" : ""
-            return `- ${a.name}${you}: ${a.adapter}${a.model ? `/${a.model}` : ""} · ${a.status}${pct}${a.label ? ` · "${a.label}"` : ""} · ${formatTokens(a.usage.input + a.usage.output)} tok · ${formatCost(a.usage.costUsd)}`
+            const row = `- ${a.name}${you}: ${a.adapter}${a.model ? `/${a.model}` : ""} · ${a.status}${pct}${a.label ? ` · "${a.label}"` : ""} · ${formatTokens(a.usage.input + a.usage.output)} tok · ${formatCost(a.usage.costUsd)}`
+            const asks = [...rt.state.approvals.values()].filter((p) => p.agentId === a.agentId)
+            return asks.length
+              ? `${row}\n${asks.map((p) => `    awaiting approval [${p.requestId}] ${p.title}${p.kind ? ` (${p.kind})` : ""} · ${ago(p.ts)} ago`).join("\n")}`
+              : row
           })
         return ok(rows.join("\n") || "(no agents)")
       }),
@@ -394,15 +510,36 @@ Give each worker what it needs to succeed: ${[f.roles && "a role", "the files it
     server.registerTool(
       "get_diff",
       {
-        description: "Unified diff of an agent's unmerged changes (optionally limited to paths). Long diffs are truncated.",
-        inputSchema: { agent: z.string(), paths: z.array(z.string()).optional() },
+        description:
+          "Unified diff of an agent's unmerged changes (optionally limited to paths). stat: true gives only the per-file +/− summary (start there for big changes). Long diffs come in pages: pass the returned next offset to read on.",
+        inputSchema: {
+          agent: z.string(),
+          paths: z.array(z.string()).optional(),
+          stat: z.boolean().optional().describe("only the per-file +added −removed summary"),
+          offset: z.number().int().min(0).optional().describe("byte offset to start the page at (from the previous page's 'next offset')"),
+          max_bytes: z.number().int().min(1000).max(100_000).optional().describe("page size (default 30000)"),
+        },
       },
       (a) =>
         guard(async () => {
           const t = agentRef(a.agent)
           const d = await rt.collab.diff(t.info.agentId, a.paths ?? [])
           if (!d.trim()) return ok("(no changes)")
-          return ok(d.length > 60_000 ? `${d.slice(0, 60_000)}\n… [truncated, ${d.length} bytes]` : d)
+          if (a.stat) {
+            const files = diffStat(d)
+            const added = files.reduce((n, x) => n + x.added, 0)
+            const removed = files.reduce((n, x) => n + x.removed, 0)
+            const rows = files.map((x) => `${x.path} ${x.binary ? "(binary)" : `+${x.added} −${x.removed}`}`)
+            return ok(`${rows.join("\n")}\n${files.length} file(s), +${added} −${removed}, ${Buffer.byteLength(d, "utf8")} bytes of diff`)
+          }
+          const { page, next, total } = pageText(d, a.offset ?? 0, a.max_bytes ?? 30_000)
+          const start = Math.min(a.offset ?? 0, total)
+          if (next === undefined && start === 0) return ok(page)
+          const tail =
+            next !== undefined
+              ? `[bytes ${start}–${next} of ${total}; next offset ${next} of total ${total} — call get_diff again with offset: ${next}]`
+              : `[bytes ${start}–${total} of ${total}; end of diff]`
+          return ok(`${page}${page.endsWith("\n") || !page ? "" : "\n"}${tail}`)
         }),
     )
 
@@ -469,36 +606,120 @@ Give each worker what it needs to succeed: ${[f.roles && "a role", "the files it
     server.registerTool(
       "wait_for_results",
       {
-        description: "Wait until the given agents (default: every agent you dispatched work to) report results, or until timeout. Returns their results.",
+        description:
+          "Wait until the given agents (default: every agent you dispatched work to) report results, or until timeout_s. Returns their results plus anything already queued in your inbox. If it returns 'still waiting', call it again.",
         inputSchema: { agents: z.array(z.string()).optional(), timeout_s: z.number().min(1).max(1800).optional() },
+      },
+      (a, extra) =>
+        guard(async () => {
+          const started = performance.now()
+          const timeoutMs = (a.timeout_s ?? 600) * 1000
+          for (const n of a.agents ?? []) agentRef(n)
+          const wanted = new Set(
+            (
+              a.agents ??
+              [...rt.agents.values()]
+                .filter(
+                  (x) => x.resultTo.has(me) || (x.busy && x.info.parentId === me) || caller.inbox.some((m) => m.kind === "result" && m.from === x.info.agentId),
+                )
+                .map((x) => x.info.name)
+            ).map((n) => n.toLowerCase()),
+          )
+          const fmt = (msgs: { fromName: string; kind: string; body: string }[]) =>
+            msgs.map((m) => `from ${m.fromName} [${m.kind}]:\n${m.body}`).join("\n\n---\n\n")
+          if (wanted.size === 0) return ok(fmt(rt.drainInbox(me)) || "(nothing pending: no agent is working for you)")
+
+          // The readiness check runs synchronously against the inbox before the waiter is
+          // registered, so results queued earlier and results arriving during the wait are both seen.
+          const holdMs = holdFor(caller.info.adapter, extra?._meta?.progressToken, timeoutMs)
+          const busyNames = () => [...wanted].filter((w) => !caller.inbox.some((m) => m.kind === "result" && m.fromName.toLowerCase() === w))
+          const stop = keepAlive(extra, timeoutMs, (el) => `waiting ${secs(el)}s for ${busyNames().join(", ") || "results"}`)
+          let msgs: Awaited<ReturnType<typeof rt.waitInbox>>
+          try {
+            msgs = await rt.waitInbox(
+              me,
+              holdMs,
+              (inbox) => [...wanted].every((w) => inbox.some((m) => m.kind === "result" && m.fromName.toLowerCase() === w)),
+              signal,
+            )
+          } finally {
+            stop()
+          }
+          const elapsed = performance.now() - started
+          const pending = [...wanted].filter((w) => !msgs.some((m) => m.kind === "result" && m.fromName.toLowerCase() === w))
+          const text = fmt(msgs) || "(no results yet)"
+          if (!pending.length) return ok(text)
+          const describe = (name: string) => {
+            const t = rt.findAgent(name)
+            const view = t && rt.state.agents.get(t.info.agentId)
+            if (!t || !view) return name
+            const asks = [...rt.state.approvals.values()].filter((p) => p.agentId === t.info.agentId)
+            const ask = asks.length ? `, ${asks.length} approval(s) pending — list_approvals / answer_approval` : ""
+            return `${t.info.name} (${view.status}${ask})`
+          }
+          const why =
+            elapsed + 50 < timeoutMs
+              ? ` — returned early so your MCP client doesn't time out (~${secs(holdMs)}s per call); call wait_for_results again to keep waiting`
+              : " — timeout reached; call wait_for_results again to keep waiting"
+          return ok(
+            `${text}\n\nstill waiting after ${secs(elapsed)}s (of timeout_s ${secs(timeoutMs)}): ${pending.length} agent(s) not done: ${pending.map(describe).join(", ")}${why}`,
+          )
+        }),
+    )
+
+    server.registerTool(
+      "list_approvals",
+      {
+        description:
+          "Pending approval requests from your workers (an agent in awaiting_approval is blocked until one is answered): agent, request id, what it wants to run, age. Answer with answer_approval.",
+        inputSchema: {},
+      },
+      () =>
+        guard(() => {
+          const pending = [...rt.state.approvals.values()].filter((p) => p.agentId !== me).sort((x, y) => x.ts - y.ts)
+          if (!pending.length) return ok("(no pending approvals)")
+          return ok(
+            pending
+              .map((p) => {
+                const who = rt.state.agents.get(p.agentId)?.name ?? p.agentId
+                const detail = p.detail ? `\n    ${p.detail.slice(0, 500).replace(/\n/g, "\n    ")}` : ""
+                const opts = p.options.map((o) => o.kind).join(", ")
+                return `- [${p.requestId}] ${who}: ${p.title}${p.kind ? ` (${p.kind})` : ""} · ${ago(p.ts)} ago · options: ${opts}${detail}`
+              })
+              .join("\n"),
+          )
+        }),
+    )
+
+    server.registerTool(
+      "answer_approval",
+      {
+        description:
+          "Allow or deny a worker's pending approval request (ids from list_approvals). always: true also remembers the decision for matching requests from now on.",
+        inputSchema: {
+          request_id: z.string(),
+          allow: z.boolean(),
+          always: z.boolean().optional().describe("remember this decision (allow_always / reject_always) when the agent offers it"),
+        },
       },
       (a) =>
         guard(async () => {
-          const wanted = new Set(
-            (a.agents ?? [...rt.agents.values()].filter((x) => x.resultTo.has(me) || (x.busy && x.info.parentId === me)).map((x) => x.info.name)).map((n) =>
-              n.toLowerCase(),
-            ),
-          )
-          if (wanted.size === 0)
-            return ok(
-              rt
-                .drainInbox(me)
-                .map((m) => `from ${m.fromName}:\n${m.body}`)
-                .join("\n\n") || "(nothing pending)",
-            )
-          const seen = new Set<string>()
-          const msgs = await rt.waitInbox(
-            me,
-            (a.timeout_s ?? 600) * 1000,
-            (inbox) => {
-              for (const m of inbox) if (m.kind === "result") seen.add(m.fromName.toLowerCase())
-              return [...wanted].every((w) => seen.has(w))
-            },
-            signal,
-          )
-          const pending = [...wanted].filter((w) => !msgs.some((m) => m.kind === "result" && m.fromName.toLowerCase() === w))
-          const text = msgs.map((m) => `from ${m.fromName} [${m.kind}]:\n${m.body}`).join("\n\n---\n\n")
-          return ok(`${text || "(no results yet)"}${pending.length ? `\n\nstill working: ${pending.join(", ")}` : ""}`)
+          const p = rt.state.approvals.get(a.request_id)
+          if (!p) return fail(`no pending approval "${a.request_id}" (already answered or timed out? list_approvals shows the current ones)`)
+          if (p.agentId === me) return fail("that request is addressed to the user, not to you")
+          if (p.kind === "delegate") return fail("that is a question for the user (not a tool approval); only they can answer it")
+          const want = a.allow
+            ? a.always
+              ? ["allow_always", "allow_once"]
+              : ["allow_once", "allow_always"]
+            : a.always
+              ? ["reject_always", "reject_once"]
+              : ["reject_once", "reject_always"]
+          const opt = want.map((k) => p.options.find((o) => o.kind === k)).find(Boolean)
+          if (!opt) return fail(`request offers no ${a.allow ? "allow" : "deny"} option (options: ${p.options.map((o) => o.kind).join(", ")})`)
+          await rt.resolvePermission(p.agentId, p.requestId, opt.optionId, "user", caller.info.name)
+          const who = rt.state.agents.get(p.agentId)?.name ?? p.agentId
+          return ok(`${opt.kind} → ${who}: ${p.title}`)
         }),
     )
 
@@ -537,6 +758,14 @@ Give each worker what it needs to succeed: ${[f.roles && "a role", "the files it
   return server
 }
 
+function wantsProgress(body: unknown): boolean {
+  const msgs = Array.isArray(body) ? body : [body]
+  return msgs.some((m) => {
+    const msg = m as { method?: unknown; params?: { _meta?: { progressToken?: unknown } } } | null | undefined
+    return msg?.method === "tools/call" && msg.params?._meta?.progressToken !== undefined
+  })
+}
+
 export interface McpHttpServer {
   url: string
   port: number
@@ -559,14 +788,32 @@ export function startMcpServer(rt: Runtime, port = 0): McpHttpServer {
       const caller = token ? [...rt.agents.values()].find((a) => a.token === token) : undefined
       if (!caller || caller.closing) return new Response("unknown agent token", { status: 401 })
       if (req.method !== "POST") return new Response(null, { status: 405, headers: { Allow: "POST" } })
+      // A request carrying a progressToken gets an SSE response so progress notifications (the
+      // keep-alive for long waits) reach the client; everything else stays a plain JSON reply.
+      const stream = wantsProgress(
+        await req
+          .clone()
+          .json()
+          .catch(() => undefined),
+      )
       const mcp = buildMcpServer(rt, caller, req.signal)
-      const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
+      const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: !stream })
+      const close = () => queueMicrotask(() => void mcp.close().catch(() => {}))
+      if (stream) {
+        // the response streams after handleRequest returns: tear down once the final reply is sent
+        const send = transport.send.bind(transport)
+        transport.send = async (msg, opts) => {
+          await send(msg, opts)
+          if ("id" in msg && ("result" in msg || "error" in msg)) close()
+        }
+        req.signal.addEventListener("abort", close, { once: true })
+      }
       await mcp.connect(transport)
       try {
         return await transport.handleRequest(req)
       } finally {
         // stateless: tear down after the response is produced
-        queueMicrotask(() => void mcp.close().catch(() => {}))
+        if (!stream) close()
       }
     },
   })

@@ -39,6 +39,28 @@ const until = async (cond: () => boolean, ms = 3_000) => {
 }
 
 describe("codex session lifecycle (fake app-server)", () => {
+  // Regression: an approval codex raised outside a turn left the worker in awaiting_approval for good
+  test.skipIf(process.platform === "win32")("approval requested outside a turn: answer reaches codex, status returns to ready", async () => {
+    const events: AgentEvent[] = []
+    const logs: string[] = []
+    const ac = new AbortController()
+    const ctx = { emit: (e: AgentEvent) => events.push(e), log: (_: string, m: string) => logs.push(m), signal: ac.signal }
+    const cfg = { agentId: "a", name: "a", cwd: tempWorkspace(), mcpServers: [], approval: "auto", options: { shellDiffs: false } } as unknown as SessionConfig
+    const s = new CodexSession(cfg, ctx as never, { bin: fakeBin("startup-elicitation") })
+    const status = () => events.filter((e) => e.type === "agent.status").map((e) => (e.data as { status: string }).status)
+    await s.start()
+    await until(() => events.some((e) => e.type === "permission.requested"))
+    const req = events.find((e) => e.type === "permission.requested")
+    if (req?.type !== "permission.requested") throw new Error("no permission.requested")
+    expect(req.data.detail).toContain('"q":"x"')
+    expect(status().at(-1)).toBe("awaiting_approval")
+    await s.respondPermission(req.data.requestId, "allow_once")
+    await until(() => logs.some((m) => m.includes("reply:")))
+    expect(logs.find((m) => m.includes("reply:"))).toContain('reply:{"action":"accept","content":{},"_meta":null}')
+    expect(status().at(-1)).toBe("ready")
+    await s.close()
+  })
+
   // skipped on Windows: the fake app-server runs behind a .cmd wrapper, whose cmd.exe parent changes exit timing
   test.skipIf(process.platform === "win32")(
     "crash mid-turn: turn.completed(error) precedes agent.exited, no ready after exit, prompt/steer/close fail fast",

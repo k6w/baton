@@ -481,3 +481,84 @@ describe("helpers", () => {
     expect(isReadOnlyCommand({ ...base, commandActions: [] })).toBe(false)
   })
 })
+
+// Regression: codex workers sat in awaiting_approval with 0 tokens. Requests that arrive outside a
+// turn (MCP elicitations carry `turnId: null`; MCP servers start between turn/start and
+// turn/started) left the status stuck, were dropped unanswered at turn end, and carried no detail.
+describe("approvals outside a turn", () => {
+  const statuses = (events: AgentEvent[]) => ofType(events, "agent.status").map((e) => e.data.status)
+  const toolApproval = (turnId: string | null) => ({
+    threadId: "thr_1",
+    turnId,
+    serverName: "github",
+    mode: "form",
+    message: 'Allow the github MCP server to run tool "create_issue"?',
+    requestedSchema: { type: "object", properties: {} },
+    _meta: {
+      codex_approval_kind: "mcp_tool_call",
+      persist: ["session", "always"],
+      tool_description: "Create an issue",
+      tool_params: { repo: "k6w/baton", title: "bug" },
+    },
+  })
+
+  test("resolving a request with no active turn returns the status to ready", () => {
+    const { t, events } = make()
+    t.setStatus("ready")
+    const r = t.serverRequest(0, "mcpServer/elicitation/request", toolApproval(null))
+    expect(statuses(events).at(-1)).toBe("awaiting_approval")
+    expect(t.resolvePermission(r?.requestId ?? "", "allow_once")?.rpcId).toBe(0)
+    expect(statuses(events).at(-1)).toBe("ready")
+  })
+
+  test("a request pending when a turn starts keeps the agent awaiting_approval", () => {
+    const { t, events } = make()
+    t.setStatus("ready")
+    const r = t.serverRequest(0, "mcpServer/elicitation/request", toolApproval(null))
+    t.notification("turn/started", turn("t1", "inProgress"))
+    expect(statuses(events).at(-1)).toBe("awaiting_approval")
+    t.resolvePermission(r?.requestId ?? "", "allow_once")
+    expect(statuses(events).at(-1)).toBe("busy")
+  })
+
+  test("a turn-less request survives turn completion and can still be answered", () => {
+    const { t, events } = make()
+    t.notification("turn/started", turn("t1", "inProgress"))
+    const r = t.serverRequest(7, "mcpServer/elicitation/request", toolApproval(null))
+    t.notification("turn/completed", turn("t1", "completed"))
+    expect(ofType(events, "permission.resolved")).toHaveLength(0)
+    expect(statuses(events).at(-1)).toBe("awaiting_approval")
+    expect(t.resolvePermission(r?.requestId ?? "", "allow_once")).toEqual({
+      rpcId: 7,
+      result: { action: "accept", content: {}, _meta: null },
+    })
+    expect(statuses(events).at(-1)).toBe("ready")
+  })
+
+  test("requests of the completed turn are still dropped", () => {
+    const { t, events } = make()
+    t.notification("turn/started", turn("t1", "inProgress"))
+    t.serverRequest(1, "mcpServer/elicitation/request", toolApproval("t1"))
+    t.notification("turn/completed", turn("t1", "completed"))
+    expect(ofType(events, "permission.resolved").map((e) => e.data.by)).toEqual(["cancelled"])
+    expect(t.pendingPermissionCount).toBe(0)
+  })
+
+  test("serverRequest/resolved for a child thread's request clears it", () => {
+    const { t, events } = make()
+    t.notification("turn/started", turn("t1", "inProgress"))
+    t.serverRequest(3, "mcpServer/elicitation/request", { ...toolApproval(null), threadId: "thr_child" })
+    t.notification("serverRequest/resolved", { threadId: "thr_child", requestId: 3 })
+    expect(t.pendingPermissionCount).toBe(0)
+    expect(statuses(events).at(-1)).toBe("busy")
+  })
+
+  test("MCP tool approvals carry the tool's description and arguments", () => {
+    const { t, events } = make()
+    t.serverRequest(0, "mcpServer/elicitation/request", toolApproval(null))
+    const req = ofType(events, "permission.requested")[0]?.data
+    expect(req?.title).toBe('github: Allow the github MCP server to run tool "create_issue"?')
+    expect(req?.detail).toContain("Create an issue")
+    expect(req?.detail).toContain('"repo":"k6w/baton"')
+  })
+})

@@ -13,6 +13,7 @@ import { AUTONOMY_INFO, currentAutonomy } from "../autonomy.ts"
 import { type Completion, completions } from "../completion.ts"
 import { useUi } from "../context.ts"
 import { clip, type Line, renderFeed, type Seg, statusLine, width as sw, wrap } from "../lines.ts"
+import { pendingSends, type SendView } from "../outbox.ts"
 import { Frame, innerSize } from "../ui/Frame.tsx"
 import { MessageInput, setMessage } from "../ui/MessageInput.tsx"
 import { segs, toStyled } from "../ui/styled.ts"
@@ -163,13 +164,38 @@ export function Orchestrator(props: OrchestratorProps) {
     return items
   })
 
+  /** What I sent that the daemon hasn't echoed yet (or never will: direct messages, steered input). */
+  const sent = createMemo<SendView[]>(() => {
+    threadKey()
+    const id = ui.run.orchestratorId
+    return pendingSends(ui.sends(), id ? ui.run.feed(id).items : [], id ? ui.run.agents.get(id)?.turnStartedAt : undefined)
+  })
+
+  /** One of my messages as a user line (full text, multi-line kept) with its delivery marker underneath. */
+  const sentLines = (v: SendView, width: number): Line[] => {
+    const t = ui.theme()
+    const to = v.send.to ? `→ ${v.send.to.map((n) => `@${n}`).join(" ")} ` : ""
+    const lines = wrap(v.send.text, Math.max(4, width - 2 - sw(to)))
+    const out: Line[] = lines.slice(0, 12).map((l, i) => ({
+      segs: [
+        { text: i === 0 ? "> " : "  ", fg: t.textMuted },
+        ...(i === 0 && to ? [{ text: to, fg: t.accent }] : []),
+        { text: l, fg: v.marker === "queued" ? t.textMuted : t.text, bold: v.marker !== "queued" },
+      ],
+    }))
+    if (lines.length > 12) out.push({ segs: [{ text: `  … ${lines.length - 12} more lines`, fg: t.textSubtle }] })
+    if (v.marker === "queued") out.push({ segs: [{ text: "  ◌ queued — waits for the current turn to finish", fg: t.warning }] })
+    else if (v.marker === "steering") out.push({ segs: [{ text: "  ↳ steering — injected into the current turn", fg: t.info }] })
+    return out
+  }
+
   const body = createMemo(() => {
     const t = ui.theme()
     const { width } = inner()
     const o = orch()
     const look = o ? agentLook(ui, o).look : "claude"
     const lines: Line[] = [...infoLines()]
-    const feed = renderFeed(thread().slice(-400), {
+    const ctx = {
       theme: t,
       width,
       look,
@@ -179,9 +205,21 @@ export function Orchestrator(props: OrchestratorProps) {
       maxOutputLines: 2,
       who: whoFn(ui),
       me: ui.me,
-    })
-    lines.push(...feed)
-    if (!o && thread().length === 0) {
+    }
+    // my own sends interleave by time; still-queued ones sit last (they happen after everything shown)
+    const items = thread().slice(-400)
+    const mine = sent()
+    const done = mine.filter((v) => v.marker !== "queued")
+    let from = 0
+    for (const v of done) {
+      let to = from
+      while (to < items.length && items[to]!.ts <= v.send.ts) to++
+      lines.push(...renderFeed(items.slice(from, to), ctx), ...sentLines(v, width))
+      from = to
+    }
+    lines.push(...renderFeed(items.slice(from), ctx))
+    for (const v of mine) if (v.marker === "queued") lines.push(...sentLines(v, width))
+    if (!o && thread().length === 0 && mine.length === 0) {
       lines.push({ segs: [{ text: "" }] })
       for (const l of wrap(
         "Type a task for the orchestrator, @name to talk to an agent directly, or /spawn codex 3 to start agents. ctrl+p for everything else.",
@@ -217,6 +255,16 @@ export function Orchestrator(props: OrchestratorProps) {
           { text: "▲ ", fg: t.warning, bold: true },
           { text: `${p.approvals} approval${p.approvals > 1 ? "s" : ""} pending`, fg: t.warning, bold: true },
           { text: " — ctrl+a to review, ctrl+y to allow the oldest", fg: t.textMuted },
+        ],
+      })
+    }
+    const queued = sent().filter((v) => v.marker === "queued")
+    if (queued.length) {
+      out.push({
+        segs: [
+          { text: "◌ ", fg: t.warning, bold: true },
+          { text: `${queued.length} queued`, fg: t.warning, bold: true },
+          { text: ` — next: ${clip(queued[0]!.send.text.split("\n")[0]!, Math.max(8, inner().width - 24))}`, fg: t.textMuted },
         ],
       })
     }

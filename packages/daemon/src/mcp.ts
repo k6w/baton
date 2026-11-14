@@ -4,7 +4,7 @@
  * the per-agent token in the URL path is the caller's identity.
  */
 
-import { addNote, formatCost, formatTokens, readSkill, roleFor, searchNotes } from "@batonsh/kernel"
+import { addNote, formatAgentLoad, formatCost, readSkill, roleFor, searchNotes } from "@batonsh/kernel"
 import { BATON_VERSION } from "@batonsh/protocol"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"
@@ -73,7 +73,7 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime, signal?: Abort
           .map((a) => {
             const pct = a.progress !== undefined ? ` ${Math.round(a.progress * 100)}%` : ""
             const you = a.agentId === me ? " (you)" : ""
-            return `- ${a.name}${you}: ${a.adapter}${a.model ? `/${a.model}` : ""} · ${a.status}${pct}${a.label ? ` · "${a.label}"` : ""} · ${formatTokens(a.usage.input + a.usage.output)} tok · ${formatCost(a.usage.costUsd)}`
+            return `- ${a.name}${you}: ${a.adapter}${a.model ? `/${a.model}` : ""} · ${a.status}${pct}${a.label ? ` · "${a.label}"` : ""} · ${formatAgentLoad(a)} · ${formatCost(a.usage.costUsd)}`
           })
         return ok(rows.join("\n") || "(no agents)")
       }),

@@ -18,9 +18,11 @@ import { shellCommand } from "@batonsh/protocol"
 import {
   applyPatch,
   branchExists,
+  checkoutPaths,
   commitTree,
   diffPatch,
   diffStat,
+  emptyTree,
   type FileStat,
   git,
   headCommit,
@@ -28,6 +30,8 @@ import {
   isGitRepo,
   mergeBase,
   mergeTree,
+  overlayTree,
+  rawChanges,
   repoPrefix,
   repoPrefixSync,
   snapshotCommit,
@@ -152,9 +156,15 @@ export class WorkspaceManager {
     let branch = branchStem
     for (let i = 2; await branchExists(this.projectRoot, branch); i++) branch = `${branchStem}-${i}`
     const exclude = this.cfg.link.filter((l) => existsSync(join(this.projectRoot, l)))
-    // base = the project as it is now (committed + uncommitted), so agents start from what you see
-    const base = await snapshotCommit(this.projectRoot, `baton base for ${agentName}`, undefined, exclude)
-    await git(this.projectRoot, ["worktree", "add", "-q", "-b", branch, wtRoot, base])
+    // the branch starts at the project's real HEAD. The agent still starts from what you see: your
+    // uncommitted edits and untracked files are written into the worktree as *uncommitted* changes
+    // (never committed onto the branch). `base` is a private snapshot of the project as it is now
+    // (committed + uncommitted) — only used to measure the agent's own changes and to merge three-way.
+    const head = await headCommit(this.projectRoot)
+    const base = await snapshotCommit(this.projectRoot, `baton base for ${agentName}`, head, exclude)
+    if (head) await git(this.projectRoot, ["worktree", "add", "-q", "-b", branch, wtRoot, head])
+    else await git(this.projectRoot, ["worktree", "add", "-q", "--orphan", "-b", branch, wtRoot])
+    await checkoutPaths(wtRoot, base, await rawChanges(this.projectRoot, head ?? (await emptyTree(this.projectRoot)), base))
     // the agent works in the project's subdirectory of the worktree (monorepo package etc.)
     const { prefix } = await this.location()
     const path = prefix ? join(wtRoot, prefix.replace(/\/+$/, "")) : wtRoot
@@ -184,6 +194,7 @@ export class WorkspaceManager {
       ports: this.allocatePorts(),
     }
     this.byAgent.set(agentId, ws)
+    await this.pin(ws)
     if (this.cfg.setup) {
       const r = await runShell(this.cfg.setup, path, 600_000).catch((e) => ({ code: -1, output: String(e) }))
       if (r.code !== 0) {
@@ -191,10 +202,16 @@ export class WorkspaceManager {
         this.byAgent.delete(agentId)
         await git(this.projectRoot, ["worktree", "remove", "--force", wtRoot], { allowFail: true })
         await git(this.projectRoot, ["branch", "-D", branch], { allowFail: true })
+        await git(this.projectRoot, ["update-ref", "-d", pinRef(branch)], { allowFail: true })
         throw new Error(`workspace setup \`${this.cfg.setup}\` failed: ${tail(r.output)}`)
       }
     }
     return ws
+  }
+
+  /** Keep the private base snapshot reachable (git gc) while the workspace exists. */
+  private async pin(ws: Workspace) {
+    if (ws.branch && ws.base) await git(this.projectRoot, ["update-ref", pinRef(ws.branch), ws.base], { allowFail: true })
   }
 
   adopt(agentId: string, agentName: string, path: string, branch?: string, base?: string): Workspace {
@@ -275,14 +292,19 @@ export class WorkspaceManager {
       }
       const wtRoot = ws.root ?? ws.path
       const { top } = await this.location()
-      // commit the agent's work on its branch (in the worktree)
-      const commit = await commitTree(ws.path, tree, [(await headCommit(ws.path)) ?? ws.base], `baton: ${ws.agentName}`)
+      // the agent's full tree (its base included) — what gets merged three-way into the project
+      const work = await commitTree(ws.path, tree, [ws.base], `baton snapshot ${ws.agentName}`)
+      // the branch gets only the files the agent changed (the uncommitted files it started with stay off
+      // it — though a file both you and the agent edited is committed with your uncommitted lines in it)
+      const mine = await rawChanges(ws.path, ws.base, work)
+      const branchHead = await headCommit(ws.path)
+      const commit = await commitTree(ws.path, await overlayTree(ws.path, branchHead, mine), branchHead ? [branchHead] : [], `baton: ${ws.agentName}`)
       if (ws.branch) await git(ws.path, ["update-ref", `refs/heads/${ws.branch}`, commit])
       // move the worktree's HEAD *and index* to the new commit; the working tree is untouched
       await git(wtRoot, ["reset", "-q", commit])
       // merge against the project *as it is now*
       const current = await snapshotCommit(this.projectRoot, "baton merge target", undefined, this.cfg.link)
-      const merged = await mergeTree(this.projectRoot, ws.base, current, commit)
+      const merged = await mergeTree(this.projectRoot, ws.base, current, work)
       if (!merged.clean || !merged.tree)
         return { status: "conflict", files: ws.files, conflicts: merged.conflicts, detail: `conflicts in ${merged.conflicts.join(", ")}` }
       // patch paths are relative to the repository top level, so apply it there
@@ -294,7 +316,8 @@ export class WorkspaceManager {
       const files = ws.files
       const afterCommit = await commitTree(this.projectRoot, merged.tree, [current], `baton merged ${ws.agentName}`)
       this.history.push({ agentId, agentName: ws.agentName, before: current, after: afterCommit, prevBase: ws.base, files })
-      ws.base = commit
+      ws.base = work
+      await this.pin(ws)
       ws.files = []
       ws.snapshot = undefined
       ws.tree = undefined
@@ -331,6 +354,7 @@ export class WorkspaceManager {
       if (ws && h.prevBase) {
         ws.base = h.prevBase
         ws.merged = false
+        await this.pin(ws)
       }
       return { ok: true, agentName: h.agentName, files: h.files.map((f) => f.path) }
     }
@@ -351,6 +375,7 @@ export class WorkspaceManager {
     const applied = await applyPatch(ws.root ?? ws.path, patch)
     if (applied.code !== 0) throw new Error(`sync failed: ${applied.stderr.trim()}`)
     ws.base = current
+    await this.pin(ws)
     await this.refresh(agentId)
     return { clean: r.clean, conflicts: r.conflicts }
   }
@@ -377,7 +402,10 @@ export class WorkspaceManager {
     if (this.cfg.cleanup === "merged" && hasChanges) return { kept: true, reason: `unmerged changes kept in ${ws.path} (branch ${ws.branch})` }
     const wtRoot = ws.root ?? ws.path
     await git(this.projectRoot, ["worktree", "remove", "--force", wtRoot], { allowFail: true })
-    if (ws.branch) await git(this.projectRoot, ["branch", "-D", ws.branch], { allowFail: true })
+    if (ws.branch) {
+      await git(this.projectRoot, ["branch", "-D", ws.branch], { allowFail: true })
+      await git(this.projectRoot, ["update-ref", "-d", pinRef(ws.branch)], { allowFail: true })
+    }
     try {
       rmdirSync(dirname(wtRoot)) // only succeeds when no other worktrees remain
     } catch {}
@@ -396,4 +424,9 @@ async function runShell(cmd: string, cwd: string, timeoutMs: number): Promise<{ 
 
 function tail(s: string, lines = 30): string {
   return s.trim().split("\n").slice(-lines).join("\n")
+}
+
+/** Private ref holding a workspace's base snapshot (bookkeeping only; never a branch's parent). */
+function pinRef(branch: string): string {
+  return `refs/baton/bases/${branch}`
 }

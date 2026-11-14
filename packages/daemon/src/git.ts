@@ -171,3 +171,65 @@ export async function applyPatch(cwd: string, patch: string, check = false): Pro
   if (!patch.trim()) return { code: 0, stdout: "", stderr: "" }
   return git(cwd, ["apply", "--binary", "--whitespace=nowarn", ...(check ? ["--check"] : []), "-"], { input: patch, allowFail: true })
 }
+
+/** One entry of `git diff-tree --raw`: the new side's mode/blob and the path (relative to the repo top). */
+export interface RawChange {
+  mode: string
+  sha: string
+  status: string
+  path: string
+}
+
+/** Changed paths between two tree-ish objects, with the new side's mode and blob (paths relative to the repo top). */
+export async function rawChanges(cwd: string, from: string, to: string): Promise<RawChange[]> {
+  const r = await git(cwd, ["diff-tree", "-r", "-z", "--no-renames", "--raw", from, to])
+  const parts = r.stdout.split("\0")
+  const out: RawChange[] = []
+  for (let i = 0; i + 1 < parts.length; i += 2) {
+    const m = /^:\d+ (\d+) [0-9a-f]+ ([0-9a-f]+) (\w)/.exec(parts[i] as string)
+    if (m) out.push({ mode: m[1] as string, sha: m[2] as string, status: m[3] as string, path: parts[i + 1] as string })
+    else i-- // stray empty record: resync
+  }
+  return out
+}
+
+/**
+ * Tree = `onto` with the given changes laid over it (each path takes the change's new side; deletions
+ * remove it). Built in a temporary index, so nothing in any working tree or real index moves.
+ */
+export async function overlayTree(cwd: string, onto: string | undefined, changes: RawChange[]): Promise<string> {
+  const dir = mkdtempSync(join(tmpdir(), "baton-idx-"))
+  const env = { GIT_INDEX_FILE: join(dir, "index") }
+  try {
+    if (onto) await git(cwd, ["read-tree", onto], { env })
+    const zero = "0".repeat((await emptyTree(cwd)).length) // null id: 40 (SHA-1) or 64 (SHA-256) hex digits
+    const info = changes.map((c) => (c.status === "D" ? `0 ${zero}\t${c.path}` : `${c.mode} ${c.sha}\t${c.path}`)).join("\0")
+    if (info) await git(cwd, ["update-index", "-z", "--index-info"], { env, input: `${info}\0` })
+    return (await git(cwd, ["write-tree"], { env })).stdout.trim()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Write `tree`'s version of the given paths into the working tree at `top` (deleting paths the tree
+ * doesn't have). The real index is not touched, so new files show up as untracked.
+ */
+export async function checkoutPaths(top: string, tree: string, changes: RawChange[]): Promise<void> {
+  const dir = mkdtempSync(join(tmpdir(), "baton-idx-"))
+  const env = { GIT_INDEX_FILE: join(dir, "index") }
+  try {
+    for (const c of changes) if (c.status === "D") rmSync(join(top, c.path), { force: true, recursive: true })
+    const keep = changes.filter((c) => c.status !== "D").map((c) => c.path)
+    if (!keep.length) return
+    await git(top, ["read-tree", tree], { env })
+    await git(top, ["checkout-index", "-f", "-z", "--stdin"], { env, input: `${keep.join("\0")}\0` })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+/** The empty tree's id (differs between SHA-1 and SHA-256 repositories). */
+export async function emptyTree(cwd: string): Promise<string> {
+  return (await git(cwd, ["mktree"], { input: "" })).stdout.trim()
+}

@@ -4,7 +4,7 @@
  * the per-agent token in the URL path is the caller's identity.
  */
 
-import { addNote, formatCost, formatTokens, readSkill, roleFor, searchNotes } from "@batonsh/kernel"
+import { addNote, formatAgentLoad, formatCost, readSkill, roleFor, searchNotes } from "@batonsh/kernel"
 import { BATON_VERSION } from "@batonsh/protocol"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"
@@ -185,7 +185,7 @@ export function buildMcpServer(rt: Runtime, caller: AgentRuntime, signal?: Abort
           .map((a) => {
             const pct = a.progress !== undefined ? ` ${Math.round(a.progress * 100)}%` : ""
             const you = a.agentId === me ? " (you)" : ""
-            const row = `- ${a.name}${you}: ${a.adapter}${a.model ? `/${a.model}` : ""} · ${a.status}${pct}${a.label ? ` · "${a.label}"` : ""} · ${formatTokens(a.usage.input + a.usage.output)} tok · ${formatCost(a.usage.costUsd)}`
+            const row = `- ${a.name}${you}: ${a.adapter}${a.model ? `/${a.model}` : ""} · ${a.status}${pct}${a.label ? ` · "${a.label}"` : ""} · ${formatAgentLoad(a)} · ${formatCost(a.usage.costUsd)}`
             const asks = [...rt.state.approvals.values()].filter((p) => p.agentId === a.agentId)
             return asks.length
               ? `${row}\n${asks.map((p) => `    awaiting approval [${p.requestId}] ${p.title}${p.kind ? ` (${p.kind})` : ""} · ${ago(p.ts)} ago`).join("\n")}`

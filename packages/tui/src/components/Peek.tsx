@@ -3,13 +3,14 @@
  * Pending approval → a/A/d/D answer it; otherwise type a reply (sent to that agent, injected
  * into its current turn when the agent supports steering).
  */
-import type { InputRenderable } from "@opentui/core"
+import type { TextareaRenderable } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
 import { createMemo, createSignal, Show } from "solid-js"
 import { agentLook, whoFn } from "../agent-style.ts"
 import { useUi } from "../context.ts"
 import { keyString } from "../keymap.ts"
 import { type Line, renderFeed, statusLine, workspaceLine } from "../lines.ts"
+import { MessageInput, setMessage } from "../ui/MessageInput.tsx"
 import { segs, toStyled } from "../ui/styled.ts"
 import { Txt } from "../ui/Txt.tsx"
 import { Modal } from "./Overlays.tsx"
@@ -29,7 +30,10 @@ export function PeekOverlay(props: { agentId: string; onClose: () => void; onZoo
     return [...ui.run.approvals.values()].find((p) => p.agentId === props.agentId)
   })
   const [replying, setReplying] = createSignal(!approval())
-  let inputRef: InputRenderable | undefined
+  let inputRef: TextareaRenderable | undefined
+  const [replyRows, setReplyRows] = createSignal(1)
+  /** rows left for the feed: the modal chrome + footer take 8, the reply line(s) the rest */
+  const feedH = () => H() - 8 - (replying() ? replyRows() : 1)
 
   const answer = async (kind: "allow_once" | "allow_always" | "reject_once" | "reject_always") => {
     const p = approval()
@@ -68,7 +72,7 @@ export function PeekOverlay(props: { agentId: string; onClose: () => void; onZoo
     if (!a) return []
     const look = agentLook(ui, a)
     const width = W() - 4
-    const height = H() - 9
+    const height = feedH()
     const feed = renderFeed(ui.run.feed(props.agentId).items.slice(-80), {
       theme: ui.theme(),
       width,
@@ -111,36 +115,36 @@ export function PeekOverlay(props: { agentId: string; onClose: () => void; onZoo
   }
 
   return (
-    <Modal title={title()} width={W()} height={H()} hint={replying() ? "enter send · esc back" : "r reply · z zoom · v diff · x interrupt · esc close"}>
-      <Txt value={toStyled(lines(), W() - 4, H() - 9)} height={H() - 9} />
+    <Modal
+      title={title()}
+      width={W()}
+      height={H()}
+      hint={replying() ? "enter send · shift+enter newline · esc back" : "r reply · z zoom · v diff · x interrupt · esc close"}
+    >
+      <Txt value={toStyled(lines(), W() - 4, feedH())} height={feedH()} />
       <Txt value={segs({ text: "─".repeat(Math.max(0, W() - 4)), fg: ui.theme().borderSubtle })} />
       <Txt value={toStyled(footer(), W() - 4, 3)} height={3} />
       <Show when={replying()} fallback={<Txt value={segs({ text: approval() ? "r to reply instead" : "r to reply", fg: ui.theme().textSubtle })} />}>
-        <box height={1} flexDirection="row">
+        <box height={replyRows()} flexDirection="row">
           <Txt value={segs({ text: "❯ ", fg: ui.theme().primary, bold: true })} />
-          <input
-            ref={(r: InputRenderable) => {
+          <MessageInput
+            ref={(r) => {
               inputRef = r
             }}
-            flexGrow={1}
+            cols={W() - 6}
+            onRows={setReplyRows}
             focused
-            backgroundColor="transparent"
-            focusedBackgroundColor="transparent"
-            textColor={ui.theme().text}
-            focusedTextColor={ui.theme().text}
-            placeholder={`message ${agent()?.name ?? "agent"} (injected into its current turn when possible)`}
-            onSubmit={
-              ((v: unknown) => {
-                const text = (typeof v === "string" ? v : (inputRef?.value ?? "")).trim()
-                const a = agent()
-                if (!text || !a || !ui.client) return
-                if (inputRef) inputRef.value = ""
-                void ui.client.submit(`@${a.name} ${text}`).then(
-                  () => ui.toast(`sent to ${a.name}`),
-                  (e: unknown) => ui.toast(e instanceof Error ? e.message : String(e), "error"),
-                )
-              }) as never
-            }
+            placeholder={`message ${agent()?.name ?? "agent"} (injected into its current turn when possible) · shift+enter newline`}
+            onSubmit={(v) => {
+              const text = v.trim()
+              const a = agent()
+              if (!text || !a || !ui.client) return
+              setMessage(inputRef, "")
+              void ui.client.submit(`@${a.name} ${text}`).then(
+                () => ui.toast(`sent to ${a.name}`),
+                (e: unknown) => ui.toast(e instanceof Error ? e.message : String(e), "error"),
+              )
+            }}
           />
         </box>
       </Show>

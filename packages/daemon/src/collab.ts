@@ -172,11 +172,17 @@ export class Collaboration {
     const outside = paths.filter((p) => !globs.some((g) => matchGlob(g, p)))
     if (!outside.length) return
     const sig = [...outside].sort().join(",")
-    if (this.scopeSeen.get(agentId) === sig) return
+    const seen = this.scopeSeen.get(agentId)
+    if (seen === sig) return
+    const prev = new Set(seen ? seen.split(",") : [])
     this.scopeSeen.set(agentId, sig)
     const name = this.rt.agents.get(agentId)?.info.name ?? "agent"
-    this.rt.emit({ type: "agent.attention", data: { reason: "scope", detail: `outside ${globs.join(", ")}: ${outside.join(", ")}` } }, agentId)
-    this.notifyLead(`${name} changed files outside its task scope (${globs.join(", ")}): ${outside.join(", ")}. Check whether that's intended before merging.`)
+    // only the new unexpected files (and at most a short summary of the scope, never all of it)
+    const fresh = outside.filter((p) => !prev.has(p))
+    const files = listShort(fresh.length ? fresh : outside)
+    const scope = scopeSummary(globs)
+    this.rt.emit({ type: "agent.attention", data: { reason: "scope", detail: `${files} — outside ${scope}` } }, agentId)
+    this.notifyLead(`${name} changed files outside its task scope (${scope}): ${files}. Check whether that's intended before merging.`)
   }
 
   private async checkConflicts(agentId: string) {
@@ -440,7 +446,13 @@ When done, call the baton tool submit_review with verdict "approve" or "changes_
         this.rt.send({ from: reviewerId, to: review.author, kind: "request", delivery: "queue", body: `Review from ${reviewer}: changes requested.\n${notes}` })
       } catch {}
     }
-    this.notifyLead(`Review of ${author?.info.name ?? "agent"} by ${reviewer}: ${verdict === "approve" ? "APPROVED" : "changes requested"}\n${notes}`, "result")
+    const verdictText = `Review of ${author?.info.name ?? "agent"} by ${reviewer}: ${verdict === "approve" ? "APPROVED" : "changes requested"}\n${notes}`
+    const lead = this.rt.orchestrator()
+    const reviewerRt = this.rt.agents.get(reviewerId)
+    // the lead dispatched this reviewer: the verdict goes out with the reviewer's own result
+    // (one message, which also ends wait_for_results on the reviewer) — not twice
+    if (lead && reviewerRt && !reviewerRt.closing && reviewerRt.resultTo.has(lead.info.agentId)) reviewerRt.reviewNote = verdictText
+    else this.notifyLead(verdictText, "result")
     return { author: author?.info.name ?? review.author }
   }
 
@@ -498,6 +510,16 @@ When done, call the baton tool submit_review with verdict "approve" or "changes_
     if (!this.rt.state.tasks.has(taskId)) throw new Error(`no task "${taskId}"`)
     this.rt.emit({ type: "task.state", data: { taskId, state, note } })
   }
+}
+
+/** At most a few items, then "+N more". */
+function listShort(items: string[], max = 8): string {
+  return items.length > max ? `${items.slice(0, max).join(", ")} +${items.length - max} more` : items.join(", ")
+}
+
+/** A task's file globs, shortened: a few are listed, many are just counted. */
+export function scopeSummary(globs: string[]): string {
+  return globs.length <= 3 ? globs.join(", ") : `its ${globs.length} claimed paths`
 }
 
 /** Minimal glob support: `*` (segment), `**` (any depth), `?`; plain paths match prefixes (dirs). */

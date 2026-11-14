@@ -118,6 +118,16 @@ export class CodexTranslator {
     this.emit({ type: "agent.status", data: detail ? { status, detail } : { status } })
   }
 
+  /**
+   * Status from what codex is waiting on: a pending request (at any time — MCP elicitations and
+   * requests raised between turn/start and turn/started have no active turn), a running turn, or
+   * nothing. Exited sessions stay exited.
+   */
+  syncStatus(): void {
+    if (this.status === "exited") return
+    this.setStatus(this.pending.size ? "awaiting_approval" : this.activeTurnId ? "busy" : "ready")
+  }
+
   /** Record the native thread id (emits `agent.session` once per id). */
   setThread(threadId: string): void {
     if (this.threadId === threadId) return
@@ -147,7 +157,9 @@ export class CodexTranslator {
   }
 
   notification(method: string, params: unknown, raw?: unknown): void {
-    if (this.isForeign(params)) {
+    // server requests are answered whichever thread raised them (sub-agent threads included), so
+    // their resolution must be honoured whichever thread it names
+    if (this.isForeign(params) && method !== "serverRequest/resolved") {
       this.log("debug", `codex: ignored ${method} for another thread`)
       return
     }
@@ -299,7 +311,7 @@ export class CodexTranslator {
     const prompt = this.nextPrompt
     this.nextPrompt = undefined
     this.emit({ type: "turn.started", data: prompt === undefined ? { turnId: turn.id } : { turnId: turn.id, prompt } })
-    this.setStatus("busy")
+    this.syncStatus()
   }
 
   private turnCompleted(turn: Turn): void {
@@ -308,7 +320,9 @@ export class CodexTranslator {
     this.messages.clear()
     for (const id of this.tools.keys()) this.emit({ type: "tool.update", data: { toolCallId: id, status: "failed", summary: "Interrupted" } })
     this.tools.clear()
-    for (const id of [...this.pending.keys()]) this.dropPending(id, "cancelled")
+    // codex abandons the turn's own requests; ones raised outside it (MCP elicitations with
+    // `turnId: null`, other threads) are still awaited and must stay answerable
+    for (const [id, p] of [...this.pending]) if (belongsToTurn(p, turn.id)) this.dropPending(id, "cancelled")
 
     // an interrupted turn ends with turn.interrupted alone (it is the terminal event, as in every adapter)
     if (turn.status === "interrupted") {
@@ -323,7 +337,7 @@ export class CodexTranslator {
       this.emit({ type: "turn.completed", data: { turnId: turn.id, stopReason: "end_turn" } })
     }
     if (this.activeTurnId === turn.id) this.activeTurnId = undefined
-    this.setStatus("ready")
+    this.syncStatus()
     this.onTurnEnded?.(turn.id, turn.status)
   }
 
@@ -519,7 +533,7 @@ export class CodexTranslator {
         return {
           title: `${p.serverName}: ${p.message}`,
           kind: "other",
-          detail: p.mode === "url" ? p.url : undefined,
+          detail: elicitationDetail(p),
           options: [
             { optionId: "allow_once", name: "Accept", kind: "allow_once" },
             { optionId: "reject_once", name: "Decline", kind: "reject_once" },
@@ -588,7 +602,7 @@ export class CodexTranslator {
       type: "permission.resolved",
       data: { requestId, optionId: opt?.optionId ?? null, kind: opt?.kind ?? null, by: opt ? by : by === "user" ? "cancelled" : by },
     })
-    if (this.activeTurnId) this.setStatus(this.pending.size ? "awaiting_approval" : "busy")
+    this.syncStatus()
     return { rpcId: p.rpcId, result: permissionResult(p, opt) }
   }
 
@@ -609,7 +623,7 @@ export class CodexTranslator {
     this.pending.delete(requestId)
     this.byRpcId.delete(p.rpcId)
     this.emit({ type: "permission.resolved", data: { requestId, optionId: null, kind: null, by } })
-    if (this.activeTurnId) this.setStatus(this.pending.size ? "awaiting_approval" : "busy")
+    this.syncStatus()
   }
 
   // ───────────────────────────── shell edits ─────────────────────────────
@@ -671,6 +685,38 @@ export function isReadOnlyCommand(item: ThreadItem): boolean {
 }
 
 // ───────────────────────────── permission responses ─────────────────────────────
+
+/** A pending request codex ties to `turnId` (legacy v1 requests carry no turn: treated as the current one). */
+function belongsToTurn(p: PendingPermission, turnId: string): boolean {
+  const tid = (p.params as { turnId?: unknown } | null)?.turnId
+  return tid === undefined || tid === turnId
+}
+
+const MAX_DETAIL = 2_000
+
+/**
+ * What an MCP elicitation is about. Codex's MCP tool-call approvals put the tool in `_meta`
+ * (`tool_description`, `tool_params` / `tool_params_display`, `connector_name`); form
+ * elicitations list the fields they ask for; url elicitations the url to open.
+ */
+function elicitationDetail(p: McpServerElicitationRequestParams): string | undefined {
+  const meta = p._meta && typeof p._meta === "object" && !Array.isArray(p._meta) ? (p._meta as Record<string, unknown>) : {}
+  const str = (v: unknown) => (typeof v === "string" ? v : v === undefined || v === null ? "" : JSON.stringify(v))
+  const parts: string[] = []
+  if (meta.connector_name) parts.push(`connector: ${str(meta.connector_name)}`)
+  if (meta.tool_description) parts.push(str(meta.tool_description))
+  const args = str(meta.tool_params_display) || str(meta.tool_params)
+  if (args) parts.push(`arguments: ${args}`)
+  if (p.mode === "url") parts.push(p.url)
+  else {
+    const props = (p.requestedSchema as { properties?: unknown } | null)?.properties
+    const fields = props && typeof props === "object" ? Object.keys(props).filter((k) => !k.startsWith("__")) : []
+    if (fields.length) parts.push(`asks for: ${fields.join(", ")}`)
+  }
+  const detail = parts.join("\n")
+  if (!detail) return undefined
+  return detail.length > MAX_DETAIL ? `${detail.slice(0, MAX_DETAIL)}…` : detail
+}
 
 function permissionResult(p: PendingPermission, opt: PermissionOption | undefined): unknown {
   const kind: PermissionOptionKind | undefined = opt?.kind

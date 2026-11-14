@@ -10,7 +10,7 @@
  */
 
 import { createHash } from "node:crypto"
-import { copyFileSync, existsSync, lstatSync, mkdirSync, rmdirSync, rmSync, symlinkSync } from "node:fs"
+import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, rmdirSync, rmSync, symlinkSync } from "node:fs"
 import { basename, dirname, join, resolve } from "node:path"
 import type { BatonConfig } from "@batonsh/kernel"
 import { stateDir } from "@batonsh/kernel"
@@ -458,7 +458,8 @@ type Runner = (argv: string[], cwd: string, timeoutMs: number) => Promise<{ code
 /**
  * A real per-worktree copy of a dependency folder (bundlers like Turbopack reject a node_modules
  * symlink that points outside the worktree, and `bun add` in a worker must not touch your
- * checkout): copy-on-write clone first, then the project's package manager; false → symlink it.
+ * checkout): copy-on-write clone first, then the project's package manager, then (windows) a plain copy;
+ * false → symlink it.
  * `rel` is the folder's path inside the worktree directory `cwd`.
  */
 export async function cloneDir(
@@ -477,6 +478,15 @@ export async function cloneDir(
   const install = installCommand(o.projectRoot, pkgDir)
   if (install && (await exec(install, pkgDir, 600_000)).code === 0 && existsSync(dst)) return true
   rmSync(dst, { recursive: true, force: true })
+  // windows has no copy-on-write cp, and a symlink there needs admin rights: a plain copy instead
+  if (platform === "win32" && !o.runner) {
+    try {
+      cpSync(src, dst, { recursive: true, verbatimSymlinks: true })
+      return true
+    } catch {
+      rmSync(dst, { recursive: true, force: true })
+    }
+  }
   return false
 }
 

@@ -247,11 +247,27 @@ export class WorkspaceManager {
       if (other.agentId === agentId || other.mode !== "worktree" || !other.snapshot || other.merged) continue
       const overlap = other.files.map((f) => f.path).filter((p) => mine.has(p))
       if (!overlap.length) continue
-      const base = await this.pairBase(me, other)
-      const r = await mergeTree(this.projectRoot, base, me.snapshot, other.snapshot).catch(() => undefined)
+      const r = await this.predict(me, other).catch(() => undefined)
       if (r && !r.clean) out.push({ with: other.agentId, files: r.conflicts.length ? r.conflicts : overlap })
     }
     return out
+  }
+
+  /**
+   * Would the two agents' *own* changes (each relative to its own base) collide? The other agent's
+   * change is first replayed onto my base, so a change that is already in one base (an earlier
+   * merge, your uncommitted edits) never counts as "both changed this".
+   */
+  private async predict(me: Workspace, other: Workspace) {
+    const mine = me.base as string
+    let theirs = other.snapshot as string
+    let base = mine
+    if (other.base && other.base !== mine && (await treeOf(this.projectRoot, mine)) !== (await treeOf(this.projectRoot, other.base))) {
+      const moved = await mergeTree(this.projectRoot, other.base, mine, other.snapshot as string)
+      if (moved.clean && moved.tree) theirs = await commitTree(this.projectRoot, moved.tree, [mine], "baton conflict check")
+      else base = await this.pairBase(me, other) // the bases themselves disagree: fall back to a common ancestor
+    }
+    return mergeTree(this.projectRoot, base, me.snapshot as string, theirs)
   }
 
   /**

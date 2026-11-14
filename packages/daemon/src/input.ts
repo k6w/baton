@@ -224,7 +224,7 @@ async function handleCommand(rt: Runtime, text: string, opts: { who?: string } =
     case "pr": {
       if (args[0] === "confirm") {
         const r = await openPr(rt, args.slice(1).join(" ") || undefined)
-        return { routedTo: [], command: cmd, output: `opened ${r.url} (${r.files.length} files on ${r.branch})` }
+        return { routedTo: [], command: cmd, output: `opened ${r.url} (${r.files.length} files on ${r.branch})${r.warning ? `\nwarning: ${r.warning}` : ""}` }
       }
       const p = await planPr(rt, args.join(" ") || undefined)
       return {

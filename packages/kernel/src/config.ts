@@ -301,6 +301,8 @@ export const BatonConfig = z.object({
       setup: z.string().optional(),
       /** Command that must pass in the worktree before its changes are merged. */
       verify: z.string().optional(),
+      /** commit: a merge lands as a commit on your current branch ("baton: <agent> — <task>"), unless you have uncommitted edits in the same files; working-tree: left as uncommitted changes. */
+      merge: z.enum(["commit", "working-tree"]).default("commit"),
       /** off | suggested (orchestrator is told to get reviews) | required (merge refuses without an approval). */
       review: z.enum(["off", "suggested", "required"]).default("suggested"),
       /** Adapter used for reviews (default: a different vendor than the author). */
@@ -318,6 +320,7 @@ export const BatonConfig = z.object({
       isolation: "worktree",
       link: ["node_modules", ".venv", "vendor"],
       clone: ["node_modules"],
+      merge: "commit",
       copy: [".env", ".env.local", ".env.development.local"],
       review: "suggested",
       cleanup: "merged",

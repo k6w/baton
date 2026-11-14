@@ -9,7 +9,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { resolveSecret } from "@batonsh/kernel"
-import { git } from "./git.ts"
+import { git, userIdentity } from "./git.ts"
 import type { Runtime } from "./runtime.ts"
 
 export interface RepoRef {
@@ -137,6 +137,8 @@ export interface PrPlan {
   body: string
   files: string[]
   issue?: Issue
+  /** Where this branch forked from what the PR targets (the upstream / remote base), when known locally. */
+  fork?: string
 }
 
 const slug = (s: string) =>
@@ -160,14 +162,30 @@ export async function planPr(rt: Runtime, title?: string): Promise<PrPlan> {
       byAgent.get(name)!.add(f)
     }
   }
-  const changed = new Set(
-    (await git(rt.projectRoot, ["status", "--porcelain", "-z", "--untracked-files=all", "--", "."])).stdout
-      .split("\0")
-      .filter(Boolean)
-      .map((l) => l.slice(3)),
-  )
+  const cwd = rt.projectRoot
+  const names = (out: string) => out.split("\0").filter(Boolean)
+  // all paths relative to the project (like the merge events' files), also in a monorepo subdirectory
+  const changed = new Set([
+    ...names((await git(cwd, ["diff", "-z", "--name-only", "--relative", "HEAD", "--", "."], { allowFail: true })).stdout),
+    ...names((await git(cwd, ["ls-files", "-z", "--others", "--exclude-standard", "--", "."])).stdout),
+  ])
+  const head = (await git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim()
+  const remote = rt.config.github.remote
+  const onRemote = (await git(cwd, ["ls-remote", "--heads", remote, head], { allowFail: true })).stdout.trim() !== ""
+  const base = head !== "HEAD" && onRemote ? head : (await api<{ default_branch: string }>(rt, "GET", `/repos/${repo.owner}/${repo.repo}`)).default_branch
+  // merges land as commits by default (workspace.merge = "commit"): committed-but-unpushed ones count too —
+  // measured from the upstream, else from the remote's copy of the PR base (a branch never pushed has no upstream)
+  let fork: string | undefined
+  for (const ref of ["@{upstream}", `refs/remotes/${remote}/${base}`]) {
+    const r = await git(cwd, ["merge-base", "HEAD", ref], { allowFail: true })
+    if (r.code === 0 && r.stdout.trim()) {
+      fork = r.stdout.trim()
+      break
+    }
+  }
+  if (fork) for (const f of names((await git(cwd, ["diff", "-z", "--name-only", "--relative", fork, "HEAD", "--", "."])).stdout)) changed.add(f)
   const files = [...merged].filter((f) => changed.has(f)).sort()
-  if (!files.length) throw new Error("nothing to open a PR with: no merged changes from this run are left uncommitted")
+  if (!files.length) throw new Error("nothing to open a PR with: no merged changes from this run are left uncommitted or unpushed")
   const issue = linked.get(rt)
   const firstTask = (() => {
     const id = rt.state.orchestratorId
@@ -175,9 +193,6 @@ export async function planPr(rt: Runtime, title?: string): Promise<PrPlan> {
     return it && it.kind === "user" ? (it.text.split("\n")[0] ?? "") : ""
   })()
   const prTitle = title?.trim() || (issue ? `${issue.title} (#${issue.number})` : firstTask.slice(0, 72) || "Changes from Baton")
-  const head = (await git(rt.projectRoot, ["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim()
-  const onRemote = (await git(rt.projectRoot, ["ls-remote", "--heads", rt.config.github.remote, head], { allowFail: true })).stdout.trim() !== ""
-  const base = head !== "HEAD" && onRemote ? head : (await api<{ default_branch: string }>(rt, "GET", `/repos/${repo.owner}/${repo.repo}`)).default_branch
   const lines: string[] = []
   if (issue) lines.push(`Closes #${issue.number}`, "")
   const lead = rt.state.orchestratorId
@@ -203,35 +218,47 @@ export async function planPr(rt: Runtime, title?: string): Promise<PrPlan> {
   }
   if (rt.config.workspace.verify) lines.push("", `Verified with \`${rt.config.workspace.verify}\` before each merge.`)
   lines.push("", "_Made with [Baton](https://github.com/k6w/baton) — a team of coding agents._")
-  return { repo, branch: `baton/${slug(prTitle)}-${rt.runId.slice(-6).toLowerCase()}`, base, title: prTitle, body: lines.join("\n"), files, issue }
-}
-
-async function userIdentity(cwd: string): Promise<Record<string, string>> {
-  const get = async (k: string) => (await git(cwd, ["config", k], { allowFail: true })).stdout.trim()
-  const [name, email] = await Promise.all([get("user.name"), get("user.email")])
-  return name && email ? { GIT_AUTHOR_NAME: name, GIT_AUTHOR_EMAIL: email, GIT_COMMITTER_NAME: name, GIT_COMMITTER_EMAIL: email } : {}
+  return { repo, branch: `baton/${slug(prTitle)}-${rt.runId.slice(-6).toLowerCase()}`, base, title: prTitle, body: lines.join("\n"), files, issue, fork }
 }
 
 /** Commit (via a temporary index), push a new branch and open the pull request. */
-export async function openPr(rt: Runtime, title?: string): Promise<{ url: string; number: number; branch: string; files: string[] }> {
+export async function openPr(rt: Runtime, title?: string): Promise<{ url: string; number: number; branch: string; files: string[]; warning?: string }> {
   if (!(await githubToken(rt))) throw new Error("no GitHub token: set GITHUB_TOKEN (or github.token) — needed to open pull requests")
   const plan = await planPr(rt, title)
   const cwd = rt.projectRoot
-  const dir = mkdtempSync(join(tmpdir(), "baton-pr-"))
-  const env = { GIT_INDEX_FILE: join(dir, "index"), ...(await userIdentity(cwd)) }
-  let commit: string
-  try {
-    await git(cwd, ["read-tree", "HEAD"], { env })
-    for (const f of plan.files) {
-      if (existsSync(join(cwd, f))) await git(cwd, ["update-index", "--add", "--", f], { env })
-      else await git(cwd, ["update-index", "--force-remove", "--", f], { env })
+  const identity = await userIdentity(cwd)
+  const message = `${plan.title}\n\n${plan.issue ? `Closes #${plan.issue.number}\n\n` : ""}Made with Baton.`
+  // the plan's files as they are on disk, on top of `parent`
+  const build = async (parent: string): Promise<string> => {
+    const dir = mkdtempSync(join(tmpdir(), "baton-pr-"))
+    const env = { GIT_INDEX_FILE: join(dir, "index"), ...identity }
+    try {
+      await git(cwd, ["read-tree", parent], { env })
+      for (const f of plan.files) {
+        if (existsSync(join(cwd, f))) await git(cwd, ["update-index", "--add", "--", f], { env })
+        else await git(cwd, ["update-index", "--force-remove", "--", f], { env })
+      }
+      const tree = (await git(cwd, ["write-tree"], { env })).stdout.trim()
+      if (tree === (await git(cwd, ["rev-parse", `${parent}^{tree}`])).stdout.trim()) return parent
+      return (await git(cwd, ["commit-tree", tree, "-p", parent, "-m", message], { env })).stdout.trim()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
     }
-    const tree = (await git(cwd, ["write-tree"], { env })).stdout.trim()
-    const message = `${plan.title}\n\n${plan.issue ? `Closes #${plan.issue.number}\n\n` : ""}Made with Baton.`
-    commit = (await git(cwd, ["commit-tree", tree, "-p", "HEAD", "-m", message], { env })).stdout.trim()
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
   }
+  const headSha = (await git(cwd, ["rev-parse", "HEAD"])).stdout.trim()
+  let commit = await build(headSha)
+  // everything is committed already (Baton's merge commits): one commit with only the plan's files on
+  // the fork point — not every unpushed commit on the branch (the user's own included)
+  if (commit === headSha && plan.fork) commit = await build(plan.fork)
+  // the pushed commit's unpushed ancestry: say so if that carries commits that aren't Baton merges
+  let warning: string | undefined
+  const log = await git(cwd, ["log", "--format=%h %s", `${commit}^@`, "--not", `--remotes=${rt.config.github.remote}`], { allowFail: true })
+  const foreign = log.stdout
+    .split("\n")
+    .filter(Boolean)
+    .filter((l) => !/^\S+ baton: /.test(l))
+  if (log.code === 0 && foreign.length)
+    warning = `the PR also contains ${foreign.length} unpushed commit${foreign.length === 1 ? "" : "s"} that ${foreign.length === 1 ? "isn't a Baton merge" : "aren't Baton merges"}: ${foreign.slice(0, 5).join("; ")}${foreign.length > 5 ? "; …" : ""}`
   await git(cwd, ["push", rt.config.github.remote, `${commit}:refs/heads/${plan.branch}`])
   const pr = await api<{ html_url: string; number: number }>(rt, "POST", `/repos/${plan.repo.owner}/${plan.repo.repo}/pulls`, {
     title: plan.title,
@@ -240,6 +267,6 @@ export async function openPr(rt: Runtime, title?: string): Promise<{ url: string
     body: plan.body,
     draft: rt.config.github.draft,
   })
-  rt.emit({ type: "orch.note", data: { text: `opened pull request #${pr.number}: ${pr.html_url}` } })
-  return { url: pr.html_url, number: pr.number, branch: plan.branch, files: plan.files }
+  rt.emit({ type: "orch.note", data: { text: `opened pull request #${pr.number}: ${pr.html_url}${warning ? ` — warning: ${warning}` : ""}` } })
+  return { url: pr.html_url, number: pr.number, branch: plan.branch, files: plan.files, ...(warning ? { warning } : {}) }
 }

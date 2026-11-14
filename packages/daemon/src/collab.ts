@@ -221,6 +221,7 @@ export class Collaboration {
       return approved ? undefined : "workspace.review = required: get an approving review of the current changes first (request_review)"
     }
     const r = await this.workspaces.merge(agentId, {
+      label: agent.info.label,
       onStage: () => this.rt.emit({ type: "workspace.merge", data: { status: "verifying" } }, agentId),
       gate,
     })

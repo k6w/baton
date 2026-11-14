@@ -3,7 +3,20 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { type BatonEvent, diffLines, parseUnifiedDiff } from "@batonsh/protocol"
-import { classifyTask, EventStore, envLayer, formatCount, loadConfig, pickAgents, RunState, runRecords, scorecards, template, trustEntries } from "./index.ts"
+import {
+  classifyTask,
+  EventStore,
+  envLayer,
+  formatAgentLoad,
+  formatCount,
+  loadConfig,
+  pickAgents,
+  RunState,
+  runRecords,
+  scorecards,
+  template,
+  trustEntries,
+} from "./index.ts"
 
 describe("EventStore", () => {
   test("append validates, assigns seq and replays in order", () => {
@@ -322,5 +335,17 @@ describe("RunState for exports", () => {
     }
     expect(build(true)).toBe(100)
     expect(build(false)).toBe(150)
+  })
+})
+
+describe("formatAgentLoad", () => {
+  const now = 1_000_000
+  test("a working agent with no usage yet shows its last activity, not 0 tok", () => {
+    expect(formatAgentLoad({ status: "busy", usage: { input: 0, output: 0 }, lastEventAt: now - 12_000 }, now)).toBe("last activity 12s ago")
+  })
+  test("tokens stream in alongside the activity; idle agents show tokens only", () => {
+    expect(formatAgentLoad({ status: "busy", usage: { input: 9000, output: 3000 }, lastEventAt: now - 5_000 }, now)).toBe("12k tok · last activity 5s ago")
+    expect(formatAgentLoad({ status: "ready", usage: { input: 0, output: 0 } }, now)).toBe("0 tok")
+    expect(formatAgentLoad({ status: "ready", usage: { input: 500, output: 0 }, lastEventAt: now }, now)).toBe("500 tok")
   })
 })

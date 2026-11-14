@@ -28,6 +28,23 @@ export function formatDuration(ms: number): string {
   return `${h}h ${m % 60}m`
 }
 
+/**
+ * An agent's token count for status lines — plus, while it works, how long ago it last did
+ * something, so a working agent and a stuck one don't look the same. Adapters that report no
+ * usage until a turn ends show the activity alone instead of "0 tok".
+ */
+export function formatAgentLoad(
+  a: { status: string; usage: { input: number; output: number }; lastEventAt?: number; startedAt?: number },
+  now = Date.now(),
+): string {
+  const tokens = a.usage.input + a.usage.output
+  const working = a.status === "busy" || a.status === "awaiting_approval" || a.status === "starting"
+  const last = a.lastEventAt ?? a.startedAt
+  const activity = working && last !== undefined ? `last activity ${formatDuration(now - last)} ago` : undefined
+  if (tokens > 0) return activity ? `${formatTokens(tokens)} tok · ${activity}` : `${formatTokens(tokens)} tok`
+  return activity ?? "0 tok"
+}
+
 export function formatCost(usd: number): string {
   if (usd === 0) return "$0"
   if (usd < 0.01) return "<$0.01"

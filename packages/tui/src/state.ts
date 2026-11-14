@@ -151,6 +151,8 @@ export interface UiState {
   /** Set by the zoom view: runs zoom.* keymap commands (search, copy, …). */
   zoomAction: Accessor<((id: string) => void) | undefined>
   setZoomAction: (fn: ((id: string) => void) | undefined) => void
+  /** Set by the orchestrator pane: scrolls its history (dir −1 up / +1 down, by a page). PgUp/PgDn while typing. */
+  orchScroll: { current?: (dir: -1 | 1) => void }
   /** Agent shown in the peek overlay. */
   peekAgent: Accessor<string | null>
   setPeekAgent: Setter<string | null>
@@ -364,6 +366,7 @@ export function createUiState(opts: {
     capturing,
     setCapturing,
     zoomAction,
+    orchScroll: {},
     setZoomAction: (fn) => setZoomActionSig(() => fn),
     toasts,
     toast,

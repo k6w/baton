@@ -4,7 +4,7 @@
  * Enter sends · shift+enter / alt+enter / ctrl+j insert a newline.
  */
 import type { KeyBinding, KeyEvent, TextareaRenderable } from "@opentui/core"
-import { createSignal } from "solid-js"
+import { createEffect, createSignal } from "solid-js"
 import { useUi } from "../context.ts"
 import { width as sw } from "../lines.ts"
 
@@ -72,14 +72,14 @@ export function MessageInput(props: MessageInputProps) {
       props.onRows?.(r)
     }
   }
-  report()
+  createEffect(report)
   return (
     <textarea
       ref={(r: TextareaRenderable) => {
         ref = r
         props.ref?.(r)
       }}
-      height={(report(), rows())}
+      height={rows()}
       flexGrow={1}
       wrapMode="word"
       initialValue={props.initialValue}

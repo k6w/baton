@@ -612,9 +612,14 @@ describe("sent messages stay visible in the orchestrator pane", () => {
     f = await m2.frame()
     expect(f).toContain("change course now")
     expect(f).toContain("↳ steering")
-    lead.turnStartedAt = prev // the turn is over: plain
-    m2.ui.bump()
-    f = await m2.frame()
+    // the turn is over (a later one started): plain. Frames can lag the bump, so poll a few.
+    lead.turnStartedAt = turn + 1
+    for (let i = 0; i < 20; i++) {
+      m2.ui.bump()
+      f = await m2.frame()
+      if (!f.includes("↳ steering")) break
+    }
+    lead.turnStartedAt = prev
     expect(f).toContain("change course now")
     expect(f).not.toContain("↳ steering")
     m2.dispose()

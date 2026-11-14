@@ -289,6 +289,12 @@ export const BatonConfig = z.object({
       dir: z.string().optional(),
       /** Symlinked from the project into each worktree when present (dependency folders). */
       link: z.array(z.string()).default(["node_modules", ".venv", "vendor"]),
+      /**
+       * Linked paths that get a real per-worktree copy instead of a symlink (bundlers like Turbopack
+       * reject a node_modules symlink; `bun add` in a worker must not change your checkout):
+       * copy-on-write clone, else the package manager's install, else the symlink after all.
+       */
+      clone: z.array(z.string()).default(["node_modules"]),
       /** Copied into each worktree when present (usually git-ignored secrets). */
       copy: z.array(z.string()).default([".env", ".env.local", ".env.development.local"]),
       /** Command run once in each new worktree (e.g. "bun install"). */
@@ -311,6 +317,7 @@ export const BatonConfig = z.object({
     .default({
       isolation: "worktree",
       link: ["node_modules", ".venv", "vendor"],
+      clone: ["node_modules"],
       copy: [".env", ".env.local", ".env.development.local"],
       review: "suggested",
       cleanup: "merged",

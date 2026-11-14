@@ -10,7 +10,7 @@
  */
 
 import { createHash } from "node:crypto"
-import { copyFileSync, existsSync, lstatSync, mkdirSync, rmdirSync, symlinkSync } from "node:fs"
+import { copyFileSync, existsSync, lstatSync, mkdirSync, rmdirSync, rmSync, symlinkSync } from "node:fs"
 import { basename, dirname, join, resolve } from "node:path"
 import type { BatonConfig } from "@batonsh/kernel"
 import { stateDir } from "@batonsh/kernel"
@@ -171,7 +171,9 @@ export class WorkspaceManager {
     mkdirSync(path, { recursive: true })
     for (const l of exclude) {
       const target = join(path, l)
-      if (!existsSync(target)) symlinkSync(join(this.projectRoot, l), target, lstatSync(join(this.projectRoot, l)).isDirectory() ? "dir" : "file")
+      if (existsSync(target)) continue
+      if (this.cfg.clone.includes(l) && (await cloneDir(join(this.projectRoot, l), target, { cwd: path, rel: l, projectRoot: this.projectRoot }))) continue
+      symlinkSync(join(this.projectRoot, l), target, lstatSync(join(this.projectRoot, l)).isDirectory() ? "dir" : "file")
     }
     for (const f of this.cfg.copy) {
       const src = join(this.projectRoot, f)
@@ -413,13 +415,8 @@ export class WorkspaceManager {
   }
 }
 
-async function runShell(cmd: string, cwd: string, timeoutMs: number): Promise<{ code: number; output: string }> {
-  const proc = Bun.spawn(shellCommand(cmd), { windowsHide: true, cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore" })
-  const timer = setTimeout(() => proc.kill(), timeoutMs)
-  const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()])
-  const code = await proc.exited
-  clearTimeout(timer)
-  return { code, output: `${out}${err}` }
+function runShell(cmd: string, cwd: string, timeoutMs: number): Promise<{ code: number; output: string }> {
+  return run(shellCommand(cmd), cwd, timeoutMs)
 }
 
 function tail(s: string, lines = 30): string {
@@ -429,4 +426,53 @@ function tail(s: string, lines = 30): string {
 /** Private ref holding a workspace's base snapshot (bookkeeping only; never a branch's parent). */
 function pinRef(branch: string): string {
   return `refs/baton/bases/${branch}`
+}
+
+async function run(argv: string[], cwd: string, timeoutMs: number): Promise<{ code: number; output: string }> {
+  const proc = Bun.spawn(argv, { windowsHide: true, cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore" })
+  const timer = setTimeout(() => proc.kill(), timeoutMs)
+  const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()])
+  const code = await proc.exited
+  clearTimeout(timer)
+  return { code, output: `${out}${err}` }
+}
+
+type Runner = (argv: string[], cwd: string, timeoutMs: number) => Promise<{ code: number }>
+
+/**
+ * A real per-worktree copy of a dependency folder (bundlers like Turbopack reject a node_modules
+ * symlink that points outside the worktree, and `bun add` in a worker must not touch your
+ * checkout): copy-on-write clone first, then the project's package manager; false → symlink it.
+ * `rel` is the folder's path inside the worktree directory `cwd`.
+ */
+export async function cloneDir(
+  src: string,
+  dst: string,
+  o: { cwd: string; rel: string; projectRoot: string; platform?: NodeJS.Platform; runner?: Runner },
+): Promise<boolean> {
+  if (!lstatSync(src).isDirectory()) return false
+  const exec: Runner = (argv, cwd, ms) => (o.runner ?? run)(argv, cwd, ms).catch(() => ({ code: -1 })) // missing binary → just a failure
+  const platform = o.platform ?? process.platform
+  const cp = platform === "darwin" ? ["cp", "-c", "-R", src, dst] : platform === "linux" ? ["cp", "--reflink=auto", "-R", src, dst] : undefined
+  if (cp && (await exec(cp, o.cwd, 600_000)).code === 0) return true
+  rmSync(dst, { recursive: true, force: true }) // a half-done copy
+  if (basename(o.rel) !== "node_modules") return false
+  const pkgDir = join(o.cwd, dirname(o.rel))
+  const install = installCommand(o.projectRoot, pkgDir)
+  if (install && (await exec(install, pkgDir, 600_000)).code === 0 && existsSync(dst)) return true
+  rmSync(dst, { recursive: true, force: true })
+  return false
+}
+
+/** Install command for the package in `pkgDir`, picked by the lockfile found there or at the project root. */
+export function installCommand(projectRoot: string, pkgDir: string): string[] | undefined {
+  if (!existsSync(join(pkgDir, "package.json"))) return undefined
+  for (const dir of [pkgDir, projectRoot]) {
+    const has = (f: string) => existsSync(join(dir, f))
+    if (has("bun.lock") || has("bun.lockb")) return ["bun", "install"]
+    if (has("pnpm-lock.yaml")) return ["pnpm", "install"]
+    if (has("yarn.lock")) return ["yarn", "install"]
+    if (has("package-lock.json") || has("npm-shrinkwrap.json")) return ["npm", "install"]
+  }
+  return undefined
 }

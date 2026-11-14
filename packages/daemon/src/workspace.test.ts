@@ -367,6 +367,32 @@ describe("WorkspaceManager", () => {
     expect((await wm.refresh("a1"))?.files).toEqual([])
   })
 
+  test("no conflict warning for a change that is already in the other worker's base", async () => {
+    const lines = (o: Record<number, string> = {}) => `${Array.from({ length: 8 }, (_, i) => o[i] ?? `line ${i}`).join("\n")}\n`
+    writeFileSync(join(root, "f.txt"), lines())
+    await git(root, ["add", "-A"])
+    await git(root, ["commit", "-q", "-m", "f"])
+    const wm = new WorkspaceManager(root, cfg(), "run_x")
+    const w1 = await wm.create("a1", "codex-1", "worktree")
+    writeFileSync(join(w1.path, "f.txt"), lines({ 1: "one" }))
+    expect((await wm.merge("a1")).status).toBe("merged")
+    // the user touches something else, then a second worker starts (its base has a1's change)
+    writeFileSync(join(root, "other.txt"), "user\n")
+    const w2 = await wm.create("a2", "codex-2", "worktree")
+    expect(readFileSync(join(w2.path, "f.txt"), "utf8")).toBe(lines({ 1: "one" }))
+    // a1 keeps working right next to its merged line; a2 edits far away
+    writeFileSync(join(w1.path, "f.txt"), lines({ 1: "one", 2: "two" }))
+    writeFileSync(join(w2.path, "f.txt"), lines({ 1: "one", 6: "six" }))
+    await wm.refresh("a1")
+    await wm.refresh("a2")
+    expect(await wm.conflictsFor("a1")).toEqual([])
+    expect(await wm.conflictsFor("a2")).toEqual([])
+    // a real overlap is still reported
+    writeFileSync(join(w2.path, "f.txt"), lines({ 1: "one", 2: "deux" }))
+    await wm.refresh("a2")
+    expect(await wm.conflictsFor("a1")).toEqual([{ with: "a2", files: ["f.txt"] }])
+  })
+
   test("diff stats count every line of large new and modified files", async () => {
     const wm = new WorkspaceManager(root, cfg(), "run_x")
     const ws = await wm.create("a1", "codex-1", "worktree")

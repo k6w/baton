@@ -1111,8 +1111,8 @@ export class Runtime {
     if (rt.resultTo.size === 0) return
     const targets = [...rt.resultTo]
     rt.resultTo.clear()
-    const turnDiff = snap?.diff ?? rt.turnDiff
-    const diff = turnDiff.added || turnDiff.removed ? ` (+${turnDiff.added} −${turnDiff.removed})` : ""
+    // captured now: the next turn may start (and reset these) before the workspace refresh below is done
+    const turnDiff = { ...(snap?.diff ?? rt.turnDiff) }
     const summary = (snap?.text ?? rt.lastAssistantText).trim()
     // a follow-up turn that ended without a message (e.g. it only replied via send_message)
     const fallback = rt.lastSummary?.trim() ? `(no new summary this turn — ${rt.info.name}'s last summary:)\n${rt.lastSummary.trim()}` : "(no summary)"
@@ -1122,20 +1122,30 @@ export class Runtime {
     // a review verdict travels with the reviewer's own result: the lead gets it once
     // (a fail reason is never dropped; a summary that only repeats the verdict is)
     if (review) text = rt.failReason || !summary || !review.includes(summary) ? `${review}\n\n${text}` : review
-    const ws = this.collab.workspaces.byAgent.get(rt.info.agentId)
-    const where =
-      ws?.mode === "worktree" && (turnDiff.added || turnDiff.removed)
-        ? `\n[changes are in ${rt.info.name}'s own worktree — call merge("${rt.info.name}") to bring them into the project]`
-        : ""
     const check = rt.acceptanceNote ? `\n${rt.acceptanceNote}` : ""
     rt.acceptanceNote = undefined
-    const body = `result ${outcome}${diff}\n${text.length > 4000 ? `${text.slice(0, 4000)}…` : text}${check}${where}`
-    for (const t of targets) {
-      if (!this.agents.get(t) || this.agents.get(t)?.closing) continue
-      try {
-        this.send({ from: rt.info.agentId, to: t, body, kind: "result", delivery: "queue" })
-      } catch {}
+    const send = (d: { added: number; removed: number }, worktree: boolean) => {
+      const diff = d.added || d.removed ? ` (+${d.added} −${d.removed})` : ""
+      const where =
+        worktree && (d.added || d.removed)
+          ? `\n[changes are in ${rt.info.name}'s own worktree — call merge("${rt.info.name}") to bring them into the project]`
+          : ""
+      const body = `result ${outcome}${diff}\n${text.length > 4000 ? `${text.slice(0, 4000)}…` : text}${check}${where}`
+      for (const t of targets) {
+        if (!this.agents.get(t) || this.agents.get(t)?.closing) continue
+        try {
+          this.send({ from: rt.info.agentId, to: t, body, kind: "result", delivery: "queue" })
+        } catch {}
+      }
     }
+    // a worktree's real diff (every file, however it was written: shell, scripts, generators) — the
+    // sum of the edit tools' own diffs misses most of it
+    if (this.collab.workspaces.byAgent.get(rt.info.agentId)?.mode === "worktree")
+      void this.collab
+        .refresh(rt.info.agentId)
+        .catch(() => undefined)
+        .then((w) => send(w ? stat(w.files) : turnDiff, true))
+    else send(turnDiff, false)
   }
 
   /**
@@ -1612,4 +1622,8 @@ export function effectiveApproval(base: ApprovalMode, autonomy: Autonomy): Appro
     default:
       return base
   }
+}
+
+function stat(files: { added: number; removed: number }[]): { added: number; removed: number } {
+  return { added: files.reduce((n, f) => n + f.added, 0), removed: files.reduce((n, f) => n + f.removed, 0) }
 }

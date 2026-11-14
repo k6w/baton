@@ -687,6 +687,12 @@ export function App(props: { onExit: (opts: { shutdown: boolean }) => void }) {
     contexts.push("global")
     // while completions are open, tab/up/down belong to the input
     if (typing && ["tab", "up", "down"].includes(key.name) && completions(ui.input(), ui.run, ui.config, ui.client).length > 0) return
+    // typing in the orchestrator: PgUp/PgDn scroll its history (like zoom), not the agent grid
+    if (typing && (key.name === "pageup" || key.name === "pagedown") && ui.orchScroll.current) {
+      key.preventDefault?.()
+      ui.orchScroll.current(key.name === "pageup" ? -1 : 1)
+      return
+    }
     const id = ui.keymap.resolve(key, contexts)
     if (!id) return
     // while typing, only fire global commands bound to modifier / special keys

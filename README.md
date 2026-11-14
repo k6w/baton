@@ -13,6 +13,8 @@
   <a href="https://github.com/k6w/baton/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/k6w/baton?style=flat-square&color=1f6feb"></a>
   <a href="https://github.com/k6w/baton/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/k6w/baton/ci.yml?branch=main&style=flat-square&label=tests"></a>
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-3fb950?style=flat-square"></a>
+  <a href="https://www.npmjs.com/package/batonsh"><img alt="npm" src="https://img.shields.io/npm/v/batonsh?style=flat-square&color=cb3837&label=npm"></a>
+  <a href="https://pypi.org/project/batonsh/"><img alt="PyPI" src="https://img.shields.io/pypi/v/batonsh?style=flat-square&color=3775a9&label=pypi"></a>
   <img alt="macOS · Linux · Windows" src="https://img.shields.io/badge/macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-8b949e?style=flat-square">
 </p>
 

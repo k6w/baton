@@ -3,7 +3,7 @@
 All notable changes to Baton. Versions follow [semver](https://semver.org); the control protocol
 (`baton protocol`) and the event log format (BEP) carry their own version numbers.
 
-## Unreleased
+## 0.4.0 — 2026-11-14
 
 **Changed**
 - A merge now lands as a commit on your **current branch** (`baton: <agent> — <task>`), not as uncommitted
@@ -25,6 +25,33 @@ All notable changes to Baton. Versions follow [semver](https://semver.org); the 
   space. If the copy fails, the project's package manager installs it (up to 10 minutes); the old
   symlink is the last resort. Set `workspace.clone = []` to keep symlinking.
 - No more conflict warnings for a change that was already in the other worker's base.
+- Results report the worktree's real `+/−` line counts (files written by shell commands were missed).
+- Codex workers no longer sit in `awaiting_approval` forever: approvals Codex raises outside a turn
+  (MCP elicitations, MCP startup) stay answerable, answering one clears the status, and MCP tool
+  approvals show the tool's description and arguments.
+- The orchestrator hears at once when a worker is blocked on an approval (what it asks, the request id),
+  and again every 2 minutes while it waits. New tools `list_approvals` and `answer_approval` let it see
+  and answer them; `list_agents` shows them too. Answers given while an agent is still starting are
+  delivered once it is up.
+- `wait_for_results` and `read_inbox` no longer report "timed out" after about a minute: clients that
+  accept progress get keep-alives and the full timeout, others get an honest "still waiting after Ns"
+  reply. Results already in the inbox count, so none end up only in `read_inbox`.
+- `get_diff` has `stat: true` (per-file `+/−`) and pages large diffs (`offset`, `max_bytes`) instead of
+  failing.
+- `list_agents` shows "last activity 8s ago" instead of `0 tok` while an agent works.
+- A review verdict reaches the orchestrator once, not twice.
+- Loop detection ignores read-only commands (`cd`, `ls`, `cat`, `rg`, `git status` …) and counts edits or
+  changed output as progress. Out-of-scope warnings name only the unexpected files.
+- A message that arrives while a worker's acceptance check runs waits for its result, then gets its own
+  turn; results no longer say "(no summary)" when there is one.
+
+**TUI**
+- The orchestrator pane scrolls like the agent panes (wheel; PgUp/PgDn while typing) and stays pinned to
+  the bottom only while you're there.
+- The orchestrator and peek inputs are multi-line: they wrap and grow to 8 rows. Enter sends; Alt+Enter
+  (or Shift+Enter in terminals with the kitty keyboard protocol) adds a newline.
+- What you send shows up in the orchestrator pane at once, marked `◌ queued` while the agent is busy
+  (and pinned above the input) or `↳ steering` when it goes into the current turn.
 
 ## 0.3.9 — 2026-10-27
 

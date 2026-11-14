@@ -8,6 +8,7 @@ name: release
 #     (or no token: add this repo + release.yml as a "trusted publisher" on each package on
 #      npmjs.com, then set the repository variable NPM_PUBLISH=oidc)
 #   HOMEBREW_TAP_TOKEN                                         push Formula/baton.rb to <owner>/homebrew-tap
+#   GitHub Packages: no secret, uses GITHUB_TOKEN (mirrors batonsh as @<owner>/batonsh)
 #   PyPI uses trusted publishing (environment "pypi"): no secret needed once configured on pypi.org.
 on:
   push:
@@ -19,7 +20,7 @@ on:
       only:
         description: Publish only this
         type: choice
-        options: [pypi, npm]
+        options: [pypi, npm, github-packages]
 
 permissions:
   contents: write
@@ -182,6 +183,40 @@ jobs:
           cd tap
           git config user.name "baton release" && git config user.email "release@users.noreply.github.com"
           git add Formula/baton.rb && git commit -m "baton ${GITHUB_REF_NAME#v}" && git push
+
+  # Mirror the batonsh package from npmjs to GitHub Packages as @<owner>/batonsh, so it shows in
+  # the repo's and profile's Packages tab. The platform binaries still come from npmjs.
+  # Without a tag (gh workflow run release.yml -f only=github-packages) it mirrors npm's latest.
+  github-packages:
+    needs: publish
+    if: ${{ !cancelled() && ((github.event_name == 'push' && needs.publish.result == 'success') || inputs.only == 'github-packages') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://npm.pkg.github.com
+          scope: "@${{ github.repository_owner }}"
+      - env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: |
+          npmjs=https://registry.npmjs.org
+          if [ "$GITHUB_EVENT_NAME" = push ]; then v="${GITHUB_REF_NAME#v}"; else v="$(npm view batonsh version --registry $npmjs)"; fi
+          name="@${GITHUB_REPOSITORY_OWNER,,}/batonsh"
+          if npm view "$name@$v" version >/dev/null 2>&1; then echo "$name@$v already published"; exit 0; fi
+          cd "$RUNNER_TEMP"
+          npm pack "batonsh@$v" --registry $npmjs
+          tar xzf "batonsh-$v.tgz"
+          cd package
+          NAME="$name" node -e '
+            const fs = require("fs"); const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            p.name = process.env.NAME; p.publishConfig = { registry: "https://npm.pkg.github.com" };
+            fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");'
+          npm publish --ignore-scripts
 
   pypi:
     if: github.event_name == 'push' || inputs.only == 'pypi'

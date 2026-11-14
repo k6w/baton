@@ -573,3 +573,50 @@ test("agent messages render Markdown (no raw ** or backticks on screen)", async 
   expect(f).not.toContain("## Done")
   m.dispose()
 })
+
+describe("sent messages stay visible in the orchestrator pane", () => {
+  test("a message appears at once as a user line, multi-line preserved, and survives the daemon echo once", async () => {
+    const m = await mount(120, 40, {}, { kittyKeyboard: true })
+    await m.frame()
+    await m.t.mockInput.typeText("first line of ask")
+    m.t.mockInput.pressEnter({ shift: true })
+    await m.t.mockInput.typeText("second line of ask")
+    m.t.mockInput.pressEnter()
+    const f = await m.frame()
+    expect(f).toContain("> first line of ask")
+    expect(f).toContain("second line of ask")
+    expect(m.ui.sends().some((s) => s.text === "first line of ask\nsecond line of ask")).toBe(true)
+    m.dispose()
+  })
+
+  test("queued messages are marked in the history and pinned above the input; steering is marked too", async () => {
+    const m = await mount(120, 40)
+    await m.frame()
+    m.ui.addSend({ text: "wait your turn please", mode: "queued" })
+    let f = await m.frame()
+    expect(f).toContain("wait your turn please")
+    expect(f).toContain("◌ queued — waits")
+    expect(f).toContain("1 queued — next: wait your turn please")
+    m.dispose()
+
+    if (!live.state.orchestratorId) await client.submit("hello")
+    await until(() => !!live.state.orchestratorId)
+    const id = live.state.orchestratorId
+    const m2 = await mount(120, 40)
+    const turn = Date.now() + 1e9 // a "current turn" that never ends: the lead is busy with it
+    const lead = live.state.agents.get(id!)!
+    const prev = lead.turnStartedAt
+    lead.turnStartedAt = turn
+    m2.ui.addSend({ text: "change course now", mode: "steering", turn })
+    m2.ui.bump()
+    f = await m2.frame()
+    expect(f).toContain("change course now")
+    expect(f).toContain("↳ steering")
+    lead.turnStartedAt = prev // the turn is over: plain
+    m2.ui.bump()
+    f = await m2.frame()
+    expect(f).toContain("change course now")
+    expect(f).not.toContain("↳ steering")
+    m2.dispose()
+  })
+})

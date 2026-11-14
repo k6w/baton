@@ -433,8 +433,8 @@ describe("WorkspaceManager", () => {
   test("diff stats count every line of large new and modified files", async () => {
     const wm = new WorkspaceManager(root, cfg(), "run_x")
     const ws = await wm.create("a1", "codex-1", "worktree")
-    writeFileSync(join(ws.path, "big.ts"), Array.from({ length: 300 }, (_, i) => `export const x${i} = ${i}`).join("\n") + "\n")
-    writeFileSync(join(ws.path, "a.ts"), Array.from({ length: 120 }, (_, i) => `line ${i}`).join("\n") + "\n")
+    writeFileSync(join(ws.path, "big.ts"), `${Array.from({ length: 300 }, (_, i) => `export const x${i} = ${i}`).join("\n")}\n`)
+    writeFileSync(join(ws.path, "a.ts"), `${Array.from({ length: 120 }, (_, i) => `line ${i}`).join("\n")}\n`)
     const r = await wm.refresh("a1")
     expect(r?.files.find((f) => f.path === "big.ts")).toEqual({ path: "big.ts", added: 300, removed: 0 })
     expect(r?.files.find((f) => f.path === "a.ts")).toEqual({ path: "a.ts", added: 120, removed: 3 })

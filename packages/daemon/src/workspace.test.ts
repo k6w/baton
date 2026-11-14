@@ -319,6 +319,49 @@ describe("WorkspaceManager", () => {
     expect(await wm.conflictsFor("a1")).toEqual([])
     expect(await wm.conflictsFor("a2")).toEqual([])
   })
+
+  // ── regressions ──
+
+  test("worker branch descends from the real HEAD; the user's untracked files stay uncommitted", async () => {
+    const head = (await git(root, ["rev-parse", "HEAD"])).stdout.trim()
+    mkdirSync(join(root, "docs"))
+    writeFileSync(join(root, "docs", "big.md"), "user's untracked docs\n")
+    writeFileSync(join(root, "README.md"), "# demo\n\nuser edit\n") // tracked, uncommitted
+    const wm = new WorkspaceManager(root, cfg(), "run_x")
+    const ws = await wm.create("a1", "codex-1", "worktree")
+    const branch = ws.branch as string
+    expect((await git(root, ["rev-parse", branch])).stdout.trim()).toBe(head)
+    // the agent still sees the user's state, as uncommitted changes
+    expect(readFileSync(join(ws.path, "docs", "big.md"), "utf8")).toBe("user's untracked docs\n")
+    expect(readFileSync(join(ws.path, "README.md"), "utf8")).toContain("user edit")
+    const st = (await git(ws.path, ["status", "--porcelain"])).stdout
+    expect(st).toContain("?? docs/")
+    expect(st).toContain(" M README.md")
+    // …but none of it is the agent's work
+    expect((await wm.refresh("a1"))?.files).toEqual([])
+    writeFileSync(join(ws.path, "a.ts"), "export const a = 'agent'\n")
+    expect((await wm.refresh("a1"))?.files.map((f) => f.path)).toEqual(["a.ts"])
+    expect((await wm.merge("a1")).status).toBe("merged")
+    // the branch holds exactly the agent's change on top of HEAD — no docs, no user README edit
+    expect((await git(root, ["rev-parse", `${branch}^`])).stdout.trim()).toBe(head)
+    expect((await git(root, ["diff", "--name-only", head, branch])).stdout.trim()).toBe("a.ts")
+    // merged three-way into the project, the user's own edits untouched
+    expect(readFileSync(join(root, "a.ts"), "utf8")).toBe("export const a = 'agent'\n")
+    expect(readFileSync(join(root, "README.md"), "utf8")).toContain("user edit")
+    // further work is still measured against the agent's own last merge
+    writeFileSync(join(ws.path, "b.ts"), "b\n")
+    expect((await wm.refresh("a1"))?.files.map((f) => f.path)).toEqual(["b.ts"])
+  })
+
+  test("diff stats count every line of large new and modified files", async () => {
+    const wm = new WorkspaceManager(root, cfg(), "run_x")
+    const ws = await wm.create("a1", "codex-1", "worktree")
+    writeFileSync(join(ws.path, "big.ts"), Array.from({ length: 300 }, (_, i) => `export const x${i} = ${i}`).join("\n") + "\n")
+    writeFileSync(join(ws.path, "a.ts"), Array.from({ length: 120 }, (_, i) => `line ${i}`).join("\n") + "\n")
+    const r = await wm.refresh("a1")
+    expect(r?.files.find((f) => f.path === "big.ts")).toEqual({ path: "big.ts", added: 300, removed: 0 })
+    expect(r?.files.find((f) => f.path === "a.ts")).toEqual({ path: "a.ts", added: 120, removed: 3 })
+  })
 })
 
 void symlinkSync

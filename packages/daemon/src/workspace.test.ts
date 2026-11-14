@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { BatonConfig } from "@batonsh/kernel"
 import { git } from "./git.ts"
-import { WorkspaceManager } from "./workspace.ts"
+import { cloneDir, installCommand, WorkspaceManager } from "./workspace.ts"
 
 // real git work: slow machines / busy CI need more than the 5s default
 setDefaultTimeout(30_000)
@@ -44,7 +44,7 @@ describe("WorkspaceManager", () => {
     mkdirSync(join(root, "node_modules", "dep"), { recursive: true })
     writeFileSync(join(root, "node_modules", "dep", "index.js"), "x")
     writeFileSync(join(root, ".env"), "SECRET=1\n")
-    const wm = new WorkspaceManager(root, cfg(), "run_x")
+    const wm = new WorkspaceManager(root, cfg({ clone: [] }), "run_x")
     const ws = await wm.create("a1", "codex-1", "worktree")
     expect(existsSync(join(ws.path, "node_modules", "dep", "index.js"))).toBe(true)
     expect(readFileSync(join(ws.path, ".env"), "utf8")).toBe("SECRET=1\n")
@@ -353,6 +353,20 @@ describe("WorkspaceManager", () => {
     expect((await wm.refresh("a1"))?.files.map((f) => f.path)).toEqual(["b.ts"])
   })
 
+  test("node_modules is a real per-worktree directory (not a symlink out of the worktree)", async () => {
+    mkdirSync(join(root, "node_modules", "dep"), { recursive: true })
+    writeFileSync(join(root, "node_modules", "dep", "index.js"), "x")
+    const wm = new WorkspaceManager(root, cfg(), "run_x")
+    const ws = await wm.create("a1", "codex-1", "worktree")
+    const nm = join(ws.path, "node_modules")
+    expect(lstatSync(nm).isSymbolicLink()).toBe(false)
+    expect(readFileSync(join(nm, "dep", "index.js"), "utf8")).toBe("x")
+    // installing in the worker doesn't touch the user's checkout
+    writeFileSync(join(nm, "dep", "added.js"), "y")
+    expect(existsSync(join(root, "node_modules", "dep", "added.js"))).toBe(false)
+    expect((await wm.refresh("a1"))?.files).toEqual([])
+  })
+
   test("diff stats count every line of large new and modified files", async () => {
     const wm = new WorkspaceManager(root, cfg(), "run_x")
     const ws = await wm.create("a1", "codex-1", "worktree")
@@ -365,3 +379,132 @@ describe("WorkspaceManager", () => {
 })
 
 void symlinkSync
+
+describe("dependency folders: clone → install → symlink", () => {
+  const tmp = () => mkdtempSync(join(tmpdir(), "baton-dep-"))
+  const project = () => {
+    const p = tmp()
+    mkdirSync(join(p, "node_modules", "dep"), { recursive: true })
+    writeFileSync(join(p, "node_modules", "dep", "index.js"), "x")
+    return p
+  }
+
+  test("installCommand picks the package manager from the lockfile (package dir first, then the project root)", () => {
+    const p = tmp()
+    const pkg = join(p, "packages", "app")
+    mkdirSync(pkg, { recursive: true })
+    expect(installCommand(p, pkg)).toBeUndefined() // no package.json: nothing to install
+    writeFileSync(join(pkg, "package.json"), "{}")
+    expect(installCommand(p, pkg)).toBeUndefined() // no lockfile anywhere
+    for (const [lock, cmd] of [
+      ["package-lock.json", "npm"],
+      ["yarn.lock", "yarn"],
+      ["pnpm-lock.yaml", "pnpm"],
+      ["bun.lock", "bun"],
+    ] as const) {
+      const d = tmp()
+      writeFileSync(join(d, "package.json"), "{}")
+      writeFileSync(join(d, lock), "")
+      expect(installCommand(d, d)).toEqual([cmd, "install"])
+    }
+    writeFileSync(join(p, "pnpm-lock.yaml"), "") // monorepo: lockfile at the root
+    expect(installCommand(p, pkg)).toEqual(["pnpm", "install"])
+    writeFileSync(join(pkg, "yarn.lock"), "") // the package's own lockfile wins
+    expect(installCommand(p, pkg)).toEqual(["yarn", "install"])
+  })
+
+  test("copy-on-write clone first", async () => {
+    const p = project()
+    const wt = tmp()
+    const calls: string[][] = []
+    const ok = await cloneDir(join(p, "node_modules"), join(wt, "node_modules"), {
+      cwd: wt,
+      rel: "node_modules",
+      projectRoot: p,
+      platform: "linux",
+      runner: async (argv) => {
+        calls.push(argv)
+        return { code: 0 }
+      },
+    })
+    expect(ok).toBe(true)
+    expect(calls).toEqual([["cp", "--reflink=auto", "-R", join(p, "node_modules"), join(wt, "node_modules")]])
+  })
+
+  test("clone fails → the project's package manager installs into the worktree", async () => {
+    const p = project()
+    writeFileSync(join(p, "bun.lock"), "")
+    const wt = tmp()
+    writeFileSync(join(wt, "package.json"), "{}")
+    const calls: { argv: string[]; cwd: string }[] = []
+    const ok = await cloneDir(join(p, "node_modules"), join(wt, "node_modules"), {
+      cwd: wt,
+      rel: "node_modules",
+      projectRoot: p,
+      platform: "darwin",
+      runner: async (argv, cwd) => {
+        calls.push({ argv, cwd })
+        if (argv[0] === "cp") {
+          mkdirSync(join(wt, "node_modules", "half")) // a half-done copy is cleaned up
+          return { code: 1 }
+        }
+        mkdirSync(join(wt, "node_modules", "dep"), { recursive: true })
+        return { code: 0 }
+      },
+    })
+    expect(ok).toBe(true)
+    expect(calls.map((c) => c.argv[0])).toEqual(["cp", "bun"])
+    expect(calls[1]).toEqual({ argv: ["bun", "install"], cwd: wt })
+    expect(existsSync(join(wt, "node_modules", "half"))).toBe(false)
+    expect(existsSync(join(wt, "node_modules", "dep"))).toBe(true)
+  })
+
+  test("clone and install both fail (or no cp on this platform and no lockfile) → false, nothing left behind", async () => {
+    const p = project()
+    writeFileSync(join(p, "package-lock.json"), "")
+    const wt = tmp()
+    writeFileSync(join(wt, "package.json"), "{}")
+    const calls: string[] = []
+    const failing = async (argv: string[]) => {
+      calls.push(argv[0] as string)
+      mkdirSync(join(wt, "node_modules"), { recursive: true })
+      return { code: 1 }
+    }
+    const o = { cwd: wt, rel: "node_modules", projectRoot: p, runner: failing }
+    expect(await cloneDir(join(p, "node_modules"), join(wt, "node_modules"), { ...o, platform: "linux" })).toBe(false)
+    expect(calls).toEqual(["cp", "npm"])
+    expect(existsSync(join(wt, "node_modules"))).toBe(false)
+    // windows: no cp attempt, straight to the install
+    calls.length = 0
+    expect(await cloneDir(join(p, "node_modules"), join(wt, "node_modules"), { ...o, platform: "win32" })).toBe(false)
+    expect(calls).toEqual(["npm"])
+    // a runner that throws (binary missing) is just a failure
+    const boom = async (): Promise<{ code: number }> => {
+      throw new Error("ENOENT")
+    }
+    expect(await cloneDir(join(p, "node_modules"), join(wt, "node_modules"), { ...o, platform: "linux", runner: boom })).toBe(false)
+  })
+
+  test("other linked dirs are never installed; files can't be cloned", async () => {
+    const p = tmp()
+    mkdirSync(join(p, ".venv"))
+    writeFileSync(join(p, "tool.bin"), "x")
+    const wt = tmp()
+    const calls: string[] = []
+    const runner = async (argv: string[]) => {
+      calls.push(argv[0] as string)
+      return { code: 1 }
+    }
+    expect(await cloneDir(join(p, ".venv"), join(wt, ".venv"), { cwd: wt, rel: ".venv", projectRoot: p, platform: "linux", runner })).toBe(false)
+    expect(calls).toEqual(["cp"])
+    expect(await cloneDir(join(p, "tool.bin"), join(wt, "tool.bin"), { cwd: wt, rel: "tool.bin", projectRoot: p, runner })).toBe(false)
+  })
+
+  test("the workspace falls back to the old symlink when a linked path can't be cloned", async () => {
+    writeFileSync(join(root, "tool.bin"), "x")
+    const wm = new WorkspaceManager(root, cfg({ link: ["tool.bin"], clone: ["tool.bin"] }), "run_x")
+    const ws = await wm.create("a1", "codex-1", "worktree")
+    expect(lstatSync(join(ws.path, "tool.bin")).isSymbolicLink()).toBe(true)
+    expect((await wm.refresh("a1"))?.files).toEqual([])
+  })
+})

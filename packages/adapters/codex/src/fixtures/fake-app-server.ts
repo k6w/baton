@@ -1,6 +1,7 @@
 /**
  * Minimal scripted stand-in for `codex app-server`, used by session.test.ts.
  * FAKE_MODE: "normal" | "crash-on-turn" | "crash-mid-turn" | "slow-start" | "hang-interrupt" | "child-thread"
+ *   | "startup-elicitation" (an MCP server asks for approval right after thread/start, outside any turn)
  */
 const mode = process.env.FAKE_MODE ?? "normal"
 const out = (m: unknown) => process.stdout.write(`${JSON.stringify(m)}\n`)
@@ -19,6 +20,24 @@ for await (const chunk of Bun.stdin.stream()) {
     else if (msg.method === "thread/start" || msg.method === "thread/resume") {
       out({ method: "thread/started", params: { thread: { id: "thr_main" } } })
       out({ id: msg.id, result: { thread: { id: "thr_main" }, model: "m", approvalPolicy: "never" } })
+      if (mode === "startup-elicitation")
+        out({
+          id: 0,
+          method: "mcpServer/elicitation/request",
+          params: {
+            threadId: "thr_main",
+            turnId: null,
+            serverName: "docs",
+            mode: "form",
+            message: 'Allow the docs MCP server to run tool "search"?',
+            requestedSchema: { type: "object", properties: {} },
+            _meta: { codex_approval_kind: "mcp_tool_call", tool_params: { q: "x" } },
+          },
+        })
+    } else if (msg.method === undefined && msg.id === 0 && mode === "startup-elicitation") {
+      // the client's answer: echo it back so the test can see it arrived, then resolve the request
+      out({ method: "warning", params: { threadId: "thr_main", message: `reply:${JSON.stringify(msg.result)}` } })
+      out({ method: "serverRequest/resolved", params: { threadId: "thr_main", requestId: 0 } })
     } else if (msg.method === "turn/start") {
       if (mode === "crash-on-turn") process.exit(3)
       if (mode === "slow-start") await Bun.sleep(300)
